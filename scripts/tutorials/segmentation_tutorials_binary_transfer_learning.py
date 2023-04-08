@@ -164,6 +164,8 @@ def plot_history(history, output_dir, file_name):
     plt.ylabel('Loss')
     plt.legend()
     plt.savefig(os.path.join(output_dir, file_name+"_loss.png"))
+    plt.clf()  # clear this figure after saving it
+
     # plt.show()
 
     acc = history.history['accuracy']
@@ -176,6 +178,7 @@ def plot_history(history, output_dir, file_name):
     plt.legend()
     plt.savefig(os.path.join(output_dir, file_name+"_accuracy.png"))
     # plt.show()
+    plt.clf()  # clear this figure after saving it
 
 
 # binary_classification uses only 1 class
@@ -250,6 +253,7 @@ test_img_input = np.expand_dims(test_img, 0)
 print(test_img_input.shape)
 prediction = (model.predict(test_img_input)[
     0, :, :, 0] > 0.5).astype(np.uint8)
+# one gray scale image of 256 x 256 pixels
 print(prediction.shape)
 
 plt.figure(figsize=(16, 8))
@@ -262,5 +266,6 @@ plt.imshow(ground_truth[:, :, 0], cmap='gray')
 plt.subplot(233)
 plt.title('Prediction on test image')
 plt.imshow(prediction, cmap='gray')
-plt.savefig(os.path.join(plots_output_dir, file_name+"_IoU.png"))
+plt.savefig(os.path.join(plots_output_dir,
+            file_name+"_prediction_comparison.png"))
 # plt.show()
