@@ -2,6 +2,9 @@ data/
 github_repos/ 
 .DS_Store
 output/
+cuda-*
+make_swap_file.sh
+scripts/utils/test_tensorflow.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
