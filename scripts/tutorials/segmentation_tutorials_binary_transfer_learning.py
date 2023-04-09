@@ -391,7 +391,7 @@ if retrain.lower() == "y" or retrain == "":
 
     model_path = os.path.join(
         output_dir, final_model_fn_name)
-    model.save(model_path, save_format="tf")
+    model.save(model_path)
 
 else:
     # Load previously saved model
