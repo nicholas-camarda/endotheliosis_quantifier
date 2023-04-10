@@ -11,6 +11,7 @@ output_dir = sys.argv[3]
 
 # input_dir = 'mitochondria_data/testing/masks'
 # output_dir = 'mitochondria_data/testing/mask_patches'
+# data/Lauren_PreEclampsia_Data/Lauren_PreEclampsia_jpg_training_data/Lauren_PreEclampsia_Data_Raw_Images
 
 
 def patchify_image_dir(square_size, input_dir, output_dir):
