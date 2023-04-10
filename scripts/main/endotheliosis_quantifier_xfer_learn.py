@@ -1,3 +1,4 @@
+from tensorflow.keras.metrics import MeanIoU
 import cv2
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
@@ -11,6 +12,7 @@ from typing import List
 import tensorflow as tf
 import keras
 from tensorflow.keras.models import load_model
+from matplotlib import pyplot as plt
 
 # my annotation class object
 
@@ -84,6 +86,10 @@ def rle_to_binary_mask(rle: List[int], height: int, width: int) -> np.array:
                 i += 1
 
     image = np.reshape(out, [height, width, 4])[:, :, 3]
+    # Add an extra dimension to make it [height, width, 1]
+    # image = np.expand_dims(image, axis=-1)
+    # print(image.shape)
+
     return image
 
 # extract the annotations from the json file produced by label-studio
@@ -182,45 +188,36 @@ def grade_glomerulus(openness_score):
     return len(grade_thresholds)
 
 
-# this doesn't work super well...
-def segment_glomeruli_and_binary_mask(preprocessed_image):
-    # # Apply Otsu's thresholding method
-    # _, binary_image = cv2.threshold(preprocessed_image, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+def save_binary_masks_as_images_loop(binary_masks, output_dir, name):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
-    # Apply adaptive thresholding
-    binary_image = cv2.adaptiveThreshold(preprocessed_image, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
-                                         cv2.THRESH_BINARY_INV, 11, 2)
+    for i, binary_mask in enumerate(binary_masks):
+        # Convert the binary mask to a uint8 image with values in [0, 255]
+        mask_image = (binary_mask * 255).astype(np.uint8)
 
-    # Apply morphological opening and closing operations
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    img_opened = cv2.morphologyEx(binary_image, cv2.MORPH_OPEN, kernel)
-    img_closed = cv2.morphologyEx(img_opened, cv2.MORPH_CLOSE, kernel)
-
-    # Find contours
-    contours, _ = cv2.findContours(
-        img_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    return contours, img_closed
-
-# extract the contour features
+        # Save the binary mask as an image
+        output_path = os.path.join(
+            output_dir, f'{os.path.splitext(name)[0]}_mask.jpg')
+        print(output_path)
+        cv2.imwrite(output_path, mask_image)
 
 
-def extract_features(contours):
-    features = []
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        perimeter = cv2.arcLength(cnt, True)
-        circularity = 4 * np.pi * area / \
-            (perimeter * perimeter) if perimeter > 0 else 0
+def save_binary_masks_as_images(binary_mask, output_dir, name):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
-        # # Calculate the openness score for each contour using the preprocessed_image
-        # openness = openness_score(cnt, preprocessed_image)
-
-        features.append([area, circularity])
-    return np.array(features)
+    mask_image = (binary_mask * 255).astype(np.uint8)
+    # Save the binary mask as an image
+    output_path = os.path.join(
+        output_dir, f'{os.path.splitext(name)[0]}_mask.jpg')
+    print(output_path)
+    cv2.imwrite(output_path, mask_image)
 
 
 # Load all the data up
+
+
 def load_data(annotation_file, data_dir):
     """Load data, convert rle mask to 
 
@@ -246,121 +243,163 @@ def load_data(annotation_file, data_dir):
 
         # Load the image and its dimensions
         img = np.array(cv2.imread(img_path))
+        # print(img.shape)
+        # convert to grayscale and normalize
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) / 255.
         img_height, img_width = img.shape[:2]
 
         # Decode the RLE mask to a binary image
         binary_mask = rle_to_binary_mask(
             annotation.rle_mask, img_height, img_width)
+        binary_mask = binary_mask / 255.
+        # print(f'Binary mask shape: {binary_mask.shape}')
+        # binary_mask = cv2.cvtColor(binary_mask, cv2.COLOR_BGR2GRAY) / 255.
 
-    return img, binary_mask
+        score = annotation.score
+        # Ensure that score is a float: [0.0, 0.5, 1.0, 1.5, etc]
+        if score is not None:
+            score = float(score)
 
+        # Add the features and score to the dictionary
+        if img_name not in data:
 
-def trainModel(annotation_file, data_dir):
-    """Train the regression model 
+            data[img_name] = {'X': [], 'y': [], 'score': None}
+        data[img_name]['X'].append(np.expand_dims(img, axis=-1))
+        data[img_name]['y'].append(np.expand_dims(binary_mask, axis=-1))
+        data[img_name]['score'] = score
 
-    Args:
-        annotation_file (str): annotation file exported from label-studio, containing score and rle
-        data_dir (str): denotes the data directory with all the raw images
-    """
-    print('Loading the data...')
-    data = load_data(annotation_file, data_dir)
-
-    # Get the image names
-    image_names = list(data.keys())
-
-    print('Training model...')
-    # Split the image names into training and testing sets
-    train_image_names, test_image_names = train_test_split(
-        image_names, test_size=0.2, random_state=42)
-
-    # Get the X and y arrays for the training and testing sets
-    X_train = []
-    y_train = []
-    for image_name in train_image_names:
-        X_train.extend(data[image_name]['X'])
-        y_train.extend(data[image_name]['y'])
-    # Convert to numpy
-    X_train = np.array(X_train)
-    y_train = np.array(y_train)
-
-    X_test = []
-    y_test = []
-    for image_name in test_image_names:
-        X_test.extend(data[image_name]['X'])
-        y_test.extend(data[image_name]['y'])
-    # Convert to numpy
-    X_test = np.array(X_test)
-    y_test = np.array(y_test)
-
-    # print(f'X_train: {X_train.shape}')
-    # print(f'X_test: {X_test.shape}')
-    # print(f'y_train: {y_train.shape}')
-    # print(f'y_test: {y_test.shape}')
-
-    # Print the names of the images in the training and testing sets
-    print('Training images:', train_image_names)
-    print('Testing images:', test_image_names)
-
-    # # Train the classifier
-    endotheliosisQuantifierModel = RandomForestRegressor(n_estimators=100)
-    endotheliosisQuantifierModel.fit(X_train, y_train)
-
-    print('Calculating endotheliosis on test set...')
-    # # Predict the labels for the test set
-    y_pred = endotheliosisQuantifierModel.predict(X_test)
-
-    print('Evaluating performance...')
-    # Evaluate the performance
-    print("Mean Squared Error:", mean_squared_error(y_test, y_pred))
-    return(endotheliosisQuantifierModel)
+    data[img_name]['X'] = np.array(data[img_name]['X'])
+    data[img_name]['y'] = np.array(data[img_name]['y'])
+    return data
 
 
-annotation_file = 'annotations.json'
-data_dir = 'jpg_data'
+training_data_top_dir = 'data/Lauren_PreEclampsia_Data/Lauren_PreEclampsia_jpg_training_data'
+annotation_file = os.path.join(training_data_top_dir, 'annotations.json')
+data_dir = os.path.join(training_data_top_dir,
+                        'Lauren_PreEclampsia_Raw_Images')
+
+model_path = 'output/segmentation_models/unet_binseg_50epoch_3960images_8batchsize/unet_binseg_50epoch_3960images_8batchsize.hdf5'
+file_name = 'endotheliosis_seg.hdf5'
+
+# crazy workflow but you need to
+# 1 load in the data
 data = load_data(annotation_file, data_dir)
-# endotheliosisQuantifierModel = trainModel(annotation_file, data_dir)
-
-print(data.shape)
-
-# # Test on one image
-# image_path = 'jpg_data/Lauren_PreEclampsia_Raw_Images/T30/T30_Image0.jpg'
-# result = process_new_image(image_path, endotheliosisQuantifierModel)
-# print("Results:")
-# print(json.dumps(result, indent=2))
 
 
-# RUN THIS IN A LOOP
-# images_dir = 'jpg_data/Lauren_PreEclampsia_Raw_Images'
-# output_dir = 'output'
+names = [item for item in data.keys()]
+X_test = np.vstack([data[item]['X'] for item in data.keys()])
+y_test = np.vstack([data[item]['y'] for item in data.keys()])
+scores = np.array([data[item]['score'] for item in data.keys()])
+print(X_test.shape)
+print(y_test.shape)
+print(scores.shape)
+print(names)
 
-# # create an empty dataframe to store the results
-# results_df = pd.DataFrame(columns=['subdirectory', 'image', 'result'])
+# write the binary masks to equivalent file structure
+for i, name in enumerate(np.unique(names, axis=0)):
+    dir_name = name.split("_")[0]
+    save_binary_masks_as_images(y_test[i], output_dir=os.path.join(
+        training_data_top_dir, 'Lauren_PreEclampsia_Masks', dir_name),
+        name=name)
 
-# # loop through subdirectories and files
-# for subdir, dirs, files in os.walk(images_dir):
-#     print(subdir)
-#     for file in files:
-#         # check if file is a .jpg
-#         if file.endswith('.jpg') or file.endswith('.jpeg'):
-#             # construct the full path to the image
-#             image_path = os.path.join(subdir, file)
-#             # process the image and store the result
-#             result = process_new_image(image_path, endotheliosisQuantifierModel)
-#             print(result)
-#             # add the result to the dataframe
-#             results_df = results_df.append({'subdirectory': subdir,
-#                                             'image': file,
-#                                             'result': result},
-#                                            ignore_index=True)
+# patch the files
 
-# # save the results to a CSV file
-# results_df.to_csv(os.path.join(output_dir, 'results.csv'), index=False)
+model = tf.keras.models.load_model(model_path, compile=False)
+# Calculate IOU after the fact
+print('Predicting on test set...')
+y_pred = model.predict(X_test)
+# threshold to distinguish pixel is mito or not
+threshold = 0.5
+y_pred_thresholded = y_pred > threshold
 
-# # group the results by subdirectory and image, and calculate the mean result
-# avg_results_df = results_df.groupby(['subdirectory', 'image']).mean().reset_index()
+# # to calculate meanIoU, you need to say 2 classes.
+# # weird that it's different from building the neural net
+# n_classes_iou = 2  # note that this is different from when we made the neural net
 
-# # save the average results to a CSV file
-# avg_results_df.to_csv(os.path.join(output_dir, 'average_results.csv'), index=False)
+# # IoU intersection over union aka the jaccard index
+# # overlap between the predicted segmentation and the ground truth divided by
+# # the area of union between pred seg and groundtruth
+# # if intersection == union, then value is 1 and you have a great segmenter
+# IOU_keras = MeanIoU(num_classes=n_classes_iou)
+# IOU_keras.update_state(y_pred_thresholded, y_test)
+# print("Mean IoU =", IOU_keras.result().numpy())
+
+# # generate n unique random indices from the test dataset
+# n = 20  # specify the number of images you want to generate
+# random_indices = np.random.choice(len(X_test), size=n, replace=False)
+# # create output directory if it doesn't exist
+# predicitions_output_dir = f'output/segmentation_models/{file_name}/plots/predictions'
+# if not os.path.exists(predicitions_output_dir):
+#     os.makedirs(predicitions_output_dir)
+
+# # generate and save n random images
+# for test_img_number in random_indices:
+#     # load a random image from the test dataset
+#     test_img = X_test[test_img_number]
+#     ground_truth = y_test[test_img_number]
+#     test_img_input = np.expand_dims(test_img, 0)
+#     prediction = (model.predict(test_img_input)[
+#                   0, :, :, 0] > 0.5).astype(np.uint8)
+
+#     # create file name based on index of image in dataset
+#     file_name_predicition = f"{file_name}_prediction_{test_img_number}"
+
+#     # plot and save image
+#     plt.figure(figsize=(16, 8))
+#     plt.subplot(231)
+#     plt.title('Testing Image')
+#     plt.imshow(test_img[:, :, 0], cmap='gray')
+#     plt.subplot(232)
+#     plt.title('Testing Label')
+#     plt.imshow(ground_truth[:, :, 0], cmap='gray')
+#     plt.subplot(233)
+#     plt.title('Prediction on test image')
+#     plt.imshow(prediction, cmap='gray')
+#     plt.savefig(os.path.join(predicitions_output_dir,
+#                 file_name_predicition+".png"))
+#     plt.clf()
+#     plt.close()
+#     # plt.show()
+
+# # # Test on one image
+# # image_path = 'jpg_data/Lauren_PreEclampsia_Raw_Images/T30/T30_Image0.jpg'
+# # result = process_new_image(image_path, endotheliosisQuantifierModel)
+# # print("Results:")
+# # print(json.dumps(result, indent=2))
 
 
-# print("Done!")
+# # RUN THIS IN A LOOP
+# # images_dir = 'jpg_data/Lauren_PreEclampsia_Raw_Images'
+# # output_dir = 'output'
+
+# # # create an empty dataframe to store the results
+# # results_df = pd.DataFrame(columns=['subdirectory', 'image', 'result'])
+
+# # # loop through subdirectories and files
+# # for subdir, dirs, files in os.walk(images_dir):
+# #     print(subdir)
+# #     for file in files:
+# #         # check if file is a .jpg
+# #         if file.endswith('.jpg') or file.endswith('.jpeg'):
+# #             # construct the full path to the image
+# #             image_path = os.path.join(subdir, file)
+# #             # process the image and store the result
+# #             result = process_new_image(image_path, endotheliosisQuantifierModel)
+# #             print(result)
+# #             # add the result to the dataframe
+# #             results_df = results_df.append({'subdirectory': subdir,
+# #                                             'image': file,
+# #                                             'result': result},
+# #                                            ignore_index=True)
+
+# # # save the results to a CSV file
+# # results_df.to_csv(os.path.join(output_dir, 'results.csv'), index=False)
+
+# # # group the results by subdirectory and image, and calculate the mean result
+# # avg_results_df = results_df.groupby(['subdirectory', 'image']).mean().reset_index()
+
+# # # save the average results to a CSV file
+# # avg_results_df.to_csv(os.path.join(output_dir, 'average_results.csv'), index=False)
+
+
+# # print("Done!")
