@@ -1,4 +1,5 @@
 
+from datetime import datetime
 from keras.applications.vgg16 import VGG16
 from keras.models import Model
 import cv2
@@ -11,6 +12,7 @@ import os
 import pandas as pd
 from typing import List
 
+import segmentation_models as sm
 import tensorflow as tf
 import keras
 from tensorflow.keras.models import load_model
@@ -288,8 +290,6 @@ def load_data(annotation_file, data_dir, size):
             data[img_name] = {'X': [], 'y': [], 'score': None}
         data[img_name]['X'].append(np.expand_dims(img, axis=-1))
         data[img_name]['y'].append(np.expand_dims(binary_mask, axis=-1))
-        # data[img_name]['X'].append(img)
-        # data[img_name]['y'].append(np.expand_dims(binary_mask, axis=-1))
         data[img_name]['score'] = score
 
     data[img_name]['X'] = np.array(data[img_name]['X'])
@@ -298,16 +298,29 @@ def load_data(annotation_file, data_dir, size):
 
 
 training_data_top_dir = 'data/Lauren_PreEclampsia_Data/Lauren_PreEclampsia_jpg_training_data'
-annotation_file = os.path.join(training_data_top_dir, 'annotations.json')
+annotation_file = os.path.join(
+    training_data_top_dir, '2023-04-10_annotations.json')
+
 data_dir = os.path.join(training_data_top_dir,
                         'Lauren_PreEclampsia_Raw_Images')
 
+
 model_path = 'output/segmentation_models/unet_binseg_50epoch_3960images_8batchsize/unet_binseg_50epoch_3960images_8batchsize.hdf5'
-file_name_with_ext = 'endotheliosis_seg.hdf5'
+
+# Get the current date
+current_date = datetime.now()
+# Format the date as YYYYMMDD
+formatted_date = current_date.strftime('%Y-%m-%d')
+
+file_name_with_ext = f'endotheliosis_seg{formatted_date}.hdf5'
 new_model_full_path = os.path.join(
     'output/segmentation_models/unet_binseg_50epoch_3960images_8batchsize', file_name_with_ext)
 file_name = os.path.splitext(file_name_with_ext)[0]
+
+
 square_size = 256
+n_epochs = 50
+n_batch_size = 8
 
 # crazy workflow but you need to
 # 1 load in the data
@@ -321,14 +334,15 @@ scores = np.array([data[item]['score'] for item in data.keys()])
 print(X_train.shape)
 print(y_train.shape)
 print(scores.shape)
-print(names)
+print(len(names))
 
+# breakpoint
 # patch the files
 
 model = tf.keras.models.load_model(model_path, compile=False)
 
 # Set up an optimizer with a learning rate scheduler
-# this is better for fine tuning
+# this is better for fine tuning?
 initial_learning_rate = 1e-3
 # lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
 #     initial_learning_rate,
@@ -339,11 +353,11 @@ optimizer = tf.keras.optimizers.Adam(learning_rate=initial_learning_rate)
 
 # Compile the model
 model.compile(optimizer=optimizer,
-              loss='binary_crossentropy', metrics=['accuracy'])
+              loss='binary_crossentropy', metrics=['accuracy', sm.metrics.IOUScore(threshold=0.5)])
 
 with tf.device("/GPU:0"):
-    model.fit(X_train, y_train, batch_size=4,
-              epochs=50, validation_data=(X_train, y_train))
+    model.fit(X_train, y_train, batch_size=n_batch_size,
+              epochs=n_epochs, validation_data=(X_train, y_train))
 
     model.save(new_model_full_path)
 X_test = X_train
