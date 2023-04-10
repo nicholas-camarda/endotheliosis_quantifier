@@ -1,6 +1,7 @@
 # https://github.com/bnsreenu/python_for_image_processing_APEER/blob/master/tutorial118_binary_semantic_segmentation_using_unet.ipynb
 # https://www.youtube.com/watch?v=oBIkr7CAE6g
 
+
 import torch  # torch==1.9.1+cu111 for nvidia-cudnn-cu11 8.6.0.163
 import tensorflow as tf
 import keras
@@ -11,9 +12,11 @@ from tensorflow.keras.utils import normalize
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.metrics import MeanIoU
 from tensorflow.keras.utils import CustomObjectScope
+from keras.applications.vgg16 import VGG16
 
 from sklearn.model_selection import train_test_split
 # from sklearn.preprocessing import MinMaxScaler
+import segmentation_models as sm
 
 import os
 import cv2
@@ -65,7 +68,7 @@ mask_test_directory_tif = 'data/mitochondria_data/testing/mask_patches/*.tif'
 
 
 # this is the total number of images in teh tif stack
-num_images_desired = 330
+num_images_desired = 50
 # 330
 
 # size of the image patch, square
@@ -77,7 +80,7 @@ num_patches = 12
 # number of training epochs
 n_epochs = 50  # 50
 
-n_batch_size = 8
+n_batch_size = 4
 # effective batch size = n_batch_size * n_gradients
 # print(f'Effective batch size = {n_batch_size * n_gradients}')
 # binary segmentation - for the neural nety
@@ -87,7 +90,7 @@ n_classes = 1
 LEARNING_RATE = 1e-3
 
 num_images = num_images_desired * num_patches
-final_model_fn_name = f'unet_binseg_{n_epochs}epoch_{num_images}images_{n_batch_size}batchsize.hdf5'
+final_model_fn_name = f'vgg16_xfer_binseg_{n_epochs}epoch_{num_images}images_{n_batch_size}batchsize.hdf5'
 
 
 def generate_datasets(image_dir, mask_dir, type_data):
@@ -131,8 +134,9 @@ image_dataset_2, mask_dataset_2 = generate_datasets(
     image_test_directory_tif, mask_test_directory_tif, "TESTING")
 
 image_dataset = np.concatenate((image_dataset_1, image_dataset_2), axis=0)
+image_dataset = np.concatenate([image_dataset] * 3, axis=-1)[0:num_images]
 mask_dataset = np.concatenate((mask_dataset_1, mask_dataset_2), axis=0)
-
+mask_dataset = np.concatenate([mask_dataset] * 3, axis=-1)[0:num_images]
 
 print("Total images in the original dataset are: ", len(image_dataset))
 print("Image data shape is: ", image_dataset.shape)
@@ -152,60 +156,6 @@ X_train, X_test, y_train, y_test = train_test_split(
 # plt.subplot(122)
 # plt.imshow(y_train[image_number, :, :, 0], cmap='gray')
 # plt.show()
-
-
-def conv_block(input, num_filters):
-    x = Conv2D(num_filters, 3, padding="same")(input)
-    x = BatchNormalization()(x)  # Not in the original network.
-    x = Activation("relu")(x)
-
-    x = Conv2D(num_filters, 3, padding="same")(x)
-    x = BatchNormalization()(x)  # Not in the original network
-    x = Activation("relu")(x)
-
-    return x
-
-
-def encoder_block(input, num_filters):
-    x = conv_block(input, num_filters)
-    p = MaxPool2D((2, 2))(x)
-    return x, p
-
-
-def decoder_block(input, skip_features, num_filters):
-    x = Conv2DTranspose(num_filters, (2, 2), strides=2, padding="same")(input)
-    x = Concatenate()([x, skip_features])
-    x = conv_block(x, num_filters)
-    return x
-
-
-def build_unet(input_shape, n_classes):
-    inputs = Input(input_shape)
-
-    s1, p1 = encoder_block(inputs, 64)
-    s2, p2 = encoder_block(p1, 128)
-    s3, p3 = encoder_block(p2, 256)
-    s4, p4 = encoder_block(p3, 512)
-
-    b1 = conv_block(p4, 1024)  # Bridge
-
-    d1 = decoder_block(b1, s4, 512)
-    d2 = decoder_block(d1, s3, 256)
-    d3 = decoder_block(d2, s2, 128)
-    d4 = decoder_block(d3, s1, 64)
-
-    if n_classes == 1:
-        activation = 'sigmoid'
-    else:
-        activation = 'softmax'
-
-    outputs = Conv2D(n_classes, 1, padding="same", activation=activation)(d4)
-    # still initialize the base model
-    model = Model(inputs, outputs, name="U-Net")
-    # here is where the custom model creation needs to be modified to include the n_gradients parameter
-    # model = CustomTrainStep(
-    #     n_gradients, inputs=model.inputs, outputs=model.outputs)
-    return model
 
 
 def remove_extension(file_path):
@@ -247,6 +197,49 @@ def plot_history(history, output_dir, file_name):
     plt.close()
 
 
+# Define input_shape for grayscale image (duplicated 3 times to trick)
+height, width, channels = X_train.shape[1], X_train.shape[2], X_train.shape[3]
+input_shape = (height, width, channels)
+
+# remove dense classification layer
+model = VGG16(weights='imagenet',
+              include_top=False,
+              input_shape=input_shape)
+
+# Make loaded layers as non-trainable. This is important as we want to work with pre-trained weights
+for layer in model.layers:
+    layer.trainable = False
+
+# model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
+#               loss='binary_crossentropy',
+#               metrics=['accuracy', sm.metrics.IOUScore(threshold=0.5)])
+
+
+new_model = Model(inputs=model.input,
+                  outputs=model.get_layer('block1_conv2').output)
+print("Done compiling.")
+new_model.summary()
+
+
+features = new_model.predict(X_train)
+
+# Plot features to view them
+plt.figure(figsize=(12, 12))
+square = 8
+ix = 1
+for _ in range(square):
+    for _ in range(square):
+        ax = plt.subplot(square, square, ix)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        plt.imshow(features[0, :, :, ix-1], cmap='gray')
+        ix += 1
+plt.show()
+
+
+features = new_model.predict(X_train)
+
+
 # binary_classification uses only 1 class
 IMG_HEIGHT = image_dataset.shape[1]
 IMG_WIDTH = image_dataset.shape[2]
@@ -265,44 +258,44 @@ model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
               loss='binary_crossentropy',
               metrics=['accuracy'])  # MeanIoU(num_classes=2)
 
-# for plotting later
-file_name = remove_extension(final_model_fn_name)
-print(file_name)
+# # for plotting later
+# file_name = remove_extension(final_model_fn_name)
+# print(file_name)
 
-# this will get made in the plotting function
-plots_output_dir = f'output/segmentation_models/{file_name}/plots'
+# # this will get made in the plotting function
+# plots_output_dir = f'output/segmentation_models/{file_name}/plots'
 
-# make the model output dir, just put it at the top of segmentation_models subdir
-output_dir = f'output/segmentation_models/{file_name}'
-# checkpoint_path = os.path.join(
-#     output_dir, f"checkpoints/{file_name}/{file_name}_")
-# checkpoint_dir = os.path.dirname(checkpoint_path)
+# # make the model output dir, just put it at the top of segmentation_models subdir
+# output_dir = f'output/segmentation_models/{file_name}'
+# # checkpoint_path = os.path.join(
+# #     output_dir, f"checkpoints/{file_name}/{file_name}_")
+# # checkpoint_dir = os.path.dirname(checkpoint_path)
 
-if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
+# if not os.path.exists(output_dir):
+#     os.makedirs(output_dir)
 
-# if not os.path.exists(checkpoint_dir):
-#     os.makedirs(checkpoint_dir)
+# # if not os.path.exists(checkpoint_dir):
+# #     os.makedirs(checkpoint_dir)
 
-if not os.path.exists(plots_output_dir):
-    os.makedirs(plots_output_dir)
+# if not os.path.exists(plots_output_dir):
+#     os.makedirs(plots_output_dir)
 
 
-with tf.device("/GPU:0"):
-    print(
-        f"Using GPU device: {tf.config.list_physical_devices('GPU')}")
+# with tf.device("/GPU:0"):
+#     print(
+#         f"Using GPU device: {tf.config.list_physical_devices('GPU')}")
 
-    history = model.fit(X_train, y_train,
-                        batch_size=n_batch_size,
-                        verbose=1,
-                        epochs=n_epochs,
-                        # callbacks=[cp_callback],
-                        validation_data=(X_test, y_test),
-                        shuffle=False)
+#     history = new_model.fit(X_train, y_train,
+#                             batch_size=n_batch_size,
+#                             verbose=1,
+#                             epochs=n_epochs,
+#                             # callbacks=[cp_callback],
+#                             validation_data=(X_test, y_test),
+#                             shuffle=False)
 
-plot_history(history, plots_output_dir, file_name)
+# plot_history(history, plots_output_dir, file_name)
 
-print("Saving model...")
-model_path = os.path.join(
-    output_dir, final_model_fn_name)
-model.save(model_path)
+# print("Saving model...")
+# model_path = os.path.join(
+#     output_dir, final_model_fn_name)
+# model.save(model_path)

@@ -3,6 +3,7 @@ import tensorflow as tf
 
 
 class CustomTrainStep(tf.keras.Model):
+    # https://stackoverflow.com/questions/66472201/gradient-accumulation-with-custom-model-fit-in-tf-keras
     """
     Designed to accumulate gradients for a specified number of steps before updating the model's weights.
     This is useful for large models or when working with limited GPU memory.
