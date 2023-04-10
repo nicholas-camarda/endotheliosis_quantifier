@@ -6,6 +6,8 @@ import json
 from typing import List
 from patchify import patchify, unpatchify
 from skimage import io
+from skimage.transform import resize
+from skimage.io import imread, imsave
 import os
 import sys
 
@@ -179,11 +181,21 @@ def load_data(annotation_file, data_dir):
         # convert to grayscale and normalize
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) / 255.
         img_height, img_width = img.shape[:2]
+        img = resize(img, (256, 256), anti_aliasing=True)
 
         # Decode the RLE mask to a binary image
         binary_mask = rle_to_binary_mask(
             annotation.rle_mask, img_height, img_width)
         binary_mask = binary_mask / 255.
+        binary_mask = resize(binary_mask, (256, 256), anti_aliasing=True)
+
+        dir_name = img_name.split("_")[0]
+        bin_mask_img_output_dir = os.path.join(
+            training_data_top_dir, 'Lauren_PreEclampsia_Masks', dir_name)
+        save_binary_masks_as_images(binary_mask,
+                                    output_dir=bin_mask_img_output_dir,
+                                    name=img_name)
+
         # print(f'Binary mask shape: {binary_mask.shape}')
         # binary_mask = cv2.cvtColor(binary_mask, cv2.COLOR_BGR2GRAY) / 255.
 
@@ -227,48 +239,3 @@ print(X_test.shape)
 print(y_test.shape)
 print(scores.shape)
 print(names)
-
-# write the binary masks to equivalent file structure
-for i, name in enumerate(np.unique(names, axis=0)):
-    dir_name = name.split("_")[0]
-    save_binary_masks_as_images(y_test[i], output_dir=os.path.join(
-        training_data_top_dir, 'Lauren_PreEclampsia_Masks', dir_name),
-        name=name)
-
-
-def patchify_image_dir(square_size, input_dir, output_dir):
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
-    for filename in os.listdir(input_dir):
-        ext_ = os.path.splitext(filename)[1]  # includes '.'
-        input_path = os.path.join(input_dir, filename)
-        if os.path.isdir(input_path):
-            # recursively process subdirectories
-            output_subdir = os.path.join(output_dir, filename)
-            if not os.path.exists(output_subdir):
-                os.mkdir(output_subdir)
-            patchify_image_dir(square_size, input_path, output_subdir)
-        elif filename.endswith('.tif') or filename.endswith('.jpg'):
-            img = io.imread(input_path)
-            print(f"The filename is: {filename}")
-            print(f"The image shape is: {img.shape}")
-
-            patches = patchify(img, (square_size, square_size),
-                               step=(square_size, square_size))
-
-            for i in range(patches.shape[0]):
-                for j in range(patches.shape[1]):
-                    patch = patches[i, j]
-                    output_filename = f"{os.path.splitext(filename)[0]}_{i}_{j}{ext_}"
-                    output_path = os.path.join(output_dir, output_filename)
-                    io.imsave(output_path, patch)
-                    print(f"Saved patch {output_filename}")
-
-
-# patchify_image_dir(square_size, data_dir, os.path.join(
-#     training_data_top_dir, "image_patches"))
-# patchify_image_dir(square_size,
-#                    os.path.join(training_data_top_dir,
-#                                 'Lauren_PreEclampsia_Masks'),
-#                    os.path.join(training_data_top_dir, "mask_patches"))

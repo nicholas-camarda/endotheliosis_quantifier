@@ -1,4 +1,6 @@
-from tensorflow.keras.metrics import MeanIoU
+
+from keras.applications.vgg16 import VGG16
+from keras.models import Model
 import cv2
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
@@ -12,7 +14,14 @@ from typing import List
 import tensorflow as tf
 import keras
 from tensorflow.keras.models import load_model
+from tensorflow.keras.metrics import MeanIoU
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.layers import Dense
 from matplotlib import pyplot as plt
+from skimage import io
+import sys
+from skimage.io import imread, imsave
+from skimage.transform import resize
 
 # my annotation class object
 
@@ -203,6 +212,12 @@ def save_binary_masks_as_images_loop(binary_masks, output_dir, name):
         cv2.imwrite(output_path, mask_image)
 
 
+def get_image_path_from_json(json_file):
+    with open(json_file, 'r') as f:
+        annotations_data = json.load(f)
+    return [entry['file_upload'] for entry in annotations_data]
+
+
 def save_binary_masks_as_images(binary_mask, output_dir, name):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -218,7 +233,7 @@ def save_binary_masks_as_images(binary_mask, output_dir, name):
 # Load all the data up
 
 
-def load_data(annotation_file, data_dir):
+def load_data(annotation_file, data_dir, size):
     """Load data, convert rle mask to 
 
     Args:
@@ -247,13 +262,20 @@ def load_data(annotation_file, data_dir):
         # convert to grayscale and normalize
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) / 255.
         img_height, img_width = img.shape[:2]
+        img = resize(img, (size, size))
 
         # Decode the RLE mask to a binary image
         binary_mask = rle_to_binary_mask(
             annotation.rle_mask, img_height, img_width)
         binary_mask = binary_mask / 255.
-        # print(f'Binary mask shape: {binary_mask.shape}')
-        # binary_mask = cv2.cvtColor(binary_mask, cv2.COLOR_BGR2GRAY) / 255.
+        binary_mask = resize(binary_mask, (size, size))
+
+        # dir_name = img_name.split("_")[0]
+        # bin_mask_img_output_dir = os.path.join(
+        #     training_data_top_dir, 'Lauren_PreEclampsia_Masks', dir_name)
+        # save_binary_masks_as_images(binary_mask,
+        #                             output_dir=bin_mask_img_output_dir,
+        #                             name=img_name)
 
         score = annotation.score
         # Ensure that score is a float: [0.0, 0.5, 1.0, 1.5, etc]
@@ -266,6 +288,8 @@ def load_data(annotation_file, data_dir):
             data[img_name] = {'X': [], 'y': [], 'score': None}
         data[img_name]['X'].append(np.expand_dims(img, axis=-1))
         data[img_name]['y'].append(np.expand_dims(binary_mask, axis=-1))
+        # data[img_name]['X'].append(img)
+        # data[img_name]['y'].append(np.expand_dims(binary_mask, axis=-1))
         data[img_name]['score'] = score
 
     data[img_name]['X'] = np.array(data[img_name]['X'])
@@ -279,87 +303,107 @@ data_dir = os.path.join(training_data_top_dir,
                         'Lauren_PreEclampsia_Raw_Images')
 
 model_path = 'output/segmentation_models/unet_binseg_50epoch_3960images_8batchsize/unet_binseg_50epoch_3960images_8batchsize.hdf5'
-file_name = 'endotheliosis_seg.hdf5'
+file_name_with_ext = 'endotheliosis_seg.hdf5'
+new_model_full_path = os.path.join(
+    'output/segmentation_models/unet_binseg_50epoch_3960images_8batchsize', file_name_with_ext)
+file_name = os.path.splitext(file_name_with_ext)[0]
+square_size = 256
 
 # crazy workflow but you need to
 # 1 load in the data
-data = load_data(annotation_file, data_dir)
+data = load_data(annotation_file, data_dir, size=square_size)
 
 
 names = [item for item in data.keys()]
-X_test = np.vstack([data[item]['X'] for item in data.keys()])
-y_test = np.vstack([data[item]['y'] for item in data.keys()])
+X_train = np.vstack([data[item]['X'] for item in data.keys()])
+y_train = np.vstack([data[item]['y'] for item in data.keys()])
 scores = np.array([data[item]['score'] for item in data.keys()])
-print(X_test.shape)
-print(y_test.shape)
+print(X_train.shape)
+print(y_train.shape)
 print(scores.shape)
 print(names)
-
-# write the binary masks to equivalent file structure
-for i, name in enumerate(np.unique(names, axis=0)):
-    dir_name = name.split("_")[0]
-    save_binary_masks_as_images(y_test[i], output_dir=os.path.join(
-        training_data_top_dir, 'Lauren_PreEclampsia_Masks', dir_name),
-        name=name)
 
 # patch the files
 
 model = tf.keras.models.load_model(model_path, compile=False)
-# Calculate IOU after the fact
-print('Predicting on test set...')
+
+# Set up an optimizer with a learning rate scheduler
+# this is better for fine tuning
+initial_learning_rate = 1e-3
+# lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+#     initial_learning_rate,
+#     decay_steps=100000,
+#     decay_rate=0.96,
+#     staircase=True)
+optimizer = tf.keras.optimizers.Adam(learning_rate=initial_learning_rate)
+
+# Compile the model
+model.compile(optimizer=optimizer,
+              loss='binary_crossentropy', metrics=['accuracy'])
+
+with tf.device("/GPU:0"):
+    model.fit(X_train, y_train, batch_size=4,
+              epochs=50, validation_data=(X_train, y_train))
+
+    model.save(new_model_full_path)
+X_test = X_train
+y_test = y_train
+
+
 y_pred = model.predict(X_test)
 # threshold to distinguish pixel is mito or not
 threshold = 0.5
 y_pred_thresholded = y_pred > threshold
 
-# # to calculate meanIoU, you need to say 2 classes.
-# # weird that it's different from building the neural net
-# n_classes_iou = 2  # note that this is different from when we made the neural net
+# to calculate meanIoU, you need to say 2 classes.
+# weird that it's different from building the neural net
+n_classes_iou = 2  # note that this is different from when we made the neural net
 
-# # IoU intersection over union aka the jaccard index
-# # overlap between the predicted segmentation and the ground truth divided by
-# # the area of union between pred seg and groundtruth
-# # if intersection == union, then value is 1 and you have a great segmenter
-# IOU_keras = MeanIoU(num_classes=n_classes_iou)
-# IOU_keras.update_state(y_pred_thresholded, y_test)
-# print("Mean IoU =", IOU_keras.result().numpy())
+# IoU intersection over union aka the jaccard index
+# overlap between the predicted segmentation and the ground truth divided by
+# the area of union between pred seg and groundtruth
+# if intersection == union, then value is 1 and you have a great segmenter
+IOU_keras = MeanIoU(num_classes=n_classes_iou)
+IOU_keras.update_state(y_pred_thresholded, y_test)
+print("Mean IoU =", IOU_keras.result().numpy())
 
-# # generate n unique random indices from the test dataset
-# n = 20  # specify the number of images you want to generate
-# random_indices = np.random.choice(len(X_test), size=n, replace=False)
-# # create output directory if it doesn't exist
-# predicitions_output_dir = f'output/segmentation_models/{file_name}/plots/predictions'
-# if not os.path.exists(predicitions_output_dir):
-#     os.makedirs(predicitions_output_dir)
+# generate n unique random indices from the test dataset
+n = len(X_test)  # specify the number of images you want to generate
+random_indices = np.random.choice(len(X_test), size=n, replace=False)
+# create output directory if it doesn't exist
+predicitions_output_dir = f'output/segmentation_models/{file_name}/plots/predictions'
+if not os.path.exists(predicitions_output_dir):
+    os.makedirs(predicitions_output_dir)
 
-# # generate and save n random images
-# for test_img_number in random_indices:
-#     # load a random image from the test dataset
-#     test_img = X_test[test_img_number]
-#     ground_truth = y_test[test_img_number]
-#     test_img_input = np.expand_dims(test_img, 0)
-#     prediction = (model.predict(test_img_input)[
-#                   0, :, :, 0] > 0.5).astype(np.uint8)
+# generate and save n random images
+for test_img_number in random_indices:
+    # load a random image from the test dataset
+    test_img = X_test[test_img_number]
+    ground_truth = y_test[test_img_number]
+    test_img_input = np.expand_dims(test_img, 0)
+    prediction = (model.predict(test_img_input)[
+                  0, :, :, 0] > 0.5).astype(np.uint8)
 
-#     # create file name based on index of image in dataset
-#     file_name_predicition = f"{file_name}_prediction_{test_img_number}"
+    # create file name based on index of image in dataset
+    file_name_predicition = f"{file_name}_prediction_{test_img_number}"
 
-#     # plot and save image
-#     plt.figure(figsize=(16, 8))
-#     plt.subplot(231)
-#     plt.title('Testing Image')
-#     plt.imshow(test_img[:, :, 0], cmap='gray')
-#     plt.subplot(232)
-#     plt.title('Testing Label')
-#     plt.imshow(ground_truth[:, :, 0], cmap='gray')
-#     plt.subplot(233)
-#     plt.title('Prediction on test image')
-#     plt.imshow(prediction, cmap='gray')
-#     plt.savefig(os.path.join(predicitions_output_dir,
-#                 file_name_predicition+".png"))
-#     plt.clf()
-#     plt.close()
-#     # plt.show()
+    # plot and save image
+    plt.figure(figsize=(16, 8))
+    plt.subplot(231)
+    plt.title('Testing Image')
+    plt.imshow(test_img[:, :, 0], cmap='gray')
+    plt.subplot(232)
+    plt.title('Testing Label')
+    plt.imshow(ground_truth[:, :, 0], cmap='gray')
+    plt.subplot(233)
+    plt.title('Prediction on test image')
+    plt.imshow(prediction, cmap='gray')
+    plt.savefig(os.path.join(predicitions_output_dir,
+                file_name_predicition+".png"))
+    plt.clf()
+    plt.close()
+    # plt.show()
+
 
 # # # Test on one image
 # # image_path = 'jpg_data/Lauren_PreEclampsia_Raw_Images/T30/T30_Image0.jpg'
