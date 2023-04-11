@@ -297,12 +297,12 @@ def load_data(annotation_file, data_dir, size):
     return data
 
 
-training_data_top_dir = 'data/Lauren_PreEclampsia_Data/Lauren_PreEclampsia_jpg_training_data'
+training_data_top_dir = 'data/Lauren_PreEclampsia_Data/train'
 annotation_file = os.path.join(
     training_data_top_dir, '2023-04-10_annotations.json')
 
 data_dir = os.path.join(training_data_top_dir,
-                        'Lauren_PreEclampsia_Raw_Images')
+                        'images')
 
 
 model_path = 'output/segmentation_models/unet_binseg_50epoch_3960images_8batchsize/unet_binseg_50epoch_3960images_8batchsize.hdf5'
@@ -320,7 +320,7 @@ file_name = os.path.splitext(file_name_with_ext)[0]
 
 square_size = 256
 n_epochs = 50
-n_batch_size = 8
+n_batch_size = 16
 
 # crazy workflow but you need to
 # 1 load in the data

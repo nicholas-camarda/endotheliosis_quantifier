@@ -1,4 +1,6 @@
 
+import shutil
+import random
 import os
 import cv2
 import numpy as np
@@ -9,7 +11,8 @@ from skimage import io
 from skimage.transform import resize
 from skimage.io import imread, imsave
 import os
-import sys
+import re
+from alive_progress import alive_bar
 
 
 class Annotation:
@@ -81,10 +84,6 @@ def rle_to_binary_mask(rle: List[int], height: int, width: int) -> np.array:
                 i += 1
 
     image = np.reshape(out, [height, width, 4])[:, :, 3]
-    # Add an extra dimension to make it [height, width, 1]
-    # image = np.expand_dims(image, axis=-1)
-    # print(image.shape)
-
     return image
 
 # extract the annotations from the json file produced by label-studio
@@ -126,9 +125,24 @@ def load_annotations_from_json(json_file):
 
         annotation = Annotation(image_name, image_rle_mask, score)
         annotations.append(annotation)
-        print(annotation.image_name, annotation.score)
+        # print(annotation.image_name, annotation.score)
 
     return annotations
+
+
+def get_image_size(annotation, data_dir):
+    img_name = annotation.image_name
+    img_path = find_image_path(img_name, root_directory=data_dir)
+
+    img_height, img_width = (0, 0)
+    if img_path is None:
+        print(f"Image file {img_name} not found in the directory.")
+        return img_height, img_width
+
+    # Load the image and its dimensions
+    img = np.array(cv2.imread(img_path))
+    img_height, img_width = img.shape[:2]
+    return img_height, img_width
 
 
 def get_image_path_from_json(json_file):
@@ -137,19 +151,140 @@ def get_image_path_from_json(json_file):
     return [entry['file_upload'] for entry in annotations_data]
 
 
+def organize_data_into_subdirs(data_dir):
+    """
+    Sorts files in a directory by sample name and puts them in corresponding folders.
+
+    Args:
+    data_dir (str): path to directory containing the files to be sorted.
+
+    Returns:
+    files (list): list of paths to all files in data_dir
+    """
+    # List all files in data_dir
+    file_list = os.listdir(data_dir)
+
+    for file in file_list:
+        # Check if it's a file (not a directory)
+        if os.path.isfile(os.path.join(data_dir, file)):
+            # Split the file name by '-' or '_' and get the sample name
+            sample_name = file.split(
+                '-')[0] if '-' in file else file.split('_')[0]
+
+            # Create a new directory for the sample if it doesn't exist
+            sample_dir = os.path.join(data_dir, sample_name)
+            if not os.path.exists(sample_dir):
+                os.makedirs(sample_dir)
+
+            # Move the file to the new directory
+            file_path = os.path.join(data_dir, file)
+            target_path = os.path.join(sample_dir, file)
+            if not os.path.exists(target_path):
+                shutil.move(file_path, target_path)
+        else:
+            print("Skipping. File(s) are already in the correct structure.")
+
+    print("Done!")
+    return file_list
+
+
 def save_binary_masks_as_images(binary_mask, output_dir, name):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    mask_image = (binary_mask * 255).astype(np.uint8)
+    # assumes pixel values [0,255]
+    mask_image = (binary_mask).astype(np.uint8)
     # Save the binary mask as an image
     output_path = os.path.join(
         output_dir, f'{os.path.splitext(name)[0]}_mask.jpg')
-    print(output_path)
+    # print(output_path)
     cv2.imwrite(output_path, mask_image)
 
 
 # Load all the data up
+def generate_binary_masks(annotation_file, data_dir):
+    print("Writing binary mask images to .jpg using annotations file...")
+    # Load the annotations
+    annotations = load_annotations_from_json(annotation_file)
+
+    with alive_bar(len(annotations)) as b:
+        for annotation in annotations:
+            sample_name = annotation.image_name
+            img_height, img_width = get_image_size(annotation, data_dir)
+
+            binary_mask = rle_to_binary_mask(
+                annotation.rle_mask, img_height, img_width)
+
+            dir_name = sample_name.split("_")[0]
+            mask_top_dir = os.path.join(data_dir, "masks")
+            bin_mask_img_output_dir = os.path.join(mask_top_dir, dir_name)
+            save_binary_masks_as_images(binary_mask,
+                                        output_dir=bin_mask_img_output_dir,
+                                        name=sample_name)
+            b()
+
+
+def create_train_val_test_lists(data_dir, val_split=0.2):
+    """
+    Creates lists of training, validation, and testing image-mask pairs based on the given directory structure.
+
+    Args:
+        data_dir (str): Path to the directory containing the "images" and "masks" subdirectories.
+        val_split (float): Proportion of the dataset to use for validation. Default is 0.2.
+
+    Returns:
+        Tuple: 5 lists containing (1) image file paths for training, (2) mask file paths for training,
+            and (3) image file paths for validation, (4) mask file paths for validation,
+            and (5) image file paths for testing (i.e., missing masks).
+    """
+
+    train_images = []
+    train_masks = []
+    test_images = []
+    directories = os.listdir(os.path.join(data_dir, 'images'))
+    num_directories = len(directories)
+    with alive_bar(num_directories) as bar:
+        for i, sample_dir in enumerate(directories):
+            if os.path.isdir(os.path.join(data_dir, 'images', sample_dir)):
+
+                sample_image_dir = os.path.join(data_dir, 'images', sample_dir)
+                sample_mask_dir = os.path.join(data_dir, 'masks', sample_dir)
+
+                if os.path.isdir(sample_mask_dir):
+                    for image_file in sorted(os.listdir(sample_image_dir)):
+                        if image_file.endswith('.jpg'):
+                            image_path = os.path.join(
+                                sample_image_dir, image_file)
+                            mask_file_name = os.path.splitext(os.path.basename(image_path))[
+                                0] + "_mask.jpg"
+                            mask_path = os.path.join(
+                                sample_mask_dir, mask_file_name)
+                            # print(image_path, mask_path)
+
+                            if os.path.isfile(mask_path):
+                                train_images.append(image_path)
+                                train_masks.append(mask_path)
+                            else:
+                                test_images.append(image_path)
+                else:
+                    for image_file in os.listdir(sample_image_dir):
+                        if image_file.endswith('.jpg'):
+                            test_images.append(os.path.join(
+                                sample_image_dir, image_file))
+            bar()
+
+    # Split training data into training and validation sets
+    num_val = int(len(train_images) * val_split)
+    train_images, val_images = train_images[num_val:], train_images[:num_val]
+    train_masks, val_masks = train_masks[num_val:], train_masks[:num_val]
+
+    print(f'Training images length: {len(train_images)}')
+    print(f'Training masks length: {len(train_masks)}')
+    print(f'Validation images length: {len(val_images)}')
+    print(f'Validation masks length: {len(val_masks)}')
+    print(f'Testing images length: {len(test_images)}')
+
+    return train_images, train_masks, val_images, val_masks, test_images
 
 
 def load_data(annotation_file, data_dir):
@@ -183,19 +318,6 @@ def load_data(annotation_file, data_dir):
         img_height, img_width = img.shape[:2]
         img = resize(img, (256, 256), anti_aliasing=True)
 
-        # Decode the RLE mask to a binary image
-        binary_mask = rle_to_binary_mask(
-            annotation.rle_mask, img_height, img_width)
-        binary_mask = binary_mask / 255.
-        binary_mask = resize(binary_mask, (256, 256), anti_aliasing=True)
-
-        dir_name = img_name.split("_")[0]
-        bin_mask_img_output_dir = os.path.join(
-            training_data_top_dir, 'Lauren_PreEclampsia_Masks', dir_name)
-        save_binary_masks_as_images(binary_mask,
-                                    output_dir=bin_mask_img_output_dir,
-                                    name=img_name)
-
         # print(f'Binary mask shape: {binary_mask.shape}')
         # binary_mask = cv2.cvtColor(binary_mask, cv2.COLOR_BGR2GRAY) / 255.
 
@@ -217,25 +339,38 @@ def load_data(annotation_file, data_dir):
     return data
 
 
-training_data_top_dir = 'data/Lauren_PreEclampsia_Data/Lauren_PreEclampsia_jpg_training_data'
-annotation_file = os.path.join(training_data_top_dir, 'annotations.json')
-data_dir = os.path.join(training_data_top_dir,
-                        'Lauren_PreEclampsia_Raw_Images')
+other_testing_dir = 'data/Lauren_PreEclampsia_Data/test'
+training_data_top_dir = 'data/Lauren_PreEclampsia_Data/train'
+annotation_file = os.path.join(
+    training_data_top_dir, '2023-04-10_annotations.json')
+images_directory = os.path.join(training_data_top_dir, 'images')
+masks_directory = os.path.join(training_data_top_dir, 'masks')
 
-model_path = 'output/segmentation_models/unet_binseg_50epoch_3960images_8batchsize/unet_binseg_50epoch_3960images_8batchsize.hdf5'
-file_name = 'endotheliosis_seg.hdf5'
+# this is how i trained the big model, so all must be resized to 256 x 256
 square_size = 256
 
-# crazy workflow but you need to
-# 1 load in the data
-data = load_data(annotation_file, data_dir)
+# generate the binary masks from the annotation file and raw image data
+# generate_binary_masks(annotation_file=annotation_file,
+#                       data_dir=training_data_top_dir)
+
+organize_data_into_subdirs(data_dir=other_testing_dir)
+
+train_images, train_masks, val_images, val_masks, test_images = create_train_val_test_lists(
+    data_dir=training_data_top_dir, val_split=0.2)
+
+# print(train_images)
+# print(train_masks)
+# print(val_images)
+# print(val_masks)
+# print(test_images)
+# data = load_data(annotation_file, data_dir)
 
 
-names = [item for item in data.keys()]
-X_test = np.vstack([data[item]['X'] for item in data.keys()])
-y_test = np.vstack([data[item]['y'] for item in data.keys()])
-scores = np.array([data[item]['score'] for item in data.keys()])
-print(X_test.shape)
-print(y_test.shape)
-print(scores.shape)
-print(names)
+# names = [item for item in data.keys()]
+# X_test = np.vstack([data[item]['X'] for item in data.keys()])
+# y_test = np.vstack([data[item]['y'] for item in data.keys()])
+# scores = np.array([data[item]['score'] for item in data.keys()])
+# print(X_test.shape)
+# print(y_test.shape)
+# print(scores.shape)
+# print(names)
