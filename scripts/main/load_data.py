@@ -1,4 +1,5 @@
 
+import pickle
 import shutil
 import random
 import os
@@ -89,6 +90,27 @@ def rle_to_binary_mask(rle: List[int], height: int, width: int) -> np.array:
 # extract the annotations from the json file produced by label-studio
 
 
+def get_scores_from_annotations(annotations, cache_dir):
+    scores = {}
+    for annotation in sorted(annotations, key=lambda x: os.path.splitext(os.path.basename(x.image_name))[0]):
+        name = os.path.splitext(os.path.basename(annotation.image_name))[0]
+        if annotation.score is not None:
+            score = float(annotation.score)
+        else:
+            score = None
+        if name not in scores:
+            scores[name] = 0.
+        scores[name] = score
+
+    sorted_scores = {k: v for k, v in sorted(
+        scores.items(), key=lambda item: item[0])}
+
+    pkl_file = os.path.join(cache_dir, 'scores.pickle')
+    with open(pkl_file, 'wb') as f:
+        pickle.dump(sorted_scores, f)
+    return scores
+
+
 def find_image_path(image_name, root_directory):
     for root, dirs, files in os.walk(root_directory):
         for file in files:
@@ -151,6 +173,21 @@ def get_image_path_from_json(json_file):
     return [entry['file_upload'] for entry in annotations_data]
 
 
+def list_files(path):
+    # Create an empty list to store file paths
+    file_list = []
+
+    # Walk the directory tree
+    for root, dirs, files in os.walk(path):
+        # Iterate over the files in the current directory
+        for file in files:
+            # Append the file path to the list
+            file_list.append(os.path.join(root, file))
+
+    # Return the list of file paths
+    return file_list
+
+
 def organize_data_into_subdirs(data_dir):
     """
     Sorts files in a directory by sample name and puts them in corresponding folders.
@@ -163,7 +200,6 @@ def organize_data_into_subdirs(data_dir):
     """
     # List all files in data_dir
     file_list = os.listdir(data_dir)
-
     for file in file_list:
         # Check if it's a file (not a directory)
         if os.path.isfile(os.path.join(data_dir, file)):
@@ -184,8 +220,10 @@ def organize_data_into_subdirs(data_dir):
         else:
             print("Skipping. File(s) are already in the correct structure.")
 
+    all_files = list_files(data_dir)
+
     print("Done!")
-    return file_list
+    return all_files
 
 
 def save_binary_masks_as_images(binary_mask, output_dir, name):
@@ -218,10 +256,39 @@ def generate_binary_masks(annotation_file, data_dir):
             dir_name = sample_name.split("_")[0]
             mask_top_dir = os.path.join(data_dir, "masks")
             bin_mask_img_output_dir = os.path.join(mask_top_dir, dir_name)
+
             save_binary_masks_as_images(binary_mask,
                                         output_dir=bin_mask_img_output_dir,
                                         name=sample_name)
             b()
+
+
+def check_sort_order(train_images, train_masks, val_images, val_masks, test_images):
+
+    # check if they are sorted in the same order
+    if not arrays_sorted_same_order(train_images, train_masks) or \
+       not arrays_sorted_same_order(val_images, val_masks):
+        raise ValueError(
+            "Images and masks arrays are not sorted in the same order!")
+
+    # return all the arrays if sorted in the same order
+    print("Images and masks are sorted in the correct order.")
+
+
+def arrays_sorted_same_order(array1, array2):
+    """
+    Tests whether two arrays are sorted in the same order.
+
+    Args:
+        array1 (np.ndarray): First array to compare.
+        array2 (np.ndarray): Second array to compare.
+
+    Returns:
+        bool: True if the arrays are sorted in the same order, False otherwise.
+    """
+    sort_idx_1 = np.argsort(array1)
+    sort_idx_2 = np.argsort(array2)
+    return np.array_equal(sort_idx_1, sort_idx_2)
 
 
 def create_train_val_test_lists(data_dir, val_split=0.2):
@@ -243,6 +310,7 @@ def create_train_val_test_lists(data_dir, val_split=0.2):
     test_images = []
     directories = os.listdir(os.path.join(data_dir, 'images'))
     num_directories = len(directories)
+    print("Collecting training, validation, and test data paths...")
     with alive_bar(num_directories) as bar:
         for i, sample_dir in enumerate(directories):
             if os.path.isdir(os.path.join(data_dir, 'images', sample_dir)):
@@ -284,63 +352,94 @@ def create_train_val_test_lists(data_dir, val_split=0.2):
     print(f'Validation masks length: {len(val_masks)}')
     print(f'Testing images length: {len(test_images)}')
 
+    # just convert them to np.arrays, easier to work with
+    train_images = sorted(np.array(train_images))
+    train_masks = sorted(np.array(train_masks))
+    val_images = sorted(np.array(val_images))
+    val_masks = sorted(np.array(val_masks))
+    test_images = sorted(np.array(test_images))
+    # check the sort order
+    check_sort_order(train_images, train_masks,
+                     val_images, val_masks, test_images)
+    print("Done!")
     return train_images, train_masks, val_images, val_masks, test_images
 
 
-def load_data(annotation_file, data_dir):
-    """Load data, convert rle mask to 
-
-    Args:
-        annotation_file (_type_): _description_
-        data_dir (_type_): _description_
-
-    Returns:
-        _type_: _description_
-    """
-    data = {}
-
-    # Load the annotations
-    annotations = load_annotations_from_json(annotation_file)
-
-    for annotation in annotations:
-        img_name = annotation.image_name
-        img_path = find_image_path(img_name, root_directory=data_dir)
-
-        if img_path is None:
-            print(f"Image file {img_name} not found in the directory.")
-            continue
-
-        # Load the image and its dimensions
-        img = np.array(cv2.imread(img_path))
-        # print(img.shape)
-        # convert to grayscale and normalize
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) / 255.
-        img_height, img_width = img.shape[:2]
-        img = resize(img, (256, 256), anti_aliasing=True)
-
-        # print(f'Binary mask shape: {binary_mask.shape}')
-        # binary_mask = cv2.cvtColor(binary_mask, cv2.COLOR_BGR2GRAY) / 255.
-
-        score = annotation.score
-        # Ensure that score is a float: [0.0, 0.5, 1.0, 1.5, etc]
-        if score is not None:
-            score = float(score)
-
-        # Add the features and score to the dictionary
-        if img_name not in data:
-
-            data[img_name] = {'X': [], 'y': [], 'score': None}
-        data[img_name]['X'].append(np.expand_dims(img, axis=-1))
-        data[img_name]['y'].append(np.expand_dims(binary_mask, axis=-1))
-        data[img_name]['score'] = score
-
-    data[img_name]['X'] = np.array(data[img_name]['X'])
-    data[img_name]['y'] = np.array(data[img_name]['y'])
-    return data
+def preprocess_data(path, size):
+    # Load the image and its dimensions
+    img = np.array(cv2.imread(path))
+    # print(img.shape)
+    # convert to grayscale and normalize
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) / 255.
+    img = np.expand_dims(resize(img, (size, size)), axis=-1)
+    return img
 
 
-other_testing_dir = 'data/Lauren_PreEclampsia_Data/test'
-training_data_top_dir = 'data/Lauren_PreEclampsia_Data/train'
+def generate_final_dataset(train_images_paths, train_masks_paths, val_images_paths, val_masks_paths, test_images_paths, size, cache_dir):
+    print("Processing all the data...")
+    os.makedirs(cache_dir, exist_ok=True)
+
+    # Check if cached data exists and load it
+    cache_paths = [
+        os.path.join(cache_dir, f"{name}.pickle")
+        for name in ["train_images", "train_masks", "val_images", "val_masks", "test_images"]
+    ]
+    cache_exists = all(os.path.exists(path) for path in cache_paths)
+    if cache_exists:
+        print("Loading data from cache...")
+        with open(cache_paths[0], "rb") as f:
+            train_images = pickle.load(f)
+        with open(cache_paths[1], "rb") as f:
+            train_masks = pickle.load(f)
+        with open(cache_paths[2], "rb") as f:
+            val_images = pickle.load(f)
+        with open(cache_paths[3], "rb") as f:
+            val_masks = pickle.load(f)
+        with open(cache_paths[4], "rb") as f:
+            test_images = pickle.load(f)
+        print("Done!")
+        return train_images, train_masks, val_images, val_masks, test_images
+
+    # Otherwise, process the data
+    train_images = np.array([preprocess_data(p, size)
+                            for p in train_images_paths])
+    with open(cache_paths[0], "wb") as f:
+        pickle.dump(train_images, f)
+    print("Train images done.")
+
+    train_masks = np.array([preprocess_data(p, size)
+                            for p in train_masks_paths])
+    with open(cache_paths[1], "wb") as f:
+        pickle.dump(train_masks, f)
+    print("Train masks done.")
+
+    val_images = np.array([preprocess_data(p, size)
+                           for p in val_images_paths])
+    with open(cache_paths[2], "wb") as f:
+        pickle.dump(val_images, f)
+    print("Validation images done.")
+
+    val_masks = np.array([preprocess_data(p, size)
+                          for p in val_masks_paths])
+    with open(cache_paths[3], "wb") as f:
+        pickle.dump(val_masks, f)
+    print("Validation masks done.")
+
+    test_images = np.array([preprocess_data(p, size)
+                            for p in test_images_paths])
+    with open(cache_paths[4], "wb") as f:
+        pickle.dump(test_images, f)
+    print("Test images done.")
+
+    print("Done!")
+    return train_images, train_masks, val_images, val_masks, test_images
+
+
+top_data_directory = 'data/Lauren_PreEclampsia_Data'
+testing_data_top_dir = os.path.join(top_data_directory, 'test')
+training_data_top_dir = os.path.join(top_data_directory, 'train')
+cache_dir_path = os.path.join(top_data_directory, 'cache')
+
 annotation_file = os.path.join(
     training_data_top_dir, '2023-04-10_annotations.json')
 images_directory = os.path.join(training_data_top_dir, 'images')
@@ -353,24 +452,31 @@ square_size = 256
 # generate_binary_masks(annotation_file=annotation_file,
 #                       data_dir=training_data_top_dir)
 
-organize_data_into_subdirs(data_dir=other_testing_dir)
+test_images_1_paths = organize_data_into_subdirs(data_dir=testing_data_top_dir)
 
-train_images, train_masks, val_images, val_masks, test_images = create_train_val_test_lists(
+train_images_paths, train_masks_paths, val_images_paths, val_masks_paths, test_images_2_paths = create_train_val_test_lists(
     data_dir=training_data_top_dir, val_split=0.2)
 
-# print(train_images)
-# print(train_masks)
-# print(val_images)
-# print(val_masks)
-# print(test_images)
-# data = load_data(annotation_file, data_dir)
+test_images_paths = np.concatenate((test_images_1_paths, test_images_2_paths))
+print(f'Total test images: {test_images_paths.shape}')
 
+train_images, train_masks, val_images, val_masks, test_images = generate_final_dataset(
+    train_images_paths, train_masks_paths, val_images_paths, val_masks_paths, test_images_paths, size=square_size, cache_dir=cache_dir_path)
 
-# names = [item for item in data.keys()]
-# X_test = np.vstack([data[item]['X'] for item in data.keys()])
-# y_test = np.vstack([data[item]['y'] for item in data.keys()])
-# scores = np.array([data[item]['score'] for item in data.keys()])
-# print(X_test.shape)
-# print(y_test.shape)
-# print(scores.shape)
-# print(names)
+print(f'Training images shape: {train_images.shape}')
+print(f'Training masks shape: {train_masks.shape}')
+print(f'Validation images shape: {val_images.shape}')
+print(f'Validation masks shape: {val_masks.shape}')
+print(f'Testing images shape: {test_images.shape}')
+
+# organize the scores at last
+print('Writing scores-image mapping to cache dir...')
+annotations = load_annotations_from_json(annotation_file)
+scores = get_scores_from_annotations(annotations, cache_dir=cache_dir_path)
+# print(train_images_paths)
+# test_ = [os.path.splitext(os.path.basename(f))[0] for f in train_images_paths]
+# print(scores.keys())
+# print(test_)
+# print(arrays_sorted_same_order(scores.keys(), test_))
+
+print('Done!')
