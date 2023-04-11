@@ -22,13 +22,7 @@ from skimage.transform import resize
 import pickle
 
 
-def openness_score(glomerulus_contour, preprocessed_image):
-    # Create a binary mask with the same dimensions as the input image
-    mask = np.zeros_like(preprocessed_image, dtype=np.uint8)
-
-    # Fill the glomerulus contour with white color
-    cv2.drawContours(mask, [glomerulus_contour], 0, 255, -1)
-
+def openness_score(mask, preprocessed_image):
     # Calculate the area of the glomerulus (white pixels in the mask)
     total_area = cv2.countNonZero(mask)
 
@@ -96,6 +90,28 @@ model = tf.keras.models.load_model(new_model_full_path, compile=False)
 y_pred = model.predict(X_test)
 
 # threshold to distinguish pixel is glom or not
-binary_mask = y_pred > 0.5
+binary_masks = y_pred > 0.5
 
-region_of_interest = X_test[binary_mask]
+# create a list to store the region of interest for each image
+regions_of_interest = []
+
+
+# Loop over each test image and its corresponding binary mask
+for i in range(len(X_test))[0]:
+    image = X_test[i]
+    binary_mask = binary_masks[i]
+
+    # Use np.where to get the indices of the segmented region
+    indices = np.where(binary_mask)
+
+    # Extract the region of interest from the original image
+    region_of_interest = image[indices]
+
+    # Perform analysis on the segmented region as desired
+    # ...
+    perc_open = openness_score(region_of_interest, image)
+    print(perc_open)
+
+    # Optionally, visualize the segmented region for debugging purposes
+    plt.imshow(region_of_interest)
+    plt.show()

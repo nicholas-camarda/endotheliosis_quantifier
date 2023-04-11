@@ -1,3 +1,8 @@
+
+## Virtual environment
+
+activate my_tf_env
+
 ## Get ready to script
 brew install geos conda create -n histoTK python=3.9 conda activate histoTK pip install shapely==1.7.1
 
