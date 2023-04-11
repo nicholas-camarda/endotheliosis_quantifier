@@ -449,8 +449,8 @@ masks_directory = os.path.join(training_data_top_dir, 'masks')
 square_size = 256
 
 # generate the binary masks from the annotation file and raw image data
-# generate_binary_masks(annotation_file=annotation_file,
-#                       data_dir=training_data_top_dir)
+generate_binary_masks(annotation_file=annotation_file,
+                      data_dir=training_data_top_dir)
 
 test_images_1_paths = organize_data_into_subdirs(data_dir=testing_data_top_dir)
 
