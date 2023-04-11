@@ -1,27 +1,20 @@
 
 from datetime import datetime
-from keras.applications.vgg16 import VGG16
-from keras.models import Model
 import cv2
 import numpy as np
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split
-import json
 import os
 import pandas as pd
 from typing import List
 
 import segmentation_models as sm
 import tensorflow as tf
-import keras
 from tensorflow.keras.models import load_model
 from tensorflow.keras.metrics import MeanIoU
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.layers import Dense
 from matplotlib import pyplot as plt
 from skimage import io
-import sys
 from skimage.io import imread, imsave
 from skimage.transform import resize
 import pickle
@@ -75,7 +68,7 @@ def plot_history(history, output_dir, file_name):
 def check_model_performance(model, X_test, y_test, final_plots_dir, n_classes_iou=2, threshold=0.5):
     y_pred = model.predict(X_test)
 
-    # threshold to distinguish pixel is mito or not
+    # threshold to distinguish pixel is glom or not
 
     y_pred_thresholded = y_pred > threshold
 
@@ -126,44 +119,6 @@ def check_model_performance(model, X_test, y_test, final_plots_dir, n_classes_io
         plt.clf()
         plt.close()
         # plt.show()
-
-
-def openness_score(glomerulus_contour, preprocessed_image):
-    # Create a binary mask with the same dimensions as the input image
-    mask = np.zeros_like(preprocessed_image, dtype=np.uint8)
-
-    # Fill the glomerulus contour with white color
-    cv2.drawContours(mask, [glomerulus_contour], 0, 255, -1)
-
-    # Calculate the area of the glomerulus (white pixels in the mask)
-    total_area = cv2.countNonZero(mask)
-
-    # Calculate the area of open capillaries (white pixels in the preprocessed image within the mask)
-    open_area = cv2.countNonZero(cv2.bitwise_and(preprocessed_image, mask))
-
-    # Calculate the ratio of open area to total area
-    score = open_area / total_area if total_area > 0 else 0
-
-    return score
-
-
-def grade_glomerulus(openness_score):
-    # Define the threshold values for each grade based on your ground-truth data
-    grade_thresholds = [0.6, 0.4, 0.2]  # 20% open, 40% open, 60% open
-
-    # Grade the glomerulus based on the openness score
-    for i, threshold in enumerate(grade_thresholds):
-        if openness_score >= threshold:
-            return i
-    return len(grade_thresholds)
-
-
-def load_pickled_data(file_path):
-    # Open the pickle file
-    with open(file_path, 'rb') as f:
-        # Load the data from the file
-        data = pickle.load(f)
-    return data
 
 
 top_data_directory = 'data/Lauren_PreEclampsia_Data'
@@ -239,45 +194,6 @@ y_test = y_val
 check_model_performance(model=model, X_test=X_test, y_test=y_test, n_classes_iou=2,
                         threshold=0.5, final_plots_dir=final_plots_dir)
 
-# # # Test on one image
-# # image_path = 'jpg_data/Lauren_PreEclampsia_Raw_Images/T30/T30_Image0.jpg'
-# # result = process_new_image(image_path, endotheliosisQuantifierModel)
-# # print("Results:")
-# # print(json.dumps(result, indent=2))
 
-
-# # RUN THIS IN A LOOP
-# # images_dir = 'jpg_data/Lauren_PreEclampsia_Raw_Images'
-# # output_dir = 'output'
-
-# # # create an empty dataframe to store the results
-# # results_df = pd.DataFrame(columns=['subdirectory', 'image', 'result'])
-
-# # # loop through subdirectories and files
-# # for subdir, dirs, files in os.walk(images_dir):
-# #     print(subdir)
-# #     for file in files:
-# #         # check if file is a .jpg
-# #         if file.endswith('.jpg') or file.endswith('.jpeg'):
-# #             # construct the full path to the image
-# #             image_path = os.path.join(subdir, file)
-# #             # process the image and store the result
-# #             result = process_new_image(image_path, endotheliosisQuantifierModel)
-# #             print(result)
-# #             # add the result to the dataframe
-# #             results_df = results_df.append({'subdirectory': subdir,
-# #                                             'image': file,
-# #                                             'result': result},
-# #                                            ignore_index=True)
-
-# # # save the results to a CSV file
-# # results_df.to_csv(os.path.join(output_dir, 'results.csv'), index=False)
-
-# # # group the results by subdirectory and image, and calculate the mean result
-# # avg_results_df = results_df.groupby(['subdirectory', 'image']).mean().reset_index()
-
-# # # save the average results to a CSV file
-# # avg_results_df.to_csv(os.path.join(output_dir, 'average_results.csv'), index=False)
-
-
-# # print("Done!")
+# now use this model to analyze the glomeruli and grade endotheliosis
+# scale = 0.6  # microns per pixel
