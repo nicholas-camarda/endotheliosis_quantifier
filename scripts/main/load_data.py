@@ -15,6 +15,7 @@ from skimage.io import imread, imsave
 import os
 import re
 from alive_progress import alive_bar
+from alive_progress import alive_it
 
 
 class Annotation:
@@ -206,8 +207,8 @@ def organize_data_into_subdirs(data_dir):
         # Check if it's a file (not a directory)
         if os.path.isfile(os.path.join(data_dir, file)):
             # Split the file name by '-' or '_' and get the sample name
-            sample_name = file.split(
-                '-')[0] if '-' in file else file.split('_')[0]
+            sample_name_temp = file.split('-')[0] if '-' in file else file.split('_')[0]
+            sample_name = os.path.splitext(os.path.basename(sample_name_temp))[0]
 
             # Create a new directory for the sample if it doesn't exist
             sample_dir = os.path.join(data_dir, sample_name)
@@ -224,9 +225,12 @@ def organize_data_into_subdirs(data_dir):
 
     all_files = list_files(data_dir)
     all_sample_names_dict = {}
+    # print(all_files)
     for file in all_files:
-        sample_name = file.split(
-            '-')[0] if '-' in file else file.split('_')[0]
+
+        # sample_name_temp = file.split('-')[0] if '-' in file else file.split('_')[0]
+        sample_name = os.path.splitext(os.path.basename(file))[0]
+
         if sample_name not in all_sample_names_dict:
             all_sample_names_dict[sample_name] = ""
         all_sample_names_dict[sample_name] = file
@@ -441,7 +445,7 @@ def create_train_val_test_lists(data_dir):
     return train_images, train_masks, test_images, train_data_dict, test_data_dict
 
 
-def preprocess_data_image(path, size):
+def preprocess_data_color(path, size):
 
     # Load the image and its dimensions
     img = np.array(cv2.imread(path))
@@ -450,17 +454,10 @@ def preprocess_data_image(path, size):
     # print(color_img.shape
     color_img = color_img / 255.
 
-    # bw image, resized, expanded dims, scaled
-    bw_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    bw_img = resize(bw_img, output_shape=(size, size))
-    bw_img = np.expand_dims(bw_img, axis=-1)
-    # print(bw_img.shape)
-    bw_img = bw_img / 255.
-
-    return bw_img, color_img
+    return color_img
 
 
-def preprocess_data_mask(path, size):
+def preprocess_data_bw(path, size):
 
     # Load the image and its dimensions
     img = np.array(cv2.imread(path))
@@ -483,8 +480,10 @@ def generate_final_dataset(train_images_paths, train_masks_paths, test_images_pa
     # Check if cached data exists and load it
     cache_paths = [
         os.path.join(cache_dir, f"{name}.pickle")
-        for name in ["train_images", "train_masks", "test_images", "val_images", "val_masks", "train_data_dict", "test_data_dict",
-                     "train_images_color", "val_images_color", "train_masks_color", "val_masks_color"]
+        for name in ["train_images",  "train_images_color", "train_masks",
+                     "val_images", "val_images_color", "val_masks",
+                     "test_images", "test_images_color",
+                     "train_data_dict", "test_data_dict"]
     ]
     cache_exists = all(os.path.exists(path) for path in cache_paths)
     if cache_exists:
@@ -492,47 +491,51 @@ def generate_final_dataset(train_images_paths, train_masks_paths, test_images_pa
         with open(cache_paths[0], "rb") as f:
             train_images = pickle.load(f)
         with open(cache_paths[1], "rb") as f:
-            train_masks = pickle.load(f)
+            train_images_color = pickle.load(f)
         with open(cache_paths[2], "rb") as f:
-            test_images = pickle.load(f)
+            train_masks = pickle.load(f)
+
         with open(cache_paths[3], "rb") as f:
             val_images = pickle.load(f)
         with open(cache_paths[4], "rb") as f:
-            val_masks = pickle.load(f)
-        with open(cache_paths[5], "rb") as f:
-            train_data_dict = pickle.load(f)
-        with open(cache_paths[6], "rb") as f:
-            test_data_dict = pickle.load(f)
-        # color images
-        with open(cache_paths[7], "rb") as f:
-            train_images_color = pickle.load(f)
-        with open(cache_paths[8], "rb") as f:
             val_images_color = pickle.load(f)
+        with open(cache_paths[5], "rb") as f:
+            val_masks = pickle.load(f)
+
+        with open(cache_paths[6], "rb") as f:
+            test_images = pickle.load(f)
+        with open(cache_paths[7], "rb") as f:
+            test_images_color = pickle.load(f)
+
+        with open(cache_paths[8], "rb") as f:
+            train_data_dict = pickle.load(f)
         with open(cache_paths[9], "rb") as f:
-            train_masks_color = pickle.load(f)
-        with open(cache_paths[10], "rb") as f:
-            val_masks_color = pickle.load(f)
+            test_data_dict = pickle.load(f)
 
         print("Done!")
-        return train_images, train_masks, val_images, val_masks, test_images, train_data_dict, test_data_dict, train_images_color, val_images_color, train_masks_color, val_masks_color
+        return train_images, train_images_color, train_masks, val_images, val_images_color, val_masks, test_images, test_images_color, train_data_dict, test_data_dict
 
     # Otherwise, process the data
 
     # First, generate the training and validation split
-    num_val = int(val_split * len(train_images_paths))
-    train_images_all, train_images_all_color = np.array([preprocess_data_image(p, size, 'image') for p in train_images_paths])
 
+    num_val = int(val_split * len(train_images_paths))
+    print("Preprocessing training image (bw) data...")
+    train_images_all = np.array([preprocess_data_bw(p, size) for p in alive_it(train_images_paths)])
+    print("Preprocessing training image (color) data...")
+    train_images_all_color = np.array([preprocess_data_color(p, size) for p in alive_it(train_images_paths)])
+
+    print(f"Separating training and validation data using split percent: {val_split}")
     train_images = train_images_all[num_val:]
     val_images = train_images_all[:num_val]
     train_images_color = train_images_all_color[num_val:]
     val_images_color = train_images_all_color[:num_val]
 
-    train_masks_all, train_masks_all_color = np.array([preprocess_data_mask(p, size, 'mask') for p in train_masks_paths])
+    print("Preprocessing training mask data...")
+    train_masks_all = np.array([preprocess_data_bw(p, size) for p in alive_it(train_masks_paths)])
 
     train_masks = train_masks_all[num_val:]
     val_masks = train_masks_all[:num_val]
-    train_masks_color = train_masks_all_color[num_val:]
-    val_masks_color = train_masks_all_color[:num_val]
 
     # Then, save everything
     # train and val (black and white images) images
@@ -540,62 +543,59 @@ def generate_final_dataset(train_images_paths, train_masks_paths, test_images_pa
         pickle.dump(train_images, f)
     print(f"Train images done with shape: {train_images.shape}")
 
+    # train images color
     with open(cache_paths[1], "wb") as f:
+        pickle.dump(train_images_color, f)
+    print(f"Train images (color) done with shape: {train_images_color.shape}")
+
+    # train masks
+    with open(cache_paths[2], "wb") as f:
         pickle.dump(train_masks, f)
     print(f"Train masks done with shape: {train_masks.shape}")
 
-    # test images
-    test_images, test_images_color = np.array([preprocess_data_image(p, size)
-                                               for p in test_images_paths])
-    with open(cache_paths[2], "wb") as f:
-        pickle.dump(test_images, f)
-    print(f"Test images done with shape: {test_images.shape}")
-
-    with open(cache_paths[3], "wb") as f:
-        pickle.dump(test_images_color, f)
-    print(f"Test images (color) done with shape: {test_images_color.shape}")
-
     # val images
-    with open(cache_paths[4], "wb") as f:
+    with open(cache_paths[3], "wb") as f:
         pickle.dump(val_images, f)
     print(f"Validation images done with shape: {val_images.shape}")
+
+    # val images color
+    with open(cache_paths[4], "wb") as f:
+        pickle.dump(val_images_color, f)
+    print(f"Validation images (color) done with shape: {val_images_color.shape}")
 
     # val masks
     with open(cache_paths[5], "wb") as f:
         pickle.dump(val_masks, f)
     print(f"Validation masks done with shape: {val_masks.shape}")
 
-    # train data dict
+    # test images process
+    print("Preprocessing testing (bw) image data...")
+    test_images = np.array([preprocess_data_bw(p, size) for p in alive_it(test_images_paths)])
+    print("Preprocessing testing (color) image data...")
+    test_images_color = np.array([preprocess_data_color(p, size) for p in alive_it(test_images_paths)])
+
+    # test images
     with open(cache_paths[6], "wb") as f:
+        pickle.dump(test_images, f)
+    print(f"Test images done with shape: {test_images.shape}")
+
+    # test images color
+    with open(cache_paths[7], "wb") as f:
+        pickle.dump(test_images_color, f)
+    print(f"Test images (color) done with shape: {test_images_color.shape}")
+
+    # train data dict
+    with open(cache_paths[8], "wb") as f:
         pickle.dump(train_data_dict, f)
     print(f"Ordered training dictionary done with length: {len(train_data_dict.items())}.")
 
     # test data dict
-    with open(cache_paths[7], "wb") as f:
+    with open(cache_paths[9], "wb") as f:
         pickle.dump(test_data_dict, f)
     print(f"Ordered testing dictionary done with length: {len(test_data_dict.items())}.")
 
-    # train images color
-    with open(cache_paths[8], "wb") as f:
-        pickle.dump(train_images_color, f)
-    print(f"Train images (color) done with shape: {train_images_color.shape}")
-
-    # val images color
-    with open(cache_paths[9], "wb") as f:
-        pickle.dump(val_images_color, f)
-    print(f"Validation images (color) done with shape: {val_images_color.shape}")
-
-    # train masks color
-    with open(cache_paths[10], "wb") as f:
-        pickle.dump(train_masks_color, f)
-    print(f"Train masks (color) done with shape: {train_masks_color.shape}")
-
-    with open(cache_paths[11], "wb") as f:
-        pickle.dump(val_masks_color, f)
-    print(f"Validation masks (color) done with shape: {val_masks.shape}")
-
     print("Done!")
-    # return train_images, train_masks, val_images, val_masks,  test_images, train_data_dict, test_data_dict
+    return train_images, train_images_color, train_masks, val_images, val_images_color, val_masks, test_images, test_images_color, train_data_dict, test_data_dict
 
 
 top_data_directory = 'data/Lauren_PreEclampsia_Data'
