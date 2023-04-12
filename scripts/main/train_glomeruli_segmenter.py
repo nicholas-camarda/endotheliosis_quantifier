@@ -121,6 +121,13 @@ def check_model_performance(model, X_test, y_test, final_plots_dir, n_classes_io
         # plt.show()
 
 
+def load_pickled_data(file_path):
+    # Open the pickle file
+    with open(file_path, 'rb') as f:
+        # Load the data from the file
+        data = pickle.load(f)
+    return data
+
 top_data_directory = 'data/Lauren_PreEclampsia_Data'
 cache_dir_path = os.path.join(top_data_directory, 'cache')
 top_output_directory = 'output/segmentation_models'

@@ -1,4 +1,12 @@
 
+from keras.applications.vgg16 import VGG16
+from keras.models import Model
+from scipy import stats
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 from datetime import datetime
 import cv2
 import numpy as np
@@ -11,9 +19,6 @@ import segmentation_models as sm
 import tensorflow as tf
 import keras
 from tensorflow.keras.models import load_model
-from tensorflow.keras.metrics import MeanIoU
-from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.layers import Dense
 from matplotlib import pyplot as plt
 from skimage import io
 import sys
@@ -75,6 +80,19 @@ def load_pickled_data(file_path):
     return data
 
 
+def find_none_indices(arr):
+    return np.argwhere(np.vectorize(lambda x: x is None)(arr))
+
+
+def remove_none_elements(arr, none_indices):
+    if not isinstance(arr, np.ndarray):
+        raise ValueError("Input should be a numpy array")
+
+    mask = np.ones(arr.shape[0], dtype=bool)
+    mask[none_indices[:, 0]] = False
+    return arr[mask]
+
+
 top_data_directory = 'data/Lauren_PreEclampsia_Data'
 cache_dir_path = os.path.join(top_data_directory, 'cache')
 top_output_directory = 'output/segmentation_models'
@@ -91,18 +109,44 @@ os.makedirs(final_plots_dir, exist_ok=True)
 new_model_full_path = os.path.join(final_output_path, file_name_with_ext)
 
 # load up the data
-X_train = load_pickled_data(os.path.join(
-    cache_dir_path, 'train_images.pickle'))
+X_train = load_pickled_data(os.path.join(cache_dir_path, 'train_images.pickle'))
 y_train = load_pickled_data(os.path.join(cache_dir_path, 'train_masks.pickle'))
 X_val = load_pickled_data(os.path.join(cache_dir_path, 'val_images.pickle'))
 y_val = load_pickled_data(os.path.join(cache_dir_path, 'val_masks.pickle'))
 X_test = load_pickled_data(os.path.join(cache_dir_path, 'test_images.pickle'))
+scores = load_pickled_data(os.path.join(cache_dir_path, 'scores.pickle'))
 
-print(f'Training images shape: {X_train.shape}')
-print(f'Training masks shape: {y_train.shape}')
-print(f'Validation images shape: {X_val.shape}')
-print(f'Validation masks shape: {y_val.shape}')
-print(f'Testing images shape: {X_test.shape}')
+# Combine the original training data into X and y,
+# and then use it to train this new model
+original_images = np.concatenate((X_train, X_val))
+binary_masks = np.concatenate((y_train, y_val))
+
+# Extract regions of interest (ROIs) from the original images using binary masks
+X_temp = original_images * binary_masks
+y_temp = np.array(list(scores.values()))
+none_indices = find_none_indices(y_temp)
+X = remove_none_elements(X_temp, none_indices)
+y = remove_none_elements(y_temp, none_indices)
+
+print(X.shape)
+print(y.shape)
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42)
+
+
+# Transfer learning with ResNet or Inception? VGG?
+
+
+# Load VGG16 model wothout classifier/fully connected layers
+# Load imagenet weights that we are going to use as feature generators
+VGG_model = VGG16(weights='imagenet', include_top=False, input_shape=(X_train[1], X_train[1], 3))
+
+# Make loaded layers as non-trainable. This is important as we want to work with pre-trained weights
+for layer in VGG_model.layers:
+    layer.trainable = False
+
+VGG_model.summary()  # Trainable parameters will be 0
 
 # load the pretrained unet model
 print(f"Loading pretrained model: {new_model_full_path}")
@@ -110,47 +154,39 @@ model = tf.keras.models.load_model(new_model_full_path, compile=False)
 # print(model.summary())
 
 print("Predicting on test set to generate binary masks...")
-y_pred = model.predict(X_test)
+binary_masks = model.predict(X_test)
 
-# threshold to distinguish pixel is glom or not
-binary_masks = y_pred > 0.5
+print('Identifying regions of interest in original images...')
+X = X_test[binary_masks > 0.5]
+y = scores
 
-# Loop over each test image and its corresponding binary mask
-for i in range(len(X_test)):
-    image = X_test[i]
-    binary_mask = binary_masks[i].astype(np.uint8)
+# Convert the scores to a 0-1 floating-point scale
+y = y / 3
 
-    # Use np.where to get the indices of the segmented region
-    # indices = np.where(binary_mask)
-    if np.count_nonzero(binary_mask) == 0:
-        # binary mask is empty, skip this image
-        continue
+# Split the dataset into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42)
 
-    print(i)
+# Create a pipeline with preprocessing and regression model
+pipeline = Pipeline([
+    ('scaler', StandardScaler()),
+    ('regressor', LinearRegression())
+])
 
-    # code to extract region of interest from image using binary_mask
-    # ...
-    region_of_interest = np.expand_dims(
-        cv2.bitwise_and(image, image, mask=binary_mask), axis=-1)
+# Train the model
+pipeline.fit(X_train, y_train)
 
-    # Perform analysis on the segmented region as desired
-    print(binary_mask.shape)
-    print(region_of_interest.shape)
-    print(image.shape)
+# Make predictions
+y_pred = pipeline.predict(X_test)
 
-    frac_open = openness_score(region_of_interest, image)
-    print(f'Percent open: {frac_open*100}%')
+# Calculate the confidence interval
+alpha = 0.95
+squared_errors = (y_pred - y_test) ** 2
+mse = mean_squared_error(y_test, y_pred)
+confidence_interval = np.sqrt(stats.t.interval(alpha, len(
+    y_test)-1, loc=np.mean(squared_errors), scale=stats.sem(squared_errors)))
 
-    # Optionally, visualize the segmented region for debugging purposes
-    # Plot the original image, binary mask, and region of interest side by side
-    # Optionally, visualize the image, binary mask and region of interest in one plot
-    fig, axs = plt.subplots(1, 3, figsize=(10, 10))
-    axs[0].imshow(image, cmap='gray')
-    axs[0].set_title("Image")
-    axs[1].imshow(binary_mask, cmap='gray')
-    axs[1].set_title("Binary Mask")
-    axs[2].imshow(region_of_interest, cmap='gray')
-    axs[2].set_title("Region of Interest")
-    plt.show()
-    plt.clf()
-    break
+# Evaluate the model
+print(f"Mean squared error: {mse:.2f}")
+print(f"R2 score: {r2_score(y_test, y_pred):.2f}")
+print(f"Confidence interval: {confidence_interval}")

@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 import json
 from typing import List
+from sklearn.model_selection import train_test_split
 from patchify import patchify, unpatchify
 from skimage import io
 from skimage.transform import resize
@@ -197,6 +198,7 @@ def organize_data_into_subdirs(data_dir):
 
     Returns:
     files (list): list of paths to all files in data_dir
+    all_samples (list): list of the names of the sample names of these files
     """
     # List all files in data_dir
     file_list = os.listdir(data_dir)
@@ -221,9 +223,16 @@ def organize_data_into_subdirs(data_dir):
             print("Skipping. File(s) are already in the correct structure.")
 
     all_files = list_files(data_dir)
+    all_sample_names_dict = {}
+    for file in all_files:
+        sample_name = file.split(
+            '-')[0] if '-' in file else file.split('_')[0]
+        if sample_name not in all_sample_names_dict:
+            all_sample_names_dict[sample_name] = ""
+        all_sample_names_dict[sample_name] = file
 
     print("Done!")
-    return all_files
+    return all_files, all_sample_names_dict
 
 
 def save_binary_masks_as_images(binary_mask, output_dir, name):
@@ -263,11 +272,10 @@ def generate_binary_masks(annotation_file, data_dir):
             b()
 
 
-def check_sort_order(train_images, train_masks, val_images, val_masks, test_images):
+def check_sort_order(train_images, train_masks):
 
     # check if they are sorted in the same order
-    if not arrays_sorted_same_order(train_images, train_masks) or \
-       not arrays_sorted_same_order(val_images, val_masks):
+    if not arrays_sorted_same_order(train_images, train_masks):
         raise ValueError(
             "Images and masks arrays are not sorted in the same order!")
 
@@ -291,23 +299,51 @@ def arrays_sorted_same_order(array1, array2):
     return np.array_equal(sort_idx_1, sort_idx_2)
 
 
-def create_train_val_test_lists(data_dir, val_split=0.2):
+def get_names_from_file_paths(paths):
+    """Extract names from file paths
+
+    Args:
+        paths (list): list of file paths to be split
+    """
+    ids = [os.path.splitext(os.path.basename(path))[0] for path in paths]
+    return ids
+
+
+def set_diff(list1, list2):
+    """_summary_
+
+    Args:
+        list1 (list): reference list
+        list2 (list): what is in the reference list, but not this one?
+
+    Returns:
+        _type_: diff, as a list
+    """
+    set1 = set(list1)
+    set2 = set(list2)
+    diff = set1 - set2
+    return list(diff)
+
+
+def create_train_val_test_lists(data_dir):
     """
     Creates lists of training, validation, and testing image-mask pairs based on the given directory structure.
 
     Args:
         data_dir (str): Path to the directory containing the "images" and "masks" subdirectories.
-        val_split (float): Proportion of the dataset to use for validation. Default is 0.2.
 
     Returns:
-        Tuple: 5 lists containing (1) image file paths for training, (2) mask file paths for training,
-            and (3) image file paths for validation, (4) mask file paths for validation,
-            and (5) image file paths for testing (i.e., missing masks).
+        Tuple: 3 lists containing (1) image file paths for training, (2) mask file paths for training,
+            and (3) image file paths for testing (i.e., missing masks), 
+            and 2 dicts containing sample - file path mappings for training and testing images
     """
 
     train_images = []
     train_masks = []
     test_images = []
+    train_data_ids = {}
+    test_data_ids = {}
+
     directories = os.listdir(os.path.join(data_dir, 'images'))
     num_directories = len(directories)
     print("Collecting training, validation, and test data paths...")
@@ -328,61 +364,127 @@ def create_train_val_test_lists(data_dir, val_split=0.2):
                             mask_path = os.path.join(
                                 sample_mask_dir, mask_file_name)
                             # print(image_path, mask_path)
+                            sample_id = os.path.splitext(
+                                os.path.basename(image_path))[0]
 
                             if os.path.isfile(mask_path):
                                 train_images.append(image_path)
                                 train_masks.append(mask_path)
+                                # make a dictionary that maps these data to sample_id for later organizing
+                                if sample_id not in train_data_ids:
+                                    train_data_ids[sample_id] = {'image_path': "", 'mask_path': ""}
+                                train_data_ids[sample_id]['image_path'] = image_path
+                                train_data_ids[sample_id]['mask_path'] = mask_path
                             else:
+                                # make a dictionary that maps these data to sample_id for later organizing
                                 test_images.append(image_path)
+                                if sample_id not in test_data_ids:
+                                    test_data_ids[sample_id] = ""
+                                test_data_ids[sample_id] = image_path
                 else:
                     for image_file in os.listdir(sample_image_dir):
                         if image_file.endswith('.jpg'):
-                            test_images.append(os.path.join(
-                                sample_image_dir, image_file))
+
+                            image_path = os.path.join(
+                                sample_image_dir, image_file)
+                            test_images.append(image_path)
+
+                            sample_id = os.path.splitext(
+                                os.path.basename(image_path))[0]
+                            if sample_id not in test_data_ids:
+                                test_data_ids[sample_id] = ""
+                            test_data_ids[sample_id] = image_path
             bar()
 
-    # Split training data into training and validation sets
-    num_val = int(len(train_images) * val_split)
-    train_images, val_images = train_images[num_val:], train_images[:num_val]
-    train_masks, val_masks = train_masks[num_val:], train_masks[:num_val]
-
-    print(f'Training images length: {len(train_images)}')
-    print(f'Training masks length: {len(train_masks)}')
-    print(f'Validation images length: {len(val_images)}')
-    print(f'Validation masks length: {len(val_masks)}')
-    print(f'Testing images length: {len(test_images)}')
+    # print(f'Training images length: {len(train_images)}')
+    # print(f'Training masks length: {len(train_masks)}')
+    # print(f'Testing images length: {len(test_images)}')
+    # print(f'Training data dict length: {len(train_data_ids.items())}')
+    # print(f'Testing data dict length: {len(test_data_ids.items())}')
 
     # just convert them to np.arrays, easier to work with
     train_images = sorted(np.array(train_images))
     train_masks = sorted(np.array(train_masks))
-    val_images = sorted(np.array(val_images))
-    val_masks = sorted(np.array(val_masks))
     test_images = sorted(np.array(test_images))
+
+    # sort the dictionaries
+    train_data_dict = dict(sorted(train_data_ids.items()))
+    test_data_dict = dict(sorted(test_data_ids.items()))
+
     # check the sort order
-    check_sort_order(train_images, train_masks,
-                     val_images, val_masks, test_images)
+    check_sort_order(train_images, train_masks)
+
+    # check the sort order with the dictionaries
+    train_image_names = get_names_from_file_paths(train_images)
+    test_image_names = get_names_from_file_paths(test_images)
+    if arrays_sorted_same_order(list(train_data_dict.keys()), train_image_names):
+        print('Training dictionary and train images are in the same order.')
+    else:
+        print(set_diff(train_data_dict.keys(), train_image_names))
+        print(set_diff(train_image_names, train_data_dict.keys()))
+        print(train_image_names)
+        print(train_data_dict.keys())
+        raise ValueError(
+            "Training dictionary and train images are not sorted in the same order!")
+
+    if arrays_sorted_same_order(list(test_data_dict.keys()), test_image_names):
+        print('Testing dictionary and test images are in the same order.')
+    else:
+        print(set_diff(test_data_dict.keys(), test_image_names))
+        print(set_diff(test_image_names, test_data_dict.keys()))
+        print(test_image_names)
+        print(test_data_dict.keys())
+        raise ValueError(
+            "Testing dictionary and test images are not sorted in the same order!")
+
     print("Done!")
-    return train_images, train_masks, val_images, val_masks, test_images
+    return train_images, train_masks, test_images, train_data_dict, test_data_dict
 
 
-def preprocess_data(path, size):
+def preprocess_data_image(path, size):
+
     # Load the image and its dimensions
     img = np.array(cv2.imread(path))
-    # print(img.shape)
-    # convert to grayscale and normalize
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) / 255.
-    img = np.expand_dims(resize(img, (size, size)), axis=-1)
-    return img
+    # color image, resized, expanded dims, scaled
+    color_img = resize(img, output_shape=(size, size))
+    # print(color_img.shape
+    color_img = color_img / 255.
+
+    # bw image, resized, expanded dims, scaled
+    bw_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    bw_img = resize(bw_img, output_shape=(size, size))
+    bw_img = np.expand_dims(bw_img, axis=-1)
+    # print(bw_img.shape)
+    bw_img = bw_img / 255.
+
+    return bw_img, color_img
 
 
-def generate_final_dataset(train_images_paths, train_masks_paths, val_images_paths, val_masks_paths, test_images_paths, size, cache_dir):
+def preprocess_data_mask(path, size):
+
+    # Load the image and its dimensions
+    img = np.array(cv2.imread(path))
+    # bw image, resized, expanded dims, scaled
+    bw_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    bw_img = resize(bw_img, output_shape=(size, size))
+    bw_img = np.expand_dims(bw_img, axis=-1)
+    # print(bw_img.shape)
+    bw_img = bw_img / 255.
+
+    return bw_img
+
+
+def generate_final_dataset(train_images_paths, train_masks_paths, test_images_paths, train_data_dict, test_data_dict, size, cache_dir, val_split=0.2):
     print("Processing all the data...")
     os.makedirs(cache_dir, exist_ok=True)
 
+    # MASKS DON"T HAVE COLOR - REMOVE
+    # ORGANIZE OUTPUT SO THIS IS LOGICAL
     # Check if cached data exists and load it
     cache_paths = [
         os.path.join(cache_dir, f"{name}.pickle")
-        for name in ["train_images", "train_masks", "val_images", "val_masks", "test_images"]
+        for name in ["train_images", "train_masks", "test_images", "val_images", "val_masks", "train_data_dict", "test_data_dict",
+                     "train_images_color", "val_images_color", "train_masks_color", "val_masks_color"]
     ]
     cache_exists = all(os.path.exists(path) for path in cache_paths)
     if cache_exists:
@@ -392,47 +494,108 @@ def generate_final_dataset(train_images_paths, train_masks_paths, val_images_pat
         with open(cache_paths[1], "rb") as f:
             train_masks = pickle.load(f)
         with open(cache_paths[2], "rb") as f:
-            val_images = pickle.load(f)
-        with open(cache_paths[3], "rb") as f:
-            val_masks = pickle.load(f)
-        with open(cache_paths[4], "rb") as f:
             test_images = pickle.load(f)
+        with open(cache_paths[3], "rb") as f:
+            val_images = pickle.load(f)
+        with open(cache_paths[4], "rb") as f:
+            val_masks = pickle.load(f)
+        with open(cache_paths[5], "rb") as f:
+            train_data_dict = pickle.load(f)
+        with open(cache_paths[6], "rb") as f:
+            test_data_dict = pickle.load(f)
+        # color images
+        with open(cache_paths[7], "rb") as f:
+            train_images_color = pickle.load(f)
+        with open(cache_paths[8], "rb") as f:
+            val_images_color = pickle.load(f)
+        with open(cache_paths[9], "rb") as f:
+            train_masks_color = pickle.load(f)
+        with open(cache_paths[10], "rb") as f:
+            val_masks_color = pickle.load(f)
+
         print("Done!")
-        return train_images, train_masks, val_images, val_masks, test_images
+        return train_images, train_masks, val_images, val_masks, test_images, train_data_dict, test_data_dict, train_images_color, val_images_color, train_masks_color, val_masks_color
 
     # Otherwise, process the data
-    train_images = np.array([preprocess_data(p, size)
-                            for p in train_images_paths])
+
+    # First, generate the training and validation split
+    num_val = int(val_split * len(train_images_paths))
+    train_images_all, train_images_all_color = np.array([preprocess_data_image(p, size, 'image') for p in train_images_paths])
+
+    train_images = train_images_all[num_val:]
+    val_images = train_images_all[:num_val]
+    train_images_color = train_images_all_color[num_val:]
+    val_images_color = train_images_all_color[:num_val]
+
+    train_masks_all, train_masks_all_color = np.array([preprocess_data_mask(p, size, 'mask') for p in train_masks_paths])
+
+    train_masks = train_masks_all[num_val:]
+    val_masks = train_masks_all[:num_val]
+    train_masks_color = train_masks_all_color[num_val:]
+    val_masks_color = train_masks_all_color[:num_val]
+
+    # Then, save everything
+    # train and val (black and white images) images
     with open(cache_paths[0], "wb") as f:
         pickle.dump(train_images, f)
-    print("Train images done.")
+    print(f"Train images done with shape: {train_images.shape}")
 
-    train_masks = np.array([preprocess_data(p, size)
-                            for p in train_masks_paths])
     with open(cache_paths[1], "wb") as f:
         pickle.dump(train_masks, f)
-    print("Train masks done.")
+    print(f"Train masks done with shape: {train_masks.shape}")
 
-    val_images = np.array([preprocess_data(p, size)
-                           for p in val_images_paths])
+    # test images
+    test_images, test_images_color = np.array([preprocess_data_image(p, size)
+                                               for p in test_images_paths])
     with open(cache_paths[2], "wb") as f:
-        pickle.dump(val_images, f)
-    print("Validation images done.")
-
-    val_masks = np.array([preprocess_data(p, size)
-                          for p in val_masks_paths])
-    with open(cache_paths[3], "wb") as f:
-        pickle.dump(val_masks, f)
-    print("Validation masks done.")
-
-    test_images = np.array([preprocess_data(p, size)
-                            for p in test_images_paths])
-    with open(cache_paths[4], "wb") as f:
         pickle.dump(test_images, f)
-    print("Test images done.")
+    print(f"Test images done with shape: {test_images.shape}")
+
+    with open(cache_paths[3], "wb") as f:
+        pickle.dump(test_images_color, f)
+    print(f"Test images (color) done with shape: {test_images_color.shape}")
+
+    # val images
+    with open(cache_paths[4], "wb") as f:
+        pickle.dump(val_images, f)
+    print(f"Validation images done with shape: {val_images.shape}")
+
+    # val masks
+    with open(cache_paths[5], "wb") as f:
+        pickle.dump(val_masks, f)
+    print(f"Validation masks done with shape: {val_masks.shape}")
+
+    # train data dict
+    with open(cache_paths[6], "wb") as f:
+        pickle.dump(train_data_dict, f)
+    print(f"Ordered training dictionary done with length: {len(train_data_dict.items())}.")
+
+    # test data dict
+    with open(cache_paths[7], "wb") as f:
+        pickle.dump(test_data_dict, f)
+    print(f"Ordered testing dictionary done with length: {len(test_data_dict.items())}.")
+
+    # train images color
+    with open(cache_paths[8], "wb") as f:
+        pickle.dump(train_images_color, f)
+    print(f"Train images (color) done with shape: {train_images_color.shape}")
+
+    # val images color
+    with open(cache_paths[9], "wb") as f:
+        pickle.dump(val_images_color, f)
+    print(f"Validation images (color) done with shape: {val_images_color.shape}")
+
+    # train masks color
+    with open(cache_paths[10], "wb") as f:
+        pickle.dump(train_masks_color, f)
+    print(f"Train masks (color) done with shape: {train_masks_color.shape}")
+
+    with open(cache_paths[11], "wb") as f:
+        pickle.dump(val_masks_color, f)
+    print(f"Validation masks (color) done with shape: {val_masks.shape}")
 
     print("Done!")
-    return train_images, train_masks, val_images, val_masks, test_images
+    # return train_images, train_masks, val_images, val_masks,  test_images, train_data_dict, test_data_dict
 
 
 top_data_directory = 'data/Lauren_PreEclampsia_Data'
@@ -449,34 +612,25 @@ masks_directory = os.path.join(training_data_top_dir, 'masks')
 square_size = 256
 
 # generate the binary masks from the annotation file and raw image data
-generate_binary_masks(annotation_file=annotation_file,
-                      data_dir=training_data_top_dir)
+# generate_binary_masks(annotation_file=annotation_file,
+#                       data_dir=training_data_top_dir)
 
-test_images_1_paths = organize_data_into_subdirs(data_dir=testing_data_top_dir)
+test_images_1_paths, test_data_dict_1 = organize_data_into_subdirs(
+    data_dir=testing_data_top_dir)
 
-train_images_paths, train_masks_paths, val_images_paths, val_masks_paths, test_images_2_paths = create_train_val_test_lists(
-    data_dir=training_data_top_dir, val_split=0.2)
+train_images_paths, train_masks_paths, test_images_2_paths, train_data_dict, test_data_dict_2 = create_train_val_test_lists(
+    data_dir=training_data_top_dir)
 
 test_images_paths = np.concatenate((test_images_1_paths, test_images_2_paths))
-print(f'Total test images: {test_images_paths.shape}')
 
-train_images, train_masks, val_images, val_masks, test_images = generate_final_dataset(
-    train_images_paths, train_masks_paths, val_images_paths, val_masks_paths, test_images_paths, size=square_size, cache_dir=cache_dir_path)
+# fix this, merge the two dictionaries
+test_data_dict = dict(sorted({**test_data_dict_1, **test_data_dict_2}.items()))
 
-print(f'Training images shape: {train_images.shape}')
-print(f'Training masks shape: {train_masks.shape}')
-print(f'Validation images shape: {val_images.shape}')
-print(f'Validation masks shape: {val_masks.shape}')
-print(f'Testing images shape: {test_images.shape}')
+generate_final_dataset(train_images_paths, train_masks_paths, test_images_paths, train_data_dict, test_data_dict, size=square_size, cache_dir=cache_dir_path)
 
 # organize the scores at last
 print('Writing scores-image mapping to cache dir...')
 annotations = load_annotations_from_json(annotation_file)
 scores = get_scores_from_annotations(annotations, cache_dir=cache_dir_path)
-# print(train_images_paths)
-# test_ = [os.path.splitext(os.path.basename(f))[0] for f in train_images_paths]
-# print(scores.keys())
-# print(test_)
-# print(arrays_sorted_same_order(scores.keys(), test_))
 
 print('Done!')
