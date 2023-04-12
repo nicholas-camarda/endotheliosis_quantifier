@@ -350,7 +350,7 @@ def create_train_val_test_lists(data_dir):
 
     directories = os.listdir(os.path.join(data_dir, 'images'))
     num_directories = len(directories)
-    print("Collecting training, validation, and test data paths...")
+    print("Collecting training and test data paths...")
     with alive_bar(num_directories) as bar:
         for i, sample_dir in enumerate(directories):
             if os.path.isdir(os.path.join(data_dir, 'images', sample_dir)):
@@ -615,12 +615,14 @@ square_size = 256
 # generate_binary_masks(annotation_file=annotation_file,
 #                       data_dir=training_data_top_dir)
 
+# get real testing images
 test_images_1_paths, test_data_dict_1 = organize_data_into_subdirs(
     data_dir=testing_data_top_dir)
 
-train_images_paths, train_masks_paths, test_images_2_paths, train_data_dict, test_data_dict_2 = create_train_val_test_lists(
-    data_dir=training_data_top_dir)
+# testing images here are all those that don't have a binary mask yet
+train_images_paths, train_masks_paths, test_images_2_paths, train_data_dict, test_data_dict_2 = create_train_val_test_lists(data_dir=training_data_top_dir)
 
+# combine the testing images
 test_images_paths = np.concatenate((test_images_1_paths, test_images_2_paths))
 
 # fix this, merge the two dictionaries
