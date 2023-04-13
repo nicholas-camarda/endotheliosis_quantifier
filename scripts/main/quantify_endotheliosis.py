@@ -1,4 +1,5 @@
 
+from sklearn.model_selection import KFold
 from numpy import absolute
 from sklearn.model_selection import RepeatedKFold
 from sklearn.model_selection import cross_val_score
@@ -7,6 +8,7 @@ from keras.applications.vgg16 import VGG16
 from keras.applications.vgg16 import preprocess_input
 from keras.models import Model
 from scipy import stats
+from sklearn.model_selection import GridSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.linear_model import LinearRegression
@@ -124,12 +126,83 @@ def plot_features(features, index):
     plt.close()
 
 
+def make_xgboost_data(features, y):
+    # Reassign 'features' as X to make it easy to follow
+    X_ = features
+    # Make it compatible for Random Forest and match Y labels
+    # Compute the number of features per ROI
+    num_features = np.prod(X_.shape[1:])
+    # Reshape the features to have the same number of samples as y_train
+    X_ = X_.reshape(len(y), num_features)
+    # Reshape Y to match X
+    y_ = y.reshape(-1)
+
+    print(X_.shape)
+    print(y_.shape)
+
+    return X_, y_
+
+
+def tune_learning_rate(elr_X_train, elr_y_train, elr_cv, gpu_dict):
+    # Define search space
+    param_grid = {
+        'eta': [0.0001, 0.001, 0.01, 0.1, 0.2, 0.3],
+    }
+
+    # Set up the XGBoost model with the gpu_dict parameters
+    xgb_model = xgb.XGBRegressor(**gpu_dict)
+
+    # Set up GridSearchCV with the specified search space
+    grid_search = GridSearchCV(estimator=xgb_model, param_grid=param_grid, scoring='neg_mean_absolute_error', cv=elr_cv, n_jobs=-1)
+
+    # Perform the grid search to find the best learning rate
+    grid_search.fit(elr_X_train, elr_y_train)
+
+    # Get the best learning rate
+    best_learning_rate = grid_search.best_params_['eta']
+    print(f'Best learning rate: {best_learning_rate}')
+
+    return best_learning_rate
+
+
+def tune_n_estimators(elr_X_train, elr_y_train, elr_learning_rate, elr_cv, gpu_dict):
+    # Define search space
+    param_grid = {
+        'n_estimators': range(50, 400, 50),
+    }
+
+    # Set up the XGBoost model with the gpu_dict parameters and the best learning rate
+    xgb_model = xgb.XGBRegressor(**gpu_dict, eta=elr_learning_rate)
+
+    # Set up GridSearchCV with the specified search space
+    grid_search = GridSearchCV(estimator=xgb_model, param_grid=param_grid, scoring='neg_mean_absolute_error', cv=elr_cv, n_jobs=-1)
+
+    # Perform the grid search to find the best number of estimators
+    grid_search.fit(elr_X_train, elr_y_train)
+
+    # Get the best number of estimators
+    best_n_estimators = grid_search.best_params_['n_estimators']
+    print(f'Best number of estimators: {best_n_estimators}')
+
+    return best_n_estimators
+
+
+physical_devices = tf.config.list_physical_devices('GPU')
+if physical_devices:
+    try:
+        tf.config.experimental.set_memory_growth(physical_devices[0], True)
+        print("Memory growth set")
+    except RuntimeError as e:
+        print(e)
+
 top_data_directory = 'data/Lauren_PreEclampsia_Data'
 cache_dir_path = os.path.join(top_data_directory, 'cache')
 top_output_directory = 'output/segmentation_models'
 top_output_directory_regresion_models = 'output/regression_models'
 file_name_with_ext = f'2023-04-10-glom_unet_xfer_seg_model-epochs75_batch8.hdf5'
 file_name = os.path.splitext(file_name_with_ext)[0]
+
+val_perc = 0.2
 
 # make the output directories
 final_output_path = os.path.join(
@@ -166,8 +239,24 @@ y = remove_none_elements(y_temp, none_indices)
 print(f'ROI shape: {X.shape}')
 print(f'Scores shape: {y.shape}')
 
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42)
+# X_train: training data (60% of the original data)
+# y_train: target values for training data
+# X_val: validation data(20 % of the original data)
+# y_val: target values for validation data
+# X_test: test data(20 % of the original data)
+# y_test: target values for test data
+X_train_temp, X_test, y_train_temp, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+num_val = int(len(X_train_temp) * val_perc)
+X_train = X_train_temp[num_val:]
+X_val = X_train_temp[:num_val]
+y_train = y_train_temp[num_val:]
+y_val = y_train_temp[:num_val]
+
+print(f'X_train: {X_train.shape}')
+print(f'X_val: {X_val.shape}')
+print(f'y_train: {y_train.shape}')
+print(f'y_val: {y_val.shape}')
 
 # Define input_shape for grayscale image (duplicated 3 times to trick)
 height, width, channels = X_train.shape[1], X_train.shape[2], X_train.shape[3]
@@ -184,38 +273,49 @@ for layer in VGG_model.layers:
 new_model = Model(inputs=VGG_model.input, outputs=VGG_model.get_layer('block1_conv1').output)
 new_model.summary()
 
-print("Using VGG16 to extract features from ROIs...")
-glomerular_features = new_model.predict(X_train)
-
 # plot the example image
 # plot_image(index = 1)
 # Plot features to view them
 # plot_features(features, index = 1)
 
-# Reassign 'features' as X to make it easy to follow
-xgboost_X = glomerular_features
-# Make it compatible for Random Forest and match Y labels
-# Compute the number of features per ROI
-num_features = np.prod(xgboost_X.shape[1:])
-# Reshape the features to have the same number of samples as y_train
-xgboost_X = xgboost_X.reshape(len(y_train), num_features)
-print(xgboost_X.shape)
-# Reshape Y to match X
-xgboost_y = y_train.reshape(-1)
-print(xgboost_y.shape)
+
+print("Using VGG16 to extract features from ROIs in training set...")
+glomerular_features = new_model.predict(X_train)
+xgboost_X, xgboost_y = make_xgboost_data(glomerular_features, y_train)
+
+print("Using VGG16 to extract features from ROIs in validation set...")
+# Do the same thing for the validation set
+glomerular_features_validation = new_model.predict(X_val)
+xgboost_X_val, xgboost_y_val = make_xgboost_data(glomerular_features_validation, y_val)
 
 # XGBOOST
 print("Running xgboost model training...")
+# Tune the learning rate and the estimators
 # Documentation for GPU: https://xgboost.readthedocs.io/en/latest/gpu/index.html#
-xgboost_model = xgb.XGBRegressor(tree_method='gpu_hist', gpu_id=0)  # Define gpu_id, otherwise it uses CPU and computation would be very slow.
+gpu_dict = {
+    'objective': 'reg:squarederror',
+    'tree_method': 'gpu_hist'
+}
+print("Tuning the learning rate...")
+cv = KFold(n_splits=5, shuffle=True, random_state=1)
+best_learning_rate = tune_learning_rate(xgboost_X, xgboost_y, cv, gpu_dict)
+print("Tuning the number of estimators...")
+best_n_estimators = tune_n_estimators(xgboost_X, xgboost_y, best_learning_rate, cv, gpu_dict)
+
+xgboost_model = xgb.XGBRegressor(
+    **gpu_dict,
+    eta=best_learning_rate,  # This is the step size shrinkage used to prevent overfitting. Lower values are generally better, but require more iterations.
+    n_estimators=best_n_estimators,
+    max_depth=3,  # This parameter limits the depth of individual trees. Lower values are generally better, but too low may result in underfitting.
+    subsample=0.8  # This parameter specifies the fraction of observations to be randomly sampled for each tree. Values lower than 1 can reduce overfitting.
+)
+
 # Train the model on training data
-# define model evaluation method
-cv = RepeatedKFold(n_splits=10, n_repeats=3, random_state=1)
-# evaluate model
-scores = cross_val_score(xgboost_model, xgboost_X, xgboost_y, scoring='neg_mean_absolute_error', cv=cv, n_jobs=-1)
-xgboost_model.fit(xgboost_X, xgboost_y, verbose=True)
-scores = absolute(scores)
-print('Mean MAE: %.3f (%.3f)' % (scores.mean(), scores.std()))
+xgboost_model.fit(
+    xgboost_X, xgboost_y,
+    eval_set=[(xgboost_X_val, xgboost_y_val)],
+    verbose=True
+)
 
 # Save the trained XGBoost model
 os.makedirs(top_output_directory_regresion_models, exist_ok=True)
