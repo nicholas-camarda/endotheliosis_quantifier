@@ -18,62 +18,13 @@ from keras.models import Model
 from matplotlib import pyplot as plt
 from numpy import absolute
 from scipy import stats
+from sklearn.model_selection import train_test_split
 # from skimage import io
 # from skimage.io import imread, imsave
-from sklearn.linear_model import BayesianRidge, LinearRegression
-from sklearn.metrics import mean_squared_error, r2_score
-from sklearn.model_selection import KFold, cross_val_score, train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 # scikit-optimize
 from skopt import BayesSearchCV
 from skopt.space import Integer, Real
 from tensorflow.keras.models import load_model
-
-
-def openness_score(mask, preprocessed_image, threshold_ratio=0.85):
-    # Calculate the area of the glomerulus (white pixels in the mask)
-    total_area = cv2.countNonZero(mask)
-    print(f'Total area: {total_area}')
-
-    # # Calculate the area of open capillaries (white pixels in the preprocessed image within the mask)
-    # open_area = cv2.countNonZero(cv2.bitwise_and(preprocessed_image, mask))
-    # print(f'Open area: {open_area}')
-
-    # Find the maximum pixel value in the preprocessed image
-    max_pixel_value = np.max(preprocessed_image)
-    print(f'Max pixel value: {max_pixel_value}')
-
-    # Calculate the threshold pixel value
-    threshold_pixel_value = threshold_ratio * max_pixel_value
-    print(f'Threshold pixel value: {threshold_pixel_value}')
-
-    # Create a binary mask with maximum pixel values in the preprocessed image
-    max_pixel_mask = (preprocessed_image >=
-                      threshold_pixel_value).astype(np.uint8)
-
-    print(max_pixel_mask.shape)
-    print(mask.shape)
-
-    # Calculate the area of open capillaries (maximum pixel value occurrences within the mask)
-    open_area = cv2.countNonZero(cv2.bitwise_and(max_pixel_mask, mask))
-    print(f'Open area: {open_area}')
-
-    # Calculate the ratio of open area to total area
-    score = open_area / total_area if total_area > 0 else 0
-
-    return score
-
-
-def grade_glomerulus(openness_score):
-    # Define the threshold values for each grade based on your ground-truth data
-    grade_thresholds = [0.6, 0.4, 0.2]  # 20% open, 40% open, 60% open
-
-    # Grade the glomerulus based on the openness score
-    for i, threshold in enumerate(grade_thresholds):
-        if openness_score >= threshold:
-            return i
-    return len(grade_thresholds)
 
 
 def load_pickled_data(file_path):
@@ -140,47 +91,12 @@ def make_regression_data(features, y):
     return X_, y_
 
 
-def tune_learning_rate_and_estimators(elr_X_train, elr_y_train, elr_cv, device_type):
-    # Define search space
-    search_space = {
-        'learning_rate': Real(0.0001, 0.3),
-        'n_estimators': Integer(50, 400),
-    }
-
-    # Set up the LightGBM model with the device type (CPU or GPU)
-    lgb_model = lgb.LGBMRegressor(device=device_type)
-
-    # Set up BayesSearchCV with the specified search space
-    bayes_search = BayesSearchCV(estimator=lgb_model, search_spaces=search_space, scoring='neg_mean_absolute_error', cv=elr_cv, n_jobs=4, n_iter=50)
-
-    # Perform the search to find the best learning rate and number of estimators
-    bayes_search.fit(elr_X_train, elr_y_train)
-
-    # Get the best learning rate and number of estimators
-    best_learning_rate = bayes_search.best_params_['learning_rate']
-    best_n_estimators = bayes_search.best_params_['n_estimators']
-    print(f'Best learning rate: {best_learning_rate}')
-    print(f'Best number of estimators: {best_n_estimators}')
-
-    return best_learning_rate, best_n_estimators
-
-
-physical_devices = tf.config.list_physical_devices('GPU')
-if physical_devices:
-    try:
-        tf.config.experimental.set_memory_growth(physical_devices[0], True)
-        print("Memory growth set")
-    except RuntimeError as e:
-        print(e)
-
 top_data_directory = 'data/Lauren_PreEclampsia_Data'
 cache_dir_path = os.path.join(top_data_directory, 'cache')
 top_output_directory = 'output/segmentation_models'
 top_output_directory_regresion_models = 'output/regression_models'
 file_name_with_ext = f'2023-04-10-glom_unet_xfer_seg_model-epochs75_batch8.hdf5'
 file_name = os.path.splitext(file_name_with_ext)[0]
-
-val_perc = 0.2
 
 # make the output directories
 final_output_path = os.path.join(
