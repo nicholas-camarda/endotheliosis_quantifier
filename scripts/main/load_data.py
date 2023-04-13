@@ -531,7 +531,7 @@ def generate_final_dataset(train_images_paths, train_masks_paths, test_images_pa
     train_images_color = train_images_all_color[num_val:]
     val_images_color = train_images_all_color[:num_val]
 
-    print("Preprocessing training mask data...")
+    print("Preprocessing training/validation data...")
     train_masks_all = np.array([preprocess_data_bw(p, size) for p in alive_it(train_masks_paths)])
 
     train_masks = train_masks_all[num_val:]
