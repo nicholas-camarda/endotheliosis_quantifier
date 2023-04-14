@@ -174,4 +174,12 @@ for datum_name, datum in zip(data_to_save, regr_data):
     with open(data_filepath, 'wb') as f:
         pickle.dump(datum, f)
 
-print(f'Saved regression data input to: {top_output_directory_regression_input_data}')
+data_to_save = ['X_train_net_reg', 'X_val_net_reg']
+regr_data = [glomerular_features, glomerular_features_val]
+
+for datum_name, datum in zip(data_to_save, regr_data):
+    data_filepath = os.path.join(top_output_directory_regression_input_data, datum_name + '.pkl')
+    with open(data_filepath, 'wb') as f:
+        pickle.dump(datum, f)
+
+print(f'Saved data input to: {top_output_directory_regression_input_data}')

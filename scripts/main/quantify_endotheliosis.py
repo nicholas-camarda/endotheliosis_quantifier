@@ -1,3 +1,19 @@
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Dense, GlobalAveragePooling2D,  Dense, Flatten, Dropout, Input
+from tensorflow.keras.applications import VGG16
+import tensorflow as tf
+from keras.layers import Input
+from keras.optimizers import Adam
+from keras.utils import to_categorical
+from keras.layers import Dense
+from keras.models import Sequential
+from sklearn.preprocessing import LabelEncoder
+import matplotlib.pyplot as plt
+from umap import UMAP
+from sklearn.decomposition import PCA
 import os
 import pickle
 from math import sqrt
@@ -12,6 +28,107 @@ from sklearn.model_selection import (KFold, ShuffleSplit, cross_val_score,
                                      train_test_split)
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestRegressor
+import os
+
+
+def run_bayesian_ridge_regressor(X_train, y_train, X_val, y_val, model_output_directory, n_cv_splits=5, n_cpu_jobs=8):
+    # Create and train the Bayesian Ridge Regression model
+    print("Running Bayesian Ridge Regression model training...")
+    bayesian_ridge_model = BayesianRidge(verbose=True, compute_score=True)
+
+    # Set up K-Fold cross-validation
+    kfold = KFold(n_splits=n_cv_splits, shuffle=True, random_state=1)
+    # kfold = ShuffleSplit(n_splits=n_cv_splits, test_size=0.2, random_state=42)
+
+    # Calculate the cross-validated scores
+    print(f'Getting cross validation score with {n_cv_splits} splits...')
+    scores_cval_brr = cross_val_score(bayesian_ridge_model, X_train, y_train,
+                                      scoring='neg_mean_squared_error', n_jobs=n_cpu_jobs,
+                                      verbose=2)
+
+    # Calculate the average score and standard deviation
+    average_score = np.mean(scores_cval_brr)
+    std_score = np.std(scores_cval_brr)
+
+    print(f'Average score: {average_score}, Standard deviation: {std_score}')
+
+    # Train the BayesianRidge model on the entire training data
+    bayesian_ridge_model.fit(X_train, y_train)
+    print("BayesianRidge model fitted successfully.")
+
+    model_filepath = os.path.join(model_output_directory, 'brr_model-glom_openness.pkl')
+    with open(model_filepath, 'wb') as f:
+        pickle.dump(bayesian_ridge_model, f)
+
+    # bayesian_ridge_model = load_pickled_data(model_filepath)
+
+    print(f"Bayesian Ridge Regression model saved to {model_filepath}")
+
+    # Make predictions on the test set and calculate the prediction variance
+    y_pred_brr, y_pred_var_brr = bayesian_ridge_model.predict(X_val, return_std=True)
+
+    # Compute the confidence intervals
+    confidence_level = 0.95
+    z = 1.96  # z-score for 95% confidence
+    std_pred = np.sqrt(y_pred_var_brr)  # Calculate the standard deviation for each prediction
+    lower_confidence_interval = y_pred_brr - z * std_pred
+    upper_confidence_interval = y_pred_brr + z * std_pred
+
+    # Save the predictions and confidence intervals
+    predictions_filepath = os.path.join(model_output_directory, 'brr_predictions.csv')
+    np.savetxt(predictions_filepath, np.column_stack((y_pred_brr, lower_confidence_interval, upper_confidence_interval)), delimiter=',', header='prediction,lower_ci,upper_ci', comments='')
+
+    print(f"Predictions and confidence intervals saved to {predictions_filepath}")
+
+    # Evaluate the model's performance
+    rmse = sqrt(mean_squared_error(y_val, y_pred_brr))
+    print(f"RMSE: {rmse}")
+
+
+def run_random_forest_regressor(X_train, y_train, X_val, y_val, model_output_directory, n_cv_splits=5, n_estimators=100, n_cpu_jobs=8):
+
+    # Create and train the RandomForestRegressor model
+    print("Running RandomForestRegressor model training...")
+    random_forest_model = RandomForestRegressor(n_estimators=n_estimators, random_state=42)
+
+    # Calculate the cross-validated scores
+    print(f'Getting cross validation score with {n_cv_splits} splits...')
+    scores_cval_rf = cross_val_score(random_forest_model, X_train, y_train, cv=n_cv_splits,
+                                     scoring='neg_mean_squared_error', n_jobs=n_cpu_jobs,
+                                     verbose=2)
+
+    # Calculate the average score and standard deviation
+    average_score = np.mean(scores_cval_rf)
+    std_score = np.std(scores_cval_rf)
+
+    print(f'Average score: {average_score}, Standard deviation: {std_score}')
+
+    # Train the RandomForestRegressor model on the entire training data
+    random_forest_model.fit(X_train, y_train)
+    print("RandomForestRegressor model fitted successfully.")
+
+    model_filepath = os.path.join(model_output_directory, 'rf_model-glom_openness.pkl')
+    with open(model_filepath, 'wb') as f:
+        pickle.dump(random_forest_model, f)
+
+    # random_forest_model = load_pickled_data(model_filepath)
+
+    print(f"Random Forest Regression model saved to {model_filepath}")
+
+    # Make predictions on the test set
+    y_pred_rf = random_forest_model.predict(X_val)
+
+    # Save the predictions
+    predictions_filepath = os.path.join(model_output_directory, 'validation_predictions_rf.csv')
+    np.savetxt(predictions_filepath, y_pred_rf, delimiter=',', header='prediction', comments='')
+
+    print(f"Predictions saved to {predictions_filepath}")
+
+    # Evaluate the model's performance
+    rmse = sqrt(mean_squared_error(y_val, y_pred_rf))
+    print(f"RMSE: {rmse}")
+    return random_forest_model
 
 
 def load_pickled_data(file_path):
@@ -67,172 +184,203 @@ def grade_glomerulus(openness_score):
     return len(grade_thresholds)
 
 
+def get_label_counts(vector_):
+    # Compute the unique counts of the elements in the y_val vector
+    unique, counts = np.unique(vector_, return_counts=True)
+
+    # Print the counts for each unique element
+    for i in range(len(unique)):
+        print("Validation Category {}: {}".format(unique[i], counts[i]))
+
+
 def print_memory_usage():
     process = psutil.Process(os.getpid())
     mem_info = process.memory_info()
     print(f"Memory usage: {mem_info.rss / (1024 * 1024):.2f} MB")
 
 
+def plot_history(history, output_dir, file_name):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # plot the training and validation accuracy and loss at each epoch
+    loss = history.history['loss']
+    val_loss = history.history['val_loss']
+    epochs = range(1, len(loss) + 1)
+    plt.plot(epochs, loss, 'y', label='Training loss')
+    plt.plot(epochs, val_loss, 'r', label='Validation loss')
+    plt.title('Training and validation loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.savefig(os.path.join(output_dir, file_name+"_loss.png"))
+    plt.clf()  # clear this figure after saving it
+
+    # plt.show()
+
+    acc = history.history['accuracy']
+    val_acc = history.history['val_accuracy']
+    plt.plot(epochs, acc, 'y', label='Training acc')
+    plt.plot(epochs, val_acc, 'r', label='Validation acc')
+    plt.title('Training and validation accuracy')
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.savefig(os.path.join(output_dir, file_name+"_accuracy.png"))
+    # plt.show()
+    plt.clf()  # clear this figure after saving it
+    plt.close()
+
+
+def fit_umap_model(X_train, X_val, n_components=15, n_neighbors=8, n_epochs=30000, lr=1e-5):
+
+    # n_components = min([X_train.shape[0], X_val.shape[0]])
+    # n_neighbors = 8
+    # n_umap_epochs = 30000
+    # lr = 1e-5
+    # Create a UMAP instance
+    umap = UMAP(n_components=n_components,
+                n_neighbors=n_neighbors,
+                learning_rate=lr,
+                n_epochs=n_epochs,
+                verbose=True)
+
+    print("Fitting UMAP model to reduce dimensions of dataset...")
+    print(f'Using n_components = {n_components}')
+
+    # Create a scaler instance
+    scaler = StandardScaler()
+
+    # Fit the scaler to the training data
+    scaler.fit(X_train)
+
+    # Transform the training and validation data using the scaler
+    X_train_scaled = scaler.transform(X_train)
+    X_val_scaled = scaler.transform(X_val)
+
+    # Fit UMAP on the training data
+    X_train_umap = umap.fit_transform(X_train_scaled)
+    X_val_umap = umap.transform(X_val_scaled)
+    print("Done!")
+    return X_train_umap, X_val_umap
+
+
+def run_neural_network(X_train, y_train, X_val, y_val, model_output_directory,
+                       num_classes, n_epochs, n_batch_size, input_shape=(256, 256, 64)):
+
+    input_layer = Input(shape=input_shape)
+
+    # Add custom regression layers
+    x = Flatten()(input_layer)
+    x = Dense(512, activation='relu')(x)
+    x = Dropout(0.5)(x)
+    predictions = Dense(1)(x)  # Use a linear activation function for regression
+
+    # Create the final regression model
+    regression_model = Model(inputs=input_layer, outputs=predictions)
+
+    # Optionally freeze the initial layers of VGG16
+    for layer in regression_base_model.layers:
+        layer.trainable = False
+
+    # Compile and train the regression model
+    regression_model.compile(optimizer='adam', loss='mean_squared_error', metrics=['mse', 'mae'])
+
+    with tf.device("/GPU:0"):
+        regression_model.fit(X_train, y_train,
+                             epochs=n_epochs, batch_size=n_batch_size,
+                             validation_data=(X_val, y_val))
+    print(regression_model.summary())
+
+    return regression_model
+
+
 top_data_directory = 'data/Lauren_PreEclampsia_Data'
-regression_model = 'bayesian_ridge_model'
-regression_cache_dir_path = os.path.join(top_data_directory, 'cache', 'regression_input', regression_model)
+regression_cache_dir_path = os.path.join(top_data_directory, 'cache', 'regression_input')
 top_output_directory_regresion_models = 'output/regression_models'
-directory_regression_models = os.path.join(top_output_directory_regresion_models, regression_model)
+directory_nn_model = os.path.join(top_output_directory_regresion_models, 'neural_network')
 
 n_cv_splits = 5
-n_cpu_jobs = 3  # can change this on better machine
+n_cpu_jobs = 8  # can change this on better machine
 
-# load up the data
-X_train_brr = load_pickled_data(os.path.join(regression_cache_dir_path, 'X_train_regression.pkl'))[:20]
-y_train_brr = load_pickled_data(os.path.join(regression_cache_dir_path, 'y_train_regression.pkl'))[:20]
-X_val_brr = load_pickled_data(os.path.join(regression_cache_dir_path, 'X_val_regression.pkl'))
-y_val_brr = load_pickled_data(os.path.join(regression_cache_dir_path, 'y_val_regression.pkl'))
+# load up the glomeruli features from VGG16 and 0-3 grades for each of the images (potentially containing multiple glomeruli)
+# X_train = load_pickled_data(os.path.join(regression_cache_dir_path, 'X_train_regression.pkl'))
+X_train = load_pickled_data(os.path.join(regression_cache_dir_path, 'X_train_net_reg.pkl'))
+y_train_temp = load_pickled_data(os.path.join(regression_cache_dir_path, 'y_train_regression.pkl'))
+# X_val = load_pickled_data(os.path.join(regression_cache_dir_path, 'X_val_regression.pkl'))
+X_val = load_pickled_data(os.path.join(regression_cache_dir_path, 'X_val_net_reg.pkl'))
+y_val_temp = load_pickled_data(os.path.join(regression_cache_dir_path, 'y_val_regression.pkl'))
 
-print(f'X_train: {X_train_brr.shape}')
-print(f'y_train: {y_train_brr.shape}')
-print(f'X_val: {X_val_brr.shape}')
-print(f'y_val: {y_val_brr.shape}')
-
-# A generator function to yield batches of data
-
-
-def data_generator(X, y, batch_size):
-    n_samples = X.shape[0]
-    indices = np.arange(n_samples)
-    np.random.shuffle(indices)
-
-    for start_idx in range(0, n_samples, batch_size):
-        end_idx = min(start_idx + batch_size, n_samples)
-        batch_indices = indices[start_idx:end_idx]
-        yield X[batch_indices], y[batch_indices]
+labelencoder = LabelEncoder()
+y_train = labelencoder.fit_transform(y_train_temp)
+y_val = labelencoder.fit_transform(y_val_temp)
+num_classes = max(len(np.unique(y_train)), len(np.unique(y_val)))
 
 
-# raise ValueError("stop")
-# Create an SGDRegressor instance
-sgd_regressor = SGDRegressor(verbose=0, penalty='elasticnet')
-
-# Define the number of epochs and batch size
-# n_epochs = 100
-# batch_size = 16
-sgd_regressor.fit(X_train_brr, y_train_brr)
-
-# # Train the SGDRegressor using a generator
-# for epoch in range(1, n_epochs + 1):
-#     print(f'Epoch {epoch}')
-#     for X_batch, y_batch in data_generator(X_train_brr, y_train_brr, batch_size):
-#         sgd_regressor.partial_fit(X_batch, y_batch)
-#     print('-' * 50)
-
-# Evaluate the model
-y_pred = sgd_regressor.predict(X_val_brr)
-mse = mean_squared_error(y_val_brr, y_pred)
-print(f'Mean squared error: {mse}')
-
-# print("Fitting ARDRegression model...")
-
-# model = ARDRegression(verbose=True, compute_score=True, copy_X=False)
-# model.fit(X_train_brr, y_train_brr)
-# print("ARDRegression model fitted successfully.")
-
-# # Save the trained Bayesian Ridge Regression model
-# os.makedirs(directory_regression_models, exist_ok=True)
-# model_filepath = os.path.join(directory_regression_models, 'ARDmodel-glom_openness.pkl')
-
-# with open(model_filepath, 'wb') as f:
-#     pickle.dump(model, f)
-
-# print(f"ARD Regression model saved to {model_filepath}")
-
-# # Make predictions on the test set and calculate the prediction variance
-# y_pred_brr, y_pred_var_brr = model.predict(X_val_brr, return_std=True)
-
-# # Compute the confidence intervals
-# confidence_level = 0.95
-# z = 1.96  # z-score for 95% confidence
-# std_pred = np.sqrt(y_pred_var_brr)  # Calculate the standard deviation for each prediction
-# lower_confidence_interval = y_pred_brr - z * std_pred
-# upper_confidence_interval = y_pred_brr + z * std_pred
-
-# # Save the predictions and confidence intervals
-# predictions_filepath = os.path.join(directory_regression_models, 'validation_predictions_and_confidence_intervals.csv')
-# np.savetxt(predictions_filepath, np.column_stack((y_pred_brr, lower_confidence_interval, upper_confidence_interval)), delimiter=',', header='prediction,lower_ci,upper_ci', comments='')
-
-# print(f"Predictions and confidence intervals saved to {predictions_filepath}")
-
-# # Evaluate the model's performance
-# rmse = sqrt(mean_squared_error(y_val_brr, y_pred_brr))
-# print(f"RMSE: {rmse}")
+print(f'X_train: {X_train.shape}')
+print(f'y_train: {y_train.shape}')
+print(f'X_val: {X_val.shape}')
+print(f'y_val: {y_val.shape}')
+print(f'num_classes: {num_classes}')
 
 
-if (False):
-    # load the pretrained unet model
-    print(f"Loading pretrained model: {new_model_full_path}")
-    model = tf.keras.models.load_model(new_model_full_path, compile=False)
-    # print(model.summary())
-
-    print("Predicting on test set to generate binary masks...")
-    binary_masks = model.predict(X_test)
-
-    print('Identifying regions of interest in original images...')
-    X = X_test[binary_masks > 0.5]
-    y = scores
-
-    # Convert the scores to a 0-1 floating-point scale
-    y = y / 3
-
-    # Split the dataset into training and testing sets
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42)
-
-    # Create a pipeline with preprocessing and regression model
-    pipeline = Pipeline([
-        ('scaler', StandardScaler()),
-        ('regressor', LinearRegression())
-    ])
-
-    # Train the model
-    pipeline.fit(X_train, y_train)
-
-    # Make predictions
-    y_pred = pipeline.predict(X_test)
-
-    # Calculate the confidence interval
-    alpha = 0.95
-    squared_errors = (y_pred - y_test) ** 2
-    mse = mean_squared_error(y_test, y_pred)
-    confidence_interval = np.sqrt(stats.t.interval(alpha, len(
-        y_test)-1, loc=np.mean(squared_errors), scale=stats.sem(squared_errors)))
-
-    # Evaluate the model
-    print(f"Mean squared error: {mse:.2f}")
-    print(f"R2 score: {r2_score(y_test, y_pred):.2f}")
-    print(f"Confidence interval: {confidence_interval}")
+n_neural_net_epochs = 50
+n_batch_size = 4
+run_neural_network(X_train, y_train, X_val, y_val,
+                   model_output_directory=directory_nn_model,
+                   num_classes=num_classes,
+                   n_epochs=n_neural_net_epochs,
+                   n_batch_size=n_batch_size)
 
 
-# Create and train the Bayesian Ridge Regression model
-# print("Running Bayesian Ridge Regression model training...")
-# bayesian_ridge_model = BayesianRidge(verbose=True, compute_score=True, copy_X=False)
+# # Choose the number of components to keep
+# n_components = min([X_train.shape[0], X_val.shape[0]])
 
 
-# Set up K-Fold cross-validation
-# kfold = KFold(n_splits=n_cv_splits, shuffle=True, random_state=1)
-# kfold = ShuffleSplit(n_splits=n_cv_splits, test_size=0.2, random_state=42)
+# # Create a UMAP instance
+# umap = UMAP(n_components=n_components,
+#             n_neighbors=8,
+#             learning_rate=1e-5,
+#             n_epochs=30000,
+#             verbose=True)
+
+# print("Fitting UMAP model to reduce dimensions of dataset...")
+# print(f'Using n_components = {n_components}')
+
+# # Create a scaler instance
+# scaler = StandardScaler()
+
+# # Fit the scaler to the training data
+# scaler.fit(X_train)
+
+# # Transform the training and validation data using the scaler
+# X_train_scaled = scaler.transform(X_train)
+# X_val_scaled = scaler.transform(X_val)
+
+# # Fit UMAP on the training data
+# X_train_umap = umap.fit_transform(X_train_scaled)
+
+# # Define the classes or labels for the data points
+# classes = [0, 0.5, 1, 1.5, 2, 3]
+
+# # Define the colors to use for each class
+# colors = ["red", "orange", "green", "purple", "blue", "black"]
+
+# # Create a scatter plot of the UMAP coordinates
+# plt.figure(figsize=(8, 8))
+# for i in range(len(classes)):
+#     plt.scatter(X_train_umap[y_train == i, 0], X_train_umap[y_train == i, 1],
+#                 color=colors[i], alpha=0.5, label=classes[i])
+# plt.xlabel("UMAP Component 1")
+# plt.ylabel("UMAP Component 2")
+# plt.legend(loc="upper right")
+# plt.title("UMAP Plot of Training Data")
+# plt.show()
 
 
-# Calculate the cross-validated scores
-# print(f'Getting cross validation score with {n_cv_splits} splits...')
-# scores_cval_brr = cross_val_score(bayesian_ridge_model, X_train_brr, y_train_brr,
-#                                   scoring='neg_mean_squared_error', n_jobs=n_cpu_jobs,
-#                                   verbose=2)
+# # Transform the validation data
+# X_val_umap = umap.transform(X_val_scaled)
 
-# Calculate the average score and standard deviation
-# average_score = np.mean(scores_cval_brr)
-# std_score = np.std(scores_cval_brr)
-
-# print(f'Average score: {average_score}, Standard deviation: {std_score}')
-
-# print_memory_usage()
-# # Train the BayesianRidge model on the entire training data
-# bayesian_ridge_model.fit(X_train_brr, y_train_brr)
-# print_memory_usage()
-# print("BayesianRidge model fitted successfully.")
+# run_random_forest_regressor(X_train_umap, y_train, X_val_umap, y_val,
+#                             model_output_directory=directory_rf_regression_models,
+#                             n_cv_splits=n_cv_splits, n_estimators=100, n_cpu_jobs=n_cpu_jobs)
