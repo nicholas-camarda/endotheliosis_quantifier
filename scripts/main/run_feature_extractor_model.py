@@ -48,8 +48,8 @@ def remove_none_elements(arr, none_indices):
     return arr[mask]
 
 
-def plot_image(index):
-    test_img = X_test[index]
+def plot_image(X, index):
+    test_img = X[index]
 
     # plot and save image
     plt.figure(figsize=(16, 8))
@@ -126,6 +126,7 @@ X_temp = np.array([preprocess_input(p) for p in X_temp])
 
 y_temp = np.array(list(scores.values()))
 none_indices = find_none_indices(y_temp)
+
 X = remove_none_elements(X_temp, none_indices)
 y = remove_none_elements(y_temp, none_indices)
 
@@ -154,6 +155,7 @@ for layer in VGG_model.layers:
 
 new_model = Model(inputs=VGG_model.input, outputs=VGG_model.get_layer('block1_conv1').output)
 new_model.summary()
+
 
 print("Using VGG16 to extract features from ROIs in training set...")
 glomerular_features = new_model.predict(X_train)
