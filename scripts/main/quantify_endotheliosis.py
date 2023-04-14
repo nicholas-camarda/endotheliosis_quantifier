@@ -265,8 +265,26 @@ def fit_umap_model(X_train, X_val, n_components=15, n_neighbors=8, n_epochs=3000
     return X_train_umap, X_val_umap
 
 
+def data_generator(X, y, batch_size):
+    num_samples = len(X)
+    while True:
+        # Shuffle the data indices
+        indices = np.arange(num_samples)
+        np.random.shuffle(indices)
+
+        for start_idx in range(0, num_samples, batch_size):
+            end_idx = min(start_idx + batch_size, num_samples)
+            batch_indices = indices[start_idx:end_idx]
+
+            # Load the batch data
+            X_batch = np.array([X[i] for i in batch_indices])
+            y_batch = np.array([y[i] for i in batch_indices])
+
+            yield X_batch, y_batch
+
+
 def run_neural_network(X_train, y_train, X_val, y_val, model_output_directory,
-                       num_classes, n_epochs, n_batch_size, input_shape=(256, 256, 64)):
+                       n_epochs, n_batch_size, input_shape=(256, 256, 64)):
 
     input_layer = Input(shape=input_shape)
 
@@ -279,18 +297,26 @@ def run_neural_network(X_train, y_train, X_val, y_val, model_output_directory,
     # Create the final regression model
     regression_model = Model(inputs=input_layer, outputs=predictions)
 
-    # Optionally freeze the initial layers of VGG16
-    for layer in regression_base_model.layers:
-        layer.trainable = False
-
     # Compile and train the regression model
     regression_model.compile(optimizer='adam', loss='mean_squared_error', metrics=['mse', 'mae'])
 
+    train_gen = data_generator(X_train, y_train, n_batch_size)
+    val_gen = data_generator(X_val, y_val, n_batch_size)
+
+    steps_per_epoch = len(X_train) // n_batch_size
+    validation_steps = len(X_val) // n_batch_size
+
     with tf.device("/GPU:0"):
-        regression_model.fit(X_train, y_train,
-                             epochs=n_epochs, batch_size=n_batch_size,
-                             validation_data=(X_val, y_val))
+        regression_model.fit(train_gen,
+                             steps_per_epoch=steps_per_epoch,
+                             epochs=n_epochs,
+                             validation_data=val_gen,
+                             validation_steps=validation_steps)
     print(regression_model.summary())
+
+    model_filepath = os.path.join(model_output_directory, 'nn_model-glom_openness.pkl')
+    with open(model_filepath, 'wb') as f:
+        pickle.dump(regression_model, f)
 
     return regression_model
 
@@ -325,10 +351,9 @@ print(f'num_classes: {num_classes}')
 
 
 n_neural_net_epochs = 50
-n_batch_size = 4
+n_batch_size = 32
 run_neural_network(X_train, y_train, X_val, y_val,
                    model_output_directory=directory_nn_model,
-                   num_classes=num_classes,
                    n_epochs=n_neural_net_epochs,
                    n_batch_size=n_batch_size)
 

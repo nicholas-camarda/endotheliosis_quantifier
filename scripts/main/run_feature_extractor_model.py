@@ -164,7 +164,7 @@ glomerular_features_val = new_model.predict(X_val)
 X_val_brr, y_val_brr = make_regression_data(glomerular_features_val, y_val)
 
 # Save the output
-top_output_directory_regression_input_data = os.path.join(cache_dir_path, 'regression_input', 'bayesian_ridge_model')
+top_output_directory_regression_input_data = os.path.join(cache_dir_path, 'regression_input')
 os.makedirs(top_output_directory_regression_input_data, exist_ok=True)
 data_to_save = ['X_train_regression', 'y_train_regression', 'X_val_regression', 'y_val_regression']
 regr_data = [X_train_brr, y_train_brr, X_val_brr, y_val_brr]
@@ -181,5 +181,7 @@ for datum_name, datum in zip(data_to_save, regr_data):
     data_filepath = os.path.join(top_output_directory_regression_input_data, datum_name + '.pkl')
     with open(data_filepath, 'wb') as f:
         pickle.dump(datum, f)
+print(f'Glom features: {glomerular_features.shape}')
+print(f'Glom validation features: {glomerular_features_val.shape}')
 
 print(f'Saved data input to: {top_output_directory_regression_input_data}')
