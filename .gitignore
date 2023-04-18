@@ -5,6 +5,7 @@ output/
 cuda-*
 make_swap_file.sh
 scripts/utils/test_tensorflow.py
+segment-anything/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

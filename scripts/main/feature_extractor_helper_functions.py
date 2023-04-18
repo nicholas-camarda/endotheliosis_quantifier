@@ -15,10 +15,6 @@ from tensorflow.keras.layers import (Conv2D, Dense, Dropout, Flatten,
                                      MaxPooling2D)
 from tensorflow.keras.models import Model, Sequential
 
-# from scripts.utils.generate_augmented_dataset import (apply_augmentation,
-#                                                       augment, cutmix, cutout,
-#                                                       mixup)
-
 
 def load_pickled_data(file_path):
     # Open the pickle file
@@ -61,17 +57,14 @@ def plot_history(history, output_dir, file_name, metric):
     plt.close()
 
 
-def get_image_and_mask_arrays(image_folder, mask_folder, size=256):
+def preprocess_images_to_rois(image_folder, mask_folder, output_folder, padding=5, size=256):
 
-    imgs = []
-    masks = []
-    filenames = []
-    print(f'Resizing images to: {size} x {size}')
-
+    rois = []
     for patient_folder in os.listdir(image_folder):
         patient_image_folder = os.path.join(image_folder, patient_folder)
         patient_mask_folder = os.path.join(mask_folder, patient_folder)
 
+        # if there's no corresponding mask, continue...
         if not os.path.exists(patient_mask_folder):
             continue
 
@@ -81,73 +74,51 @@ def get_image_and_mask_arrays(image_folder, mask_folder, size=256):
             mask_file = os.path.join(patient_mask_folder, filename_mask)
 
             img = cv2.imread(image_file)
-            mask = cv2.imread(mask_file, 0)
-
-            # Resize image and mask if necessary
             img = cv2.resize(img, (size, size))
+            mask = cv2.imread(mask_file, 0)
             mask = cv2.resize(mask, (size, size))
+
             filename = os.path.splitext(filename_image)[0]
 
-            imgs.append(img)
-            masks.append(mask)
-            filenames.append(filename)
+            # Compute the intersection of the image and the mask
+            masked_img = cv2.bitwise_and(img, img, mask=mask)
 
-    f_sort = np.array(filenames)
-    i_sort = np.array(imgs)
-    m_sort = np.array(masks)
+            # Find contours in the masked image
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    return f_sort, i_sort, m_sort
+            # Extract ROIs using contours and save them
+            roi_index = 0
+            for cnt in contours:
+                # Get the bounding rectangle
+                x, y, w, h = cv2.boundingRect(cnt)
 
+                # Add padding to the rectangle
+                x, y, w, h = x - padding, y - padding, w + 2 * padding, h + 2 * padding
 
-def preprocess_images(names, imgs, masks, output_folder, padding=5, size=256):
-    rois = []
-    names = []
-    for filename, img, mask in zip(names, imgs, masks):
-        # each ROI per image needs an index
-        roi_index = 0
+                # Extract the rectangular ROI
+                roi = masked_img[y:y+h, x:x+w]
 
-        # Get the contours
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                # Check if the ROI is empty or out of the image boundaries, skip if it is
+                if roi.size == 0 or roi.shape[0] == 0 or roi.shape[1] == 0:
+                    continue
 
-        for cnt in contours:
-            # Get the minimum enclosing circle
-            (x, y), radius = cv2.minEnclosingCircle(cnt)
-            x, y, radius = int(x), int(y), int(radius)
+                ROI_filename = f'{filename}_ROI_{roi_index}'
+                print(ROI_filename)
 
-            # Add padding to the circle
-            radius += padding
+                # Resize the ROI
+                roi = cv2.resize(roi, (size, size), interpolation=cv2.INTER_CUBIC)
+                rois.append(roi)
 
-            # Extract the circular ROI
-            mask_roi = np.zeros_like(img)
-            cv2.circle(mask_roi, (x, y), radius, (255, 255, 255), -1)
+                # Save the ROI as an image
+                patient_folder = filename.split("_")[0]
+                roi_output_folder = os.path.join(output_folder, patient_folder)
+                if not os.path.exists(roi_output_folder):
+                    os.makedirs(roi_output_folder)
+                roi_output_path = os.path.join(roi_output_folder, f"{ROI_filename}.jpg")
+                cv2.imwrite(roi_output_path, roi)
+                roi_index += 1
 
-            roi = img * mask_roi  # cv2.bitwise_and(img, mask_roi)
-            roi = roi[y-radius:y+radius, x-radius:x+radius]
-
-            # Check if the ROI is empty, skip if it is
-            if roi.size == 0 or roi.shape[0] == 0 or roi.shape[1] == 0:
-                continue
-
-            ROI_filename = f'{filename}_ROI_{roi_index}'
-
-            print(ROI_filename)
-            # Crop and resize the ROI
-            roi = cv2.resize(roi, (size, size), interpolation=cv2.INTER_CUBIC)
-
-            # add these to lists
-            rois.append(roi)
-            names.append(ROI_filename)
-
-            # Save the ROI as an image
-            patient_folder = filename.split("_")[0]
-            roi_output_folder = os.path.join(output_folder, patient_folder)
-            if not os.path.exists(roi_output_folder):
-                os.makedirs(roi_output_folder)
-            roi_output_path = os.path.join(roi_output_folder, f"{ROI_filename}.jpg")
-            cv2.imwrite(roi_output_path, roi)
-            roi_index += 1
-
-    return np.array(names), np.array(rois)
+    return np.array(rois)
 
 
 def expand_scores(score_dict, roi_output_folder):
@@ -196,14 +167,16 @@ roi_test_output_folder = os.path.join(top_data_directory, "test", "rois")
 square_size = 256
 # extract multiple ROIs from each image
 
-names, imgs, masks = get_image_and_mask_arrays(image_folder, mask_folder, square_size)
-image_names, rois = preprocess_images(names, imgs, masks,
-                                      output_folder=roi_train_output_folder,
-                                      size=square_size)
+rois = preprocess_images_to_rois(image_folder, mask_folder,
+                                 output_folder=roi_train_output_folder,
+                                 padding=5,
+                                 size=square_size)
+
+print(rois.shape)
+raise ValueError("stop")
 
 # expand the scores to match the dimensions of additional ROIs for each image
 expanded_scores_array = expand_scores(scores, roi_output_folder=roi_train_output_folder)
-
 
 # Convert endotheliosis scores to a continuous scale (0-1)
 endotheliosis_scores = np.array(expanded_scores_array)  # Replace this with the actual scores for each ROI
@@ -215,12 +188,9 @@ test_size = 0.2
 random_seed = 42
 
 # Load your preprocessed images (ROIs) and scores
-print(rois.shape)
-print(image_names.shape)
-print(endotheliosis_scores_continuous.shape)
-
 X = extract_features(np.array(rois))
 y = endotheliosis_scores_continuous
+
 
 # Split the dataset
 X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=test_size, random_state=random_seed)
