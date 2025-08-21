@@ -13,6 +13,7 @@ import numpy as np
 # import pandas as pd
 # import segmentation_models as sm
 import tensorflow as tf
+import tensorflow_hub as hub
 from keras.applications.vgg16 import VGG16, preprocess_input
 from keras.models import Model
 from matplotlib import pyplot as plt
@@ -78,6 +79,32 @@ def make_regression_data(features, y):
     print(y_.shape)
 
     return X_, y_
+
+
+def upscale_image_srgan(image, scale=4, srgan_model_path="https://tfhub.dev/captain-pool/esrgan-tf2/1"):
+    # Load the pre-trained SRGAN model
+    model = hub.load(srgan_model_path)
+
+    # Prepare the input image
+    image = tf.image.convert_image_dtype(image, tf.float32)
+    image = tf.expand_dims(image, axis=0)
+
+    # Calculate the new dimensions
+    height, width = image.shape[1:3]
+    new_height = height * scale
+    new_width = width * scale
+
+    # Resize the image to the desired scale
+    image_resized = tf.image.resize(image, (new_height, new_width), method=tf.image.ResizeMethod.BICUBIC)
+
+    # Upscale the image with SRGAN
+    upscaled_image = model(image_resized)
+    upscaled_image = tf.squeeze(upscaled_image)
+
+    # Convert the output image to the original dtype (0 to 255)
+    upscaled_image = tf.image.convert_image_dtype(upscaled_image, tf.uint8)
+
+    return upscaled_image.numpy()
 
 
 def expand_scores(score_dict, roi_output_folder):
@@ -204,11 +231,25 @@ scores = load_pickled_data(os.path.join(cache_dir_path, 'scores.pickle'))
 
 image_folder = os.path.join(top_data_directory, "train", "images")
 mask_folder = os.path.join(top_data_directory, "train", "masks")
+
 roi_train_output_folder = os.path.join(top_data_directory, "train", "rois")
+
 roi_test_output_folder = os.path.join(top_data_directory, "test", "rois")
 
 
 print(f'Using square size: {square_size}')
+# square_size = 256
+# test_file = os.path.join(roi_train_output_folder, "T19", "T19_Image0_ROI_0.jpg")
+# roi = cv2.imread(test_file)
+# roi = cv2.resize(roi, (square_size, square_size), interpolation=cv2.INTER_CUBIC)
+# print(roi.shape)
+# rescaled_image = upscale_image_srgan(roi)
+# cv2.imshow("Rescaled Image", rescaled_image)
+# cv2.waitKey(0)
+# cv2.destroyAllWindows()
+
+# raise ValueError("stop")
+
 # Extract regions of interest (ROIs) from the original images using binary masks
 X_temp = preprocess_images_to_rois(image_folder, mask_folder,
                                    output_folder=roi_train_output_folder,

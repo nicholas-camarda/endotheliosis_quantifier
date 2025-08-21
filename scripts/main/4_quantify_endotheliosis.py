@@ -131,12 +131,6 @@ X_val = load_pickled_data(os.path.join(regression_cache_dir_path, 'X_val_glom_fe
 # X_val = load_pickled_data(os.path.join(regression_cache_dir_path, 'X_val_net_reg.pkl'))
 y_val = load_pickled_data(os.path.join(regression_cache_dir_path, 'y_val_scores.pkl'))
 
-# labelencoder = LabelEncoder()
-# y_train = labelencoder.fit_transform(y_train_temp)
-# y_val = labelencoder.fit_transform(y_val_temp)
-# num_classes = max(len(np.unique(y_train)), len(np.unique(y_val)))
-
-
 print(f'X_train: {X_train.shape}')
 print(f'y_train: {y_train.shape}')
 print(f'X_val: {X_val.shape}')
@@ -146,6 +140,7 @@ print(f'y_val: {y_val.shape}')
 run_random_forest(X_train, y_train, X_val, y_val,
                   model_output_directory=directory_rf_model,
                   n_estimators=300)
+
 
 
 # n_neural_net_epochs = 50
