@@ -6,7 +6,8 @@
 - [x] Baseline quantification via Random Forest with validation outputs
 
 ## Phase 1: Current Development
-- [ ] Rename repository to `endotheliosis_quantifier`; standardize Conda env as `eq`
+- [x] Rename repository to `endotheliosis_quantifier`
+- [ ] Standardize Conda env as `eq`
 - [ ] Adopt `src/eq` package layout; add CLI entrypoints (`eq-segment`, `eq-extract`, `eq-quantify`)
 - [ ] Centralize configuration (data paths, cache, model paths) in a config module
 - [ ] Consolidate scripts: keep a single ROI extractor, feature extractor, and quantifier

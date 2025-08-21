@@ -2,7 +2,7 @@
 
 > Spec: Repo Rename to endotheliosis_quantifier and Conda Env Standardization (eq)
 > Created: 2025-08-21
-> Status: Planning
+> Status: In Progress
 
 ## Overview
 Standardize repository naming to `endotheliosis_quantifier` and align the Conda environment to `eq`, updating documentation and references without breaking existing users.

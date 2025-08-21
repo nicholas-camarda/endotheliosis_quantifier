@@ -16,3 +16,4 @@
 - Tech Stack: see `./tech-stack.md`
 - Key Decisions: see `./decisions.md`
 - Technical Summary: see `./technical/README.md`
+- Migration: see root `README.md` for repo rename steps
