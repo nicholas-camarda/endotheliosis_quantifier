@@ -51,4 +51,31 @@ docker-compose exec girder bash ls /home/
 ---
 Appended notes from origin/master:
 
-# endotheliosisQuantifier
+# endotheliosis_quantifier
+
+## Migration: repository rename and remote update
+
+This project is being standardized to the repository name `endotheliosis_quantifier`.
+
+If you previously cloned `endotheliosisQuantifier` or `endotheliosisQuantifier_LEARN`, update your local checkout as follows:
+
+```bash
+# from the parent directory of your repo
+mv endotheliosisQuantifier_LEARN endotheliosis_quantifier 2>/dev/null || true
+mv endotheliosisQuantifier endotheliosis_quantifier 2>/dev/null || true
+
+cd endotheliosis_quantifier
+
+# verify current remotes
+git remote -v
+
+# after GitHub repo is renamed, update origin to the new URL
+git remote set-url origin https://github.com/nicholas-camarda/endotheliosis_quantifier.git
+
+# verify
+git remote -v
+```
+
+Notes:
+- GitHub automatically redirects old repository URLs to the new name after a rename, but you should still update your `origin` URL locally.
+- If you have uncommitted changes, commit or stash before renaming directories.
