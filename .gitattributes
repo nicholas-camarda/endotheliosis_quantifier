@@ -1,0 +1,10 @@
+models/unet_binseg_50epoch_3960images_8batchsize/unet_binseg_50epoch_3960images_8batchsize.hdf5 filter=lfs diff=lfs merge=lfs -text
+earlier_models/unet_binseg_50epoch_3960images_8batchsize/unet_binseg_50epoch_3960images_8batchsize.hdf5 filter=lfs diff=lfs merge=lfs -text
+segmentation_model_dir filter=lfs diff=lfs merge=lfs -text
+segmentation_model_dir/dynamic_unet_seg_model-e50_b16.pkl filter=lfs diff=lfs merge=lfs -text
+segmentation_model_dir/dynamic_unet_seg_model-e50_b16_v2.pkl filter=lfs diff=lfs merge=lfs -text
+data filter=lfs diff=lfs merge=lfs -text
+data/Lauren_PreEclampsia_Data filter=lfs diff=lfs merge=lfs -text
+data/mitochondria_data filter=lfs diff=lfs merge=lfs -text
+segmentation_model_dir/glomerulus_segmentation_model-dynamic_unet-e50_b16_s84.pkl filter=lfs diff=lfs merge=lfs -text
+segmentation_model_dir/mito_dynamic_unet_seg_model-e50_b16.pkl filter=lfs diff=lfs merge=lfs -text

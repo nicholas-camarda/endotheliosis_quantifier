@@ -47,3 +47,8 @@ As for coding this, it's a bit of a larger task than I can write out here. Howev
 6. Test the U-Net model by applying a tissue masking algorithm to a gray level WSI image at very low magnification (2x) to isolate the tissue from white optical background. Subsequently, slide the receptive field of the trained U-Net model over the tissue image under the mask, with the sliding interval equal to 50% of the receptive field size (256 pixels). Apply class majority voting to determine the class label for pixels in the overlapping areas in the outputted masks. Stitch the masks outputted by U-Net and evaluate detected candidate glomerular objects for size (post-processing) in the stitched image
 
 docker-compose exec girder bash ls /home/
+
+---
+Appended notes from origin/master:
+
+# endotheliosisQuantifier
