@@ -1,7 +1,6 @@
 import os
 
 import lightgbm as lgb
-import numpy as np
 from sklearn.datasets import make_regression
 from sklearn.model_selection import KFold
 from skopt import BayesSearchCV
