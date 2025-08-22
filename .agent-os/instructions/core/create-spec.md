@@ -15,11 +15,10 @@ Generate detailed feature specifications aligned with product roadmap and missio
 <pre_flight_check>
   EXECUTE: @~/.agent-os/instructions/meta/pre-flight.md
   NOTE: Path conventions — Home: @~/.agent-os, Project: @.agent-os
-  PROJECT_CONTEXT_CHECK:
-    **MANDATORY**: ALWAYS read @.agent-os/project-context.md first (current workspace)
-    VERIFY: Dataset names, function names, file paths are correct
-    UPDATE: Context file if new key information is learned
-    REFERENCE: This file when needing project details
+  BEST_PRACTICES_CHECK:
+    **MANDATORY**: ALWAYS read @~/.agent-os/standards/best-practices.md first
+    VERIFY: Following established best practices and coding standards
+    REFERENCE: This file for all development decisions and approaches
   WEB_SEARCH_CHECK:
     IF uncertain OR current info required:
       USE: @Web to fetch latest official docs/best practices (never curl)
@@ -30,7 +29,7 @@ Generate detailed feature specifications aligned with product roadmap and missio
   SEQUENTIAL_THINKING:
     **MANDATORY**: ALWAYS use sequential-thinking MCP for problem analysis and planning
     ACTION: Use sequential-thinking MCP to outline plan, assumptions, risks, and success criteria before major steps
-  STANDARDS_INDEX_CHECK: If unsure which standard to consult, READ @~/.agent-os/standards/README.md to pick targets
+  STANDARDS_INDEX_CHECK: If unsure which standard to consult, READ @~/.agent-os/standards/best-practices.md and @~/.agent-os/standards/testing-standards.md to pick targets
   AI_TOOL_REQUIREMENT:
     **CRITICAL**: Every spec creation MUST use both sequential-thinking and context7
     **NO EXCEPTIONS**: AI tools required for planning and current information gathering

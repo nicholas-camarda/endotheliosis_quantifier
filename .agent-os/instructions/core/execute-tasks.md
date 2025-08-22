@@ -25,9 +25,9 @@ Initiate execution of one or more tasks for a given spec.
   ALWAYS READ @~/.agent-os/standards/best-practices.md FIRST before any other action
   This file contains the core guidance for all agent behavior and routing
   
-  **MANDATORY PROJECT CONTEXT CHECK:**
-  ALWAYS READ @.agent-os/project-context.md FIRST to get key project information (current workspace)
-  This file contains dataset names, function names, file paths, and other critical details
+  **MANDATORY BEST PRACTICES CHECK:**
+  ALWAYS READ @~/.agent-os/standards/best-practices.md FIRST
+  This file contains core development principles, coding standards, and best practices
   
   WEB_SEARCH_CHECK:
     IF uncertain OR current info required:

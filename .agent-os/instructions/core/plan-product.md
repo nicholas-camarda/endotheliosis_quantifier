@@ -23,7 +23,7 @@ Generate product docs for new projects: mission, tech-stack, roadmap, decisions 
     USE: Context7 (resolve-library-id → get-library-docs) to fetch authoritative docs
   SEQUENTIAL_THINKING:
     ACTION: Use sequential-thinking MCP to outline the planning strategy and risks before creating docs
-  STANDARDS_INDEX_CHECK: If unsure which standard to consult, READ @~/.agent-os/standards/README.md to pick targets
+  STANDARDS_INDEX_CHECK: If unsure which standard to consult, READ @~/.agent-os/standards/best-practices.md and @~/.agent-os/standards/testing-standards.md to pick targets
 </pre_flight_check>
 
 <process_flow>
@@ -421,7 +421,6 @@ Optionally create a lightweight technical documentation directory for future ana
 
 <execution_instructions>
   ACTION: Create technical/README.md only if user requests technical documentation
-  SKIP: Function inventory, dependency analysis, and variable census by default
 </execution_instructions>
 
 </step>

@@ -48,21 +48,31 @@ Use the file-creator subagent to create file: tasks.md inside of the current fea
   ## Tasks
 
   - [ ] 1. [MAJOR_TASK_DESCRIPTION]
-    - [ ] 1.1 Write tests for [COMPONENT]
-    - [ ] 1.2 [IMPLEMENTATION_STEP]
+    - [ ] 1.1 Verify existing functionality for [COMPONENT]
+      - [ ] 1.1.1 Search codebase for existing functions/methods that handle similar functionality
+      - [ ] 1.1.2 Analyze existing implementation quality and completeness
+      - [ ] 1.1.3 Determine integration approach: extend existing vs. replace vs. create new
+    - [ ] 1.2 Write tests for [COMPONENT]
     - [ ] 1.3 [IMPLEMENTATION_STEP]
-    - [ ] 1.4 Verify all tests pass
+    - [ ] 1.4 [IMPLEMENTATION_STEP]
+    - [ ] 1.5 Verify all tests pass
 
   - [ ] 2. [MAJOR_TASK_DESCRIPTION]
-    - [ ] 2.1 Write tests for [COMPONENT]
-    - [ ] 2.2 [IMPLEMENTATION_STEP]
+    - [ ] 2.1 Verify existing functionality for [COMPONENT]
+      - [ ] 2.1.1 Search codebase for existing functions/methods that handle similar functionality
+      - [ ] 2.1.2 Analyze existing implementation quality and completeness
+      - [ ] 2.1.3 Determine integration approach: extend existing vs. replace vs. create new
+    - [ ] 2.2 Write tests for [COMPONENT]
+    - [ ] 2.3 [IMPLEMENTATION_STEP]
 </task_template>
 
 <ordering_principles>
+  - Verify existing functionality first before implementation
   - Consider technical dependencies
   - Follow TDD approach
   - Group related functionality
   - Build incrementally
+  - Prioritize integration over duplication
 </ordering_principles>
 
 </step>

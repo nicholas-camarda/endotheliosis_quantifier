@@ -1,0 +1,33 @@
+{
+    "segmentation": {
+        "default_model": "glomeruli",
+        "available_models": {
+            "glomeruli": {
+                "name": "Glomerulus Segmentation Model",
+                "path": "segmentation_model_dir/glomerulus_segmentation_model-dynamic_unet-e50_b16_s84.pkl",
+                "description": "Pre-trained model for glomerulus detection in kidney tissue"
+            },
+            "mitochondria": {
+                "name": "Mitochondria Segmentation Model",
+                "path": "segmentation_model_dir/mito_dynamic_unet_seg_model-e50_b16.pkl",
+                "description": "Pre-trained model for mitochondria detection"
+            }
+        }
+    },
+    "quantification": {
+        "default_model": "endotheliosis",
+        "available_models": {
+            "endotheliosis": {
+                "name": "Endotheliosis Quantification Model",
+                "path": "models/endotheliosis_quantifier.pkl",
+                "description": "Regression model for endotheliosis scoring"
+            }
+        }
+    },
+    "pipeline": {
+        "default_batch_size": 8,
+        "default_epochs": 50,
+        "image_size": 256,
+        "device_mode": "production"
+    }
+}

@@ -15,11 +15,10 @@ Execute a specific task along with its sub-tasks systematically following a TDD 
 <pre_flight_check>
   EXECUTE: @~/.agent-os/instructions/meta/pre-flight.md
   NOTE: Path conventions — Home: @~/.agent-os, Project: @.agent-os
-  PROJECT_CONTEXT_CHECK:
-    **MANDATORY**: ALWAYS read @.agent-os/project-context.md first (current workspace)
-    VERIFY: Dataset names, function names, file paths are correct
-    UPDATE: Context file if new key information is learned
-    REFERENCE: This file when needing project details
+  BEST_PRACTICES_CHECK:
+    **MANDATORY**: ALWAYS read @~/.agent-os/standards/best-practices.md first
+    VERIFY: Following established best practices and coding standards
+    REFERENCE: This file for all development decisions and approaches
   WEB_SEARCH_CHECK:
     IF uncertain OR current info required:
       USE: @Web to fetch latest official docs/best practices (never curl)
@@ -28,7 +27,7 @@ Execute a specific task along with its sub-tasks systematically following a TDD 
     USE: Context7 (resolve-library-id → get-library-docs) to fetch authoritative docs
   SEQUENTIAL_THINKING:
     ACTION: Use sequential-thinking MCP to outline steps, dependencies, and minimum-size test plan before coding
-  STANDARDS_INDEX_CHECK: If unsure which standard to consult, READ @~/.agent-os/standards/README.md to pick targets
+  STANDARDS_INDEX_CHECK: If unsure which standard to consult, READ @~/.agent-os/standards/best-practices.md and @~/.agent-os/standards/testing-standards.md to pick targets
 </pre_flight_check>
 
 

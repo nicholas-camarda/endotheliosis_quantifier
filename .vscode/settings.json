@@ -1,0 +1,18 @@
+{
+  "python.defaultInterpreterPath": "/Users/ncamarda/mambaforge/envs/eq/bin/python",
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "never"
+  },
+  "editor.formatOnSave": true,
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+  "ruff.lint.enable": true,
+  "ruff.format.enable": true,
+  "python.analysis.extraPaths": [
+    "./src/eq/pipeline"
+  ]
+}

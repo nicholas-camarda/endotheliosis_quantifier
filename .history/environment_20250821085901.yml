@@ -1,0 +1,25 @@
+name: eq
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - numpy=1.23.5
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - pandas
+  - pillow
+  - opencv
+  - lightgbm
+  - xgboost
+  - ipykernel
+  - jupyter
+  - setuptools<81
+  - pip:
+      # macOS Apple Silicon TensorFlow stack. If on Linux, replace with `tensorflow>=2.10` and remove tensorflow-macos/metal.
+      - tensorflow-macos==2.12.0
+      - tensorflow-metal==0.8.0
+      - tensorflow-hub
+      - scikit-optimize

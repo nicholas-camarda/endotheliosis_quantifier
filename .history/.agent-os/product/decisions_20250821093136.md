@@ -1,0 +1,31 @@
+# Decisions Log
+
+## Platform & Performance
+- Must run on macOS Apple Silicon (M1) for inference and light workflows.
+- Retain optional Windows (WSL2) + CUDA path (RTX 3080) for training; document when required.
+
+## Framework
+- Keep current TensorFlow/Keras inference working on M1 (tensorflow-metal).
+- Evaluate FastAI/PyTorch for parity and improved cross-platform developer experience.
+
+## Packaging & Structure
+- Rename repository to `endotheliosis_quantifier`.
+- Adopt `src/eq` package with CLI entrypoints for the 4 pipeline steps.
+- Centralize configuration; remove hard-coded paths.
+
+## Reproducibility & Standards
+- Use Conda env `eq` exclusively for installs/execution.
+- Follow `.agent-os/standards/code-style/python-style.md`.
+- Separate test scripts for new/updated logic; assert specific outputs on test data.
+
+## 2025-08-21: Repository Hygiene and Utilities Consolidation
+**ID:** DEC-001
+**Status:** Accepted
+**Category:** technical
+
+### Decision
+- Consolidate `scripts/utils/` to a minimal, well-documented helper set; remove or merge redundant utilities.
+- Do not track large/ephemeral folders: `notebooks/`, `earlier_models/`. Update `.gitignore` accordingly.
+
+### Context
+Improves maintainability, reduces confusion for users, and avoids committing bulky, non-source artifacts. Aligns with packaging goals and cross-platform reproducibility.

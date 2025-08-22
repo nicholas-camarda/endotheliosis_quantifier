@@ -23,7 +23,7 @@ Install Agent OS into an existing codebase, analyze current product state and pr
     USE: Context7 (resolve-library-id → get-library-docs) to fetch authoritative docs
   SEQUENTIAL_THINKING:
     ACTION: Use sequential-thinking MCP to structure the analysis plan and verification steps
-  STANDARDS_INDEX_CHECK: If unsure which standard to consult, READ @~/.agent-os/standards/README.md to pick targets
+  STANDARDS_INDEX_CHECK: If unsure which standard to consult, READ @~/.agent-os/standards/best-practices.md and @~/.agent-os/standards/testing-standards.md to pick targets
 </pre_flight_check>
 
 <process_flow>
@@ -162,7 +162,6 @@ Refine product documentation to reflect the current codebase without generating 
 
 <execution_instructions>
   ACTION: Update product docs (roadmap, tech-stack, decisions) only
-  SKIP: Function inventory, dependency analysis, and variable census
   VERIFY: Documentation accurately reflects current implementation
 </execution_instructions>
 
