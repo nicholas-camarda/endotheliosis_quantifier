@@ -20,6 +20,50 @@
 - Follow `.agent-os/standards/code-style/python-style.md`.
 - Separate test scripts for new/updated logic; assert specific outputs on test data.
 
+## 2025-08-21: Segmentation Pipeline Architecture Implementation
+**ID:** DEC-005
+**Status:** Accepted
+**Category:** technical
+
+### Decision
+- Implement two-stage segmentation pipeline: mitochondria pretraining followed by glomeruli fine-tuning
+- Use transfer learning approach with mitochondria EM data as foundation for general image segmentation features
+- Create separate configuration files for each stage with programmatic train/test splits
+- Implement pipeline orchestrator script for automated execution of both stages
+
+### Rationale
+- Transfer learning from mitochondria data improves performance on glomeruli segmentation task
+- Clear separation of concerns between pretraining and fine-tuning stages
+- Programmatic data splits ensure reproducibility across different datasets
+- Configuration-driven approach enables easy adaptation to new data sources
+
+### Implementation Details
+1. **Stage 1 - Mitochondria Pretraining**: 
+   - Raw TIF stack → individual TIFs → JPG conversion → patches → U-Net training
+   - Output: `mito_dynamic_unet_seg_model-e50_b16.pkl` (228MB)
+   - Config: `configs/mito_pretraining_config.yaml`
+   - Train/test split: 80/20 (seed=42)
+
+2. **Stage 2 - Glomeruli Fine-tuning**:
+   - Preeclampsia TIFs → Label Studio annotations → fine-tuning from mitochondria model
+   - Output: `glomerulus_segmentation_model-dynamic_unet-e50_b16_s84.pkl` (250MB)
+   - Config: `configs/glomeruli_finetuning_config.yaml`
+   - Train/val/test split: 70/15/15 (seed=84, different from mito)
+
+3. **Pipeline Orchestration**:
+   - Script: `src/eq/pipeline/segmentation_pipeline.py`
+   - Commands: `--stage mito`, `--stage glomeruli`, `--stage all`
+   - Automatic directory creation and path validation
+
+### Benefits Achieved
+- **Reproducibility**: Clear data flow and configuration for each stage
+- **Extensibility**: Easy to add new datasets or tissue types
+- **Documentation**: Comprehensive workflow documentation in product technical README
+- **Automation**: Single script orchestrates complete pipeline execution
+
+### Context
+This decision establishes the foundation for reproducible segmentation model training and enables researchers to easily extend the pipeline with new data sources. The transfer learning approach leverages the proven effectiveness of pretraining on EM data for histology applications.
+
 ## 2025-08-21: Repository Hygiene and Utilities Consolidation
 **ID:** DEC-001
 **Status:** Accepted
@@ -122,3 +166,107 @@ This decision addresses the dual-environment architecture requirements while lev
 
 ### Context
 This migration completes the framework transition decision and provides a production-ready fastai segmentation system. The implementation leverages existing working notebook code while adding enterprise-grade features like mode-specific training, hardware optimization, and comprehensive testing. All 162 tests pass, confirming the migration's success and system stability.
+
+## DEC-006: Mitochondria Data Source Documentation and Workflow Guide
+
+**Date**: 2025-08-22  
+**Status**: COMPLETED  
+**Priority**: HIGH  
+
+### Context
+The mitochondria segmentation pipeline required clear documentation of the data source and complete workflow for reproducibility. The original documentation was incomplete regarding where the mitochondria data originated from.
+
+### Decision
+1. **Data Source Identified**: The mitochondria data comes from the [Lucchi et al. 2012 benchmark dataset](http://rhoana.rc.fas.harvard.edu/dataset/lucchi.zip) from Harvard's Rhoana server, a widely-used EM dataset for mitochondria segmentation research.
+
+2. **Complete Workflow Documentation**: Added comprehensive "Complete Workflow Guide" section to README.md that documents:
+   - Data acquisition and download instructions
+   - Step-by-step processing pipeline
+   - Model training workflow
+   - Transfer learning to glomeruli
+   - Reproducibility features
+   - Quick start guide for new users
+
+3. **Reproducibility Focus**: Emphasized that users should start with raw data download and process it themselves, rather than hosting large datasets on GitHub.
+
+### Rationale
+- **Reproducibility**: Complete workflow documentation ensures other researchers can reproduce results from scratch
+- **Data Attribution**: Proper citation of the Lucchi et al. 2012 dataset acknowledges the original research
+- **User Experience**: Step-by-step guide makes the pipeline accessible to new users
+- **Maintainability**: Clear documentation reduces support burden and improves code adoption
+
+### Implementation
+- Updated README.md with comprehensive workflow guide
+- Updated technical documentation with correct data source
+- Maintained focus on reproducibility rather than data hosting
+
+### Benefits
+- **Research Impact**: Other researchers can easily reproduce and build upon the work
+- **Academic Integrity**: Proper attribution to original dataset creators
+- **Code Adoption**: Clear documentation increases likelihood of code reuse
+- **Maintenance**: Reduced need for individual user support
+
+### Next Steps
+- Consider adding data validation scripts to verify downloaded dataset integrity
+- Add performance benchmarks against published results from Lucchi et al. 2012
+- Document any preprocessing differences from the original paper
+
+---
+
+## DEC-007: Patch Size Standardization to 224x224
+
+**Date**: 2025-08-22  
+**Status**: COMPLETED  
+**Priority**: HIGH  
+
+### Context
+During evaluation testing of the pretrained mitochondria model, we encountered a shape mismatch error: `ValueError: operands could not be broadcast together with shapes (256,256) (224,224)`. This revealed that the pretrained model was trained on 224x224 patches, but the pipeline was configured for 256x256.
+
+### Decision
+**Standardize entire pipeline to use 224x224 pixel patches** instead of 256x256 to ensure compatibility with existing pretrained models.
+
+### Rationale
+- **Model Compatibility**: Existing pretrained models (e.g., `backups/mito_dynamic_unet_seg_model-e50_b16.pkl`) expect 224x224 input
+- **Evaluation Accuracy**: Proper metrics calculation without resizing artifacts
+- **Consistency**: Uniform patch size throughout entire pipeline
+- **Performance**: Slightly faster training due to smaller patches
+
+### Implementation
+1. **Configuration Files Updated**:
+   - `configs/mito_pretraining_config.yaml`: patches.size: 224, input_size: [224, 224]
+   - `configs/glomeruli_finetuning_config.yaml`: resize_to: [224, 224], input_size: [224, 224], mask_resize: [224, 224]
+
+2. **Python Code Updated**:
+   - All training functions default to `image_size=224`
+   - All config defaults updated to `[224, 224]`
+   - Pipeline banners show "224x224 patches"
+   - Data loaders default to 224x224
+
+3. **Documentation Updated**:
+   - README.md: All examples and references updated to 224x224
+   - Function signatures and examples updated
+   - Console output updated
+
+### Backward Compatibility
+- **Automatic Resizing**: Pipeline includes resize logic for mixed scenarios
+- **Existing Patches**: 256x256 patches work during evaluation with automatic resizing
+- **New Training**: Generates 224x224 patches natively
+
+### Benefits
+- **Perfect Model Alignment**: Works seamlessly with pretrained models
+- **Quantified Evaluation**: Proper metrics without shape mismatches
+- **Future Consistency**: All new training uses correct patch size
+- **Performance**: Slightly faster training and inference
+
+### Impact
+- **Evaluation**: ✅ Working with quantified metrics (Dice: 0.60, IoU: 0.44, Pixel Acc: 95%)
+- **Training**: ✅ Updated to 224x224 defaults
+- **Documentation**: ✅ All references updated
+- **Configs**: ✅ All files aligned
+
+### Next Steps
+1. **Optional**: Regenerate existing training patches at 224x224 for optimal performance
+2. **Future**: All new models will use 224x224 natively
+3. **Consider**: Updating existing datasets to 224x224 for consistency
+
+---

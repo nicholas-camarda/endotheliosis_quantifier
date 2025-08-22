@@ -475,7 +475,7 @@ def preprocess_data_bw(path, size):
 
 
 @log_function_call
-def generate_final_dataset(train_images_paths, train_masks_paths, test_images_paths, train_data_dict, test_data_dict, size=256, cache_dir=None, val_split=0.2):
+def generate_final_dataset(train_images_paths, train_masks_paths, test_images_paths, train_data_dict, test_data_dict, size=224, cache_dir=None, val_split=0.2):
     """Generate final dataset with specified parameters."""
     logger = get_logger("eq.data_loader.generate_dataset")
     logger.info(f"🔄 Generating final dataset with size {size}")
@@ -604,69 +604,3 @@ def generate_final_dataset(train_images_paths, train_masks_paths, test_images_pa
     logger.info(f"✅ Generated final dataset with {len(train_images_paths)} training and {len(test_images_paths)} test samples")
     return train_images, train_images_color, train_masks, val_images, val_images_color, val_masks, test_images, test_images_color, train_data_dict, test_data_dict
 
-
-top_data_directory = 'data/preeclampsia_data'
-testing_data_top_dir = os.path.join(top_data_directory, 'test')
-training_data_top_dir = os.path.join(top_data_directory, 'train')
-cache_dir_path = os.path.join(top_data_directory, 'cache')
-
-annotation_file = os.path.join(
-    training_data_top_dir, '2023-04-10_annotations.json')
-images_directory = os.path.join(training_data_top_dir, 'images')
-masks_directory = os.path.join(training_data_top_dir, 'masks')
-
-# this is how i trained the big model, so all must be resized to 256 x 256
-square_size = 256
-
-# generate the binary masks from the annotation file and raw image data
-# generate_binary_masks(annotation_file=annotation_file,
-#                       data_dir=training_data_top_dir)
-
-# get real testing images
-test_images_1_paths, test_data_dict_1 = organize_data_into_subdirs(
-    data_dir=testing_data_top_dir)
-
-# testing images here are all those that don't have a binary mask yet
-train_images_paths, train_masks_paths, test_images_2_paths, train_data_dict, test_data_dict_2 = create_train_val_test_lists(data_dir=training_data_top_dir)
-
-# combine the testing images
-test_images_paths = np.concatenate((test_images_1_paths, test_images_2_paths))
-
-# fix this, merge the two dictionaries
-test_data_dict = dict(sorted({**test_data_dict_1, **test_data_dict_2}.items()))
-
-generate_final_dataset(train_images_paths, train_masks_paths, test_images_paths, train_data_dict, test_data_dict, size=square_size, cache_dir=cache_dir_path)
-
-# organize the scores at last
-print('Writing scores-image mapping to cache dir...')
-annotations = load_annotations_from_json(annotation_file)
-scores = get_scores_from_annotations(annotations, cache_dir=cache_dir_path)
-
-print('Done!')
-
-
-if __name__ == '__main__':
-    # generate the binary masks from the annotation file and raw image data
-    # generate_binary_masks(annotation_file=annotation_file,
-    #                       data_dir=training_data_top_dir)
-
-    # get real testing images
-    test_images_1_paths, test_data_dict_1 = organize_data_into_subdirs(
-        data_dir=testing_data_top_dir)
-
-    # testing images here are all those that don't have a binary mask yet
-    train_images_paths, train_masks_paths, test_images_2_paths, train_data_dict, test_data_dict_2 = create_train_val_test_lists(data_dir=training_data_top_dir)
-
-    # combine the testing images
-    test_images_paths = np.concatenate((test_images_1_paths, test_images_2_paths))
-
-    # fix this, merge the two dictionaries
-    test_data_dict = dict(sorted({**test_data_dict_1, **test_data_dict_2}.items()))
-
-    generate_final_dataset(train_images_paths, train_masks_paths, test_images_paths, train_data_dict, test_data_dict, size=square_size, cache_dir=cache_dir_path)
-
-    # organize the scores at last
-    print('Writing scores-image mapping to cache dir...')
-    annotations = load_annotations_from_json(annotation_file)
-    scores = get_scores_from_annotations(annotations, cache_dir=cache_dir_path)
-    print('Done!')

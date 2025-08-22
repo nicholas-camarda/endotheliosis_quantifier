@@ -1,16 +1,23 @@
 # Project data and outputs
 .DS_Store
+scripts_*/
+scripts/
 .ipynb_checkpoints/
 data/
-data/**/
-data/mitochondria_data/
+test_output/
+docs/
+earlier_models/
 output/
 models/
-scripts/models/
+scripts/
 github_repos/
 segment-anything/
+derived_data/
+raw_data/
+backup*
 
 # Environments
+
 .env
 .venv/
 venv/
@@ -55,3 +62,8 @@ docs/_build/
 # OS/editor
 *.swp
 *.swo
+*.
+
+# Exclude all hidden folders except .agent-os
+.*/
+!.agent-os/

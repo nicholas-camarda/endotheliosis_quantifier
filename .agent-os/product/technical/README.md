@@ -7,6 +7,71 @@
 - Feature extraction: ResNet50 (imagenet) features per ROI.
 - Quantification: Random Forest regression to estimate endotheliosis score with CI output.
 
+## Segmentation Pipeline Architecture
+
+The segmentation pipeline consists of two main stages designed for transfer learning:
+
+### Stage 1: Mitochondria Pretraining
+**Purpose**: Initial U-Net training on mitochondria EM data as a foundation for learning general image segmentation features.
+
+**Data Source**: [Lucchi et al. 2012 benchmark dataset](http://rhoana.rc.fas.harvard.edu/dataset/lucchi.zip) from Harvard's Rhoana server - widely-used EM dataset for mitochondria segmentation research.
+
+**Data Flow**:
+1. **Raw Data**: Download `lucchi.zip` from Harvard server, extract individual TIF files
+2. **Format Conversion**: TIF → JPG using `src/eq/io/convert_files_to_jpg.py`
+3. **Patch Generation**: Images split into 256x256 patches using `src/eq/patches/patchify_images.py`
+4. **Model Training**: U-Net with ResNet34 backbone (50 epochs, batch size 16)
+5. **Output**: `segmentation_model_dir/mito_dynamic_unet_seg_model-e50_b16.pkl` (228MB)
+
+**Configuration**: `configs/mito_pretraining_config.yaml`
+- Programmatic train/test split (80/20, seed=42)
+- No stratification needed
+
+### Stage 2: Glomeruli Fine-tuning
+**Purpose**: Fine-tune the mitochondria-pretrained model on glomeruli segmentation data to create the final production model.
+
+**Data Flow**:
+1. **Raw Data**: `data/preeclampsia_data/Lauren_PreEclampsia_Raw_TIF_Images/`
+2. **Annotations**: Label Studio JSON export with RLE-encoded masks and endotheliosis scores
+3. **Preprocessing**: TIF → JPG conversion, resize to 256x256, normalization
+4. **Fine-tuning**: Transfer learning from mitochondria model with lower learning rate (1e-4 vs 1e-3)
+5. **Output**: `segmentation_model_dir/glomerulus_segmentation_model-dynamic_unet-e50_b16_s84.pkl` (250MB)
+
+**Configuration**: `configs/glomeruli_finetuning_config.yaml`
+- Programmatic train/val/test split (70/15/15, seed=84)
+- Stratified by endotheliosis score
+
+### Label Studio Integration
+- **Annotation Workflow**: Manual annotation of glomeruli boundaries + endotheliosis severity scoring (0-4 scale)
+- **Data Processing**: `load_annotations_from_json()`, `rle2mask()`, `get_scores_from_annotations()`
+- **Export Format**: JSON with RLE-encoded masks and choice-based scoring
+
+### Model Checkpoints
+- **Mitochondria Model**: Transfer learning foundation (228MB)
+- **Final Glomeruli Model**: Production glomeruli segmentation (250MB)
+- **Architecture**: Dynamic U-Net with ResNet34 backbone (fine-tuned)
+
+### Reproducibility
+- **Requirements**: Exact conda environment (`environment.yml`), hardware (MPS/CUDA recommended)
+- **Seeds**: Mitochondria (42), Glomeruli (84) - different to avoid data leakage
+- **Commands**: 
+  ```bash
+  # Stage 1: Mitochondria pretraining
+  python -m eq seg --config configs/mito_pretraining_config.yaml
+  
+  # Stage 2: Glomeruli fine-tuning  
+  python -m eq seg --config configs/glomeruli_finetuning_config.yaml
+  ```
+
+### Pipeline Orchestration
+- **Script**: `src/eq/pipeline/segmentation_pipeline.py`
+- **Usage**: 
+  ```bash
+  python -m eq.pipeline.segmentation_pipeline --stage mito
+  python -m eq.pipeline.segmentation_pipeline --stage glomeruli
+  python -m eq.pipeline.segmentation_pipeline --stage all
+  ```
+
 ## CLI Interface
 - Central `eq` command with subcommands for each pipeline step
 - `eq data-load` - Load and preprocess data with configurable paths
@@ -184,6 +249,7 @@ eq pipeline --help
   - `train_segmenter_fastai.py` - Fastai training script (replaces TensorFlow version)
 - `src/eq/models/` - Feature extraction and model utilities
 - `src/eq/pipeline/` - Main quantification logic
+  - `segmentation_pipeline.py` - Complete segmentation pipeline orchestrator
 - `src/eq/utils/` - Common utilities and helpers
 
 ## Fastai Segmentation System

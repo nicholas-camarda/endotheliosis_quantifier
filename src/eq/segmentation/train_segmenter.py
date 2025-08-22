@@ -123,7 +123,7 @@ current_date = datetime.now()
 # Format the date as YYYYMMDD
 formatted_date = current_date.strftime('%Y-%m-%d')
 
-square_size = 256
+square_size = 224
 n_epochs = 75
 n_batch_size = 16
 

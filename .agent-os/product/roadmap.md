@@ -16,10 +16,14 @@
 - [x] **COMPLETED**: Migrate to FastAI (PyTorch/MPS/CUDA) for training/inference - TensorFlow completely removed
 - [x] **COMPLETED**: Implement comprehensive fastai segmentation system with U-Net support and mode-specific training
 - [x] **COMPLETED**: Add comprehensive test coverage for fastai segmentation (46 tests passing)
+- [x] **COMPLETED**: Document complete segmentation pipeline workflow (mitochondria pretraining → glomeruli fine-tuning)
+- [x] **COMPLETED**: Create configuration system for both pipeline stages with YAML configs
+- [x] **COMPLETED**: Implement pipeline orchestrator script for automated execution
+- [x] Reproducible segmentation training (configs, metrics, checkpoints)
+- [x] **Complete mitochondria workflow documentation with data source attribution**
 - [ ] Add a small sample dataset and smoke tests for each pipeline step
 
 ## Phase 2: Near-term Enhancements
-- [ ] Reproducible segmentation training (configs, metrics, checkpoints)
 - [ ] Package release prep (README, examples, versioning)
 - [ ] Batch inference CLI for researcher datasets
 - [ ] Resolve segmentation_models import issues for full CLI functionality

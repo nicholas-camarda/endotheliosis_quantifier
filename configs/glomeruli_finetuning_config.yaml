@@ -1,0 +1,124 @@
+# Glomeruli Fine-tuning Configuration  
+# This is Step 2 of the segmentation pipeline - fine-tuning on glomeruli data
+# Uses the mitochondria-pretrained model as starting point
+
+name: "glomeruli_finetuning"
+description: "Fine-tune mitochondria-pretrained U-Net on glomeruli segmentation data"
+
+# Transfer Learning Configuration
+pretrained_model:
+  path: "segmentation_model_dir/mito_dynamic_unet_seg_model-e50_b16.pkl"
+  description: "Mitochondria-pretrained U-Net model"
+  freeze_encoder: false  # Allow full fine-tuning
+
+# Data Pipeline Configuration
+data:
+  # Raw preeclampsia data
+  raw_images: "data/preeclampsia_data/Lauren_PreEclampsia_Raw_TIF_Images/"
+  metadata: "data/preeclampsia_data/Graded Histology Slides (Lauren Pre-Eclampsia) - MASTER.xlsx"
+  
+  # Label Studio annotations
+  annotations:
+    json_file: "data/preeclampsia_data/label_studio_annotations.json"  # Path to Label Studio export
+    processor: "load_annotations_from_json"  # Function from data_loader.py
+    
+  # Processed data structure
+  processed:
+    train_dir: "data/preeclampsia_data/train"
+    test_dir: "data/preeclampsia_data/test"
+    cache_dir: "data/preeclampsia_data/cache"
+    
+  # Image preprocessing
+  preprocessing:
+    convert_tif_to_jpg: true
+    resize_to: [224, 224]
+    normalize: true
+    
+  # Train/test split (programmatic)
+  split:
+    train_ratio: 0.7
+    val_ratio: 0.15
+    test_ratio: 0.15
+    random_seed: 84  # Different from mito to avoid data leakage
+    stratify: true  # Stratify by endotheliosis score if available
+
+# Model Configuration
+model:
+  architecture: "dynamic_unet"
+  backbone: "resnet34" 
+  input_size: [224, 224]
+  num_classes: 2  # background + glomeruli
+  
+  # Fine-tuning parameters
+  training:
+    epochs: 50
+    batch_size: 16
+    learning_rate: 1e-4  # Lower LR for fine-tuning
+    weight_decay: 1e-4
+    scheduler: "cosine_annealing"
+    early_stopping:
+      patience: 10
+      monitor: "val_dice"
+      
+  # Output model path
+  checkpoint_path: "segmentation_model_dir/glomerulus_segmentation_model-dynamic_unet-e50_b16_s84.pkl"
+
+# Label Studio Integration
+label_studio:
+  export_format: "JSON"
+  annotation_types:
+    - "rle"  # Run-length encoding masks
+    - "choices"  # Endotheliosis scores
+  
+  # RLE mask processing
+  rle_processing:
+    decode_function: "rle2mask"  # Function from data_loader.py
+    mask_resize: [224, 224]
+
+# Data Augmentation (for fine-tuning)
+augmentation:
+  enabled: true
+  techniques:
+    - "horizontal_flip"
+    - "vertical_flip" 
+    - "rotation"
+    - "brightness_contrast"
+    - "gaussian_noise"
+  probability: 0.5
+
+# Hardware Configuration
+hardware:
+  device: "auto"  # auto-detect MPS/CUDA/CPU
+  mixed_precision: true
+  num_workers: 4
+
+# Reproducibility
+reproducibility:
+  random_seed: 84
+  deterministic: true
+
+# Logging and Monitoring
+logging:
+  level: "INFO"
+  save_plots: true
+  plot_dir: "output/glomeruli_finetuning/plots"
+  metrics:
+    - "dice_coefficient"
+    - "iou"
+    - "pixel_accuracy"
+    
+# Evaluation
+evaluation:
+  metrics:
+    - "dice_coefficient"
+    - "jaccard_index" 
+    - "sensitivity"
+    - "specificity"
+  save_predictions: true
+  prediction_dir: "output/glomeruli_finetuning/predictions"
+
+# Final Model Information
+final_model:
+  description: "Glomeruli segmentation model fine-tuned from mitochondria pretraining"
+  use_case: "Segment glomeruli in preeclampsia histology images for endotheliosis quantification"
+  next_step: "Use for ROI extraction in quantification pipeline"

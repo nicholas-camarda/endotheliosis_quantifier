@@ -83,7 +83,7 @@ def pipeline_orchestrator_command(args):
     is_quick_test = os.getenv('QUICK_TEST') == 'true'
     if is_quick_test:
         print("🔍 QUICK_TEST mode enabled - using fast validation settings")
-        epochs = 2
+        epochs = 5
         batch_size = 4
     else:
         print("🚀 PRODUCTION mode - using full settings")
@@ -381,7 +381,7 @@ def pipeline_command(args):
     # Check for QUICK_TEST mode
     is_quick_test = os.getenv('QUICK_TEST') == 'true'
     if is_quick_test:
-        args.epochs = 2
+        args.epochs = 5
         args.batch_size = 4
         run_type = "development"
     else:
@@ -426,7 +426,7 @@ def seg_command(args):
     is_quick_test = os.getenv('QUICK_TEST') == 'true'
     if is_quick_test:
         print("🔍 QUICK_TEST mode detected - using fast validation settings")
-        args.epochs = min(args.epochs, 2)  # Limit epochs for quick testing
+        args.epochs = 5  # Force 5 epochs for quick testing
         args.batch_size = min(args.batch_size, 4)  # Smaller batch size for quick testing
     
     # Get mode-aware batch size

@@ -40,16 +40,25 @@ def preprocess_images(image_folder, mask_folder, output_folder, padding=5):
                 radius += padding
 
                 # Extract the circular ROI
-                mask_roi = np.zeros_like(img)
-                cv2.circle(mask_roi, (x, y), radius, (255, 255, 255), -1)
-                roi = cv2.bitwise_and(img, mask_roi)
-                roi = roi[y-radius:y+radius, x-radius:x+radius]
+                # Create a circular mask
+                mask_roi = np.zeros_like(mask, dtype=np.uint8)
+                cv2.circle(mask_roi, (x, y), radius, 255, -1)
+                
+                # Apply mask to image using proper bitwise operation
+                roi = cv2.bitwise_and(img, img, mask=mask_roi)
+                
+                # Calculate safe cropping bounds
+                y1 = max(0, y - radius)
+                y2 = min(img.shape[0], y + radius)
+                x1 = max(0, x - radius)
+                x2 = min(img.shape[1], x + radius)
+                
+                # Crop the ROI
+                roi = roi[y1:y2, x1:x2]
 
                 # Check if the ROI is empty, skip if it is
                 if roi.size == 0 or roi.shape[0] == 0 or roi.shape[1] == 0:
                     continue
-
-                print(image_file, mask_file)
 
                 # Crop and resize the ROI
                 roi = cv2.resize(roi, (256, 256), interpolation=cv2.INTER_CUBIC)
@@ -62,7 +71,7 @@ def preprocess_images(image_folder, mask_folder, output_folder, padding=5):
                 roi_output_path = os.path.join(roi_output_folder, f"{filename}_ROI_{roi_index}.jpg")
                 cv2.imwrite(roi_output_path, roi)
                 roi_index += 1
-
+    
     return np.array(rois)
 
 # Functions moved to eq.features.helpers module

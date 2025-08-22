@@ -25,6 +25,9 @@ def _local_plot_history(history, output_dir, file_name):
     """Plot training history and save to output directory."""
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
+    
+    # Check if this is a testing run
+    is_quick_test = os.getenv('QUICK_TEST', 'false').lower() == 'true'
 
     # Extract training history from fastai recorder
     if hasattr(history, 'values') and len(history['values']) > 0:
@@ -53,7 +56,12 @@ def _local_plot_history(history, output_dir, file_name):
     plt.plot(epochs, loss, 'y', label='Training loss')
     if val_loss:
         plt.plot(epochs, val_loss, 'r', label='Validation loss')
-    plt.title('Training and validation loss')
+    
+    # Add testing indicator to title
+    if is_quick_test:
+        plt.title('🚨 TESTING RUN - Training and validation loss 🚨')
+    else:
+        plt.title('Training and validation loss')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
     plt.legend()
@@ -62,7 +70,10 @@ def _local_plot_history(history, output_dir, file_name):
     if dice:
         plt.subplot(132)
         plt.plot(epochs, dice, 'g', label='Dice score')
-        plt.title('Dice score over epochs')
+        if is_quick_test:
+            plt.title('🚨 TESTING RUN - Dice score over epochs 🚨')
+        else:
+            plt.title('Dice score over epochs')
         plt.xlabel('Epochs')
         plt.ylabel('Dice Score')
         plt.legend()
@@ -71,7 +82,10 @@ def _local_plot_history(history, output_dir, file_name):
     if hasattr(history, 'lrs') and history['lrs']:
         plt.subplot(133)
         plt.plot(epochs, history['lrs'], 'b', label='Learning rate')
-        plt.title('Learning rate over epochs')
+        if is_quick_test:
+            plt.title('🚨 TESTING RUN - Learning rate over epochs 🚨')
+        else:
+            plt.title('Learning rate over epochs')
         plt.xlabel('Epochs')
         plt.ylabel('Learning Rate')
         plt.legend()
@@ -147,7 +161,7 @@ def check_model_performance(segmenter: FastaiSegmenter, X_test: np.ndarray, y_te
 
 def train_segmentation_model_fastai(base_model_path: Optional[str], cache_dir: str, output_dir: str, 
                                    model_name: str = 'glomerulus_segmenter', batch_size: int = 8, 
-                                   epochs: int = 50, image_size: int = 256, learning_rate: float = 1e-3,
+                                   epochs: int = 50, image_size: int = 224, learning_rate: float = 1e-3,
                                    device_mode: str = "auto") -> FastaiSegmenter:
     """
     Train segmentation model using fastai.
@@ -177,7 +191,12 @@ def train_segmentation_model_fastai(base_model_path: Optional[str], cache_dir: s
     os.makedirs(final_plots_dir, exist_ok=True)
 
     # Create model save path
-    model_save_path = os.path.join(final_output_path, f"{model_name}.pkl")
+    is_quick_test = os.getenv('QUICK_TEST', 'false').lower() == 'true'
+    if is_quick_test:
+        model_save_path = os.path.join(final_output_path, f"{model_name}_TESTING_RUN.pkl")
+        print("🚨 TESTING RUN: Model will be saved with TESTING_RUN suffix")
+    else:
+        model_save_path = os.path.join(final_output_path, f"{model_name}.pkl")
     
     # Load the data
     print("Loading training data...")
@@ -233,6 +252,25 @@ def train_segmentation_model_fastai(base_model_path: Optional[str], cache_dir: s
     # Plot training history
     plot_history(training_history, final_plots_dir, model_name)
     
+    # Add testing indicator to plots if in QUICK_TEST mode
+    if is_quick_test:
+        print("🚨 TESTING RUN: Adding testing indicators to plots")
+        # Add testing watermark to all plots in the plots directory
+        for plot_file in os.listdir(final_plots_dir):
+            if plot_file.endswith('.png'):
+                plot_path = os.path.join(final_plots_dir, plot_file)
+                try:
+                    img = plt.imread(plot_path)
+                    plt.figure(figsize=(12, 8))
+                    plt.imshow(img)
+                    plt.title('🚨 TESTING RUN - QUICK_TEST MODE 🚨', fontsize=16, color='red')
+                    plt.axis('off')
+                    plt.tight_layout()
+                    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+                    plt.close()
+                except Exception as e:
+                    print(f"Could not add testing indicator to {plot_file}: {e}")
+    
     # Save the model
     segmenter.save_model()
     
@@ -249,8 +287,15 @@ def train_segmentation_model_fastai(base_model_path: Optional[str], cache_dir: s
         threshold=0.5
     )
     
-    print(f"Training completed. Model saved to {model_save_path}")
-    print(f"Results saved to {final_plots_dir}")
+    if is_quick_test:
+        print("TESTING RUN COMPLETED - QUICK_TEST MODE")
+        print("WARNING: This is a TESTING run with reduced epochs and parameters.")
+        print("DO NOT use this model for production inference!")
+        print(f"TESTING Model saved to {model_save_path}")
+        print(f"TESTING Results saved to {final_plots_dir}")
+    else:
+        print(f"Training completed. Model saved to {model_save_path}")
+        print(f"Results saved to {final_plots_dir}")
     
     return segmenter
 
@@ -267,7 +312,7 @@ def main():
     formatted_date = current_date.strftime('%Y-%m-%d')
     
     # Model parameters
-    square_size = 256
+    square_size = 224
     n_epochs = 75
     n_batch_size = 16
     
@@ -301,9 +346,19 @@ def main():
         device_mode="auto"
     )
     
-    print("Training completed successfully!")
-    print(f"Model saved to: {final_output_path}")
-    print(f"Results saved to: {final_plots_dir}")
+    # Check if this is a testing run
+    is_quick_test = os.getenv('QUICK_TEST', 'false').lower() == 'true'
+    
+    if is_quick_test:
+        print("🚨 TESTING RUN COMPLETED SUCCESSFULLY - QUICK_TEST MODE 🚨")
+        print("⚠️  WARNING: This is a TESTING run with reduced epochs and parameters.")
+        print("⚠️  DO NOT use this model for production inference!")
+        print(f"🚨 TESTING Model saved to: {final_output_path}")
+        print(f"🚨 TESTING Results saved to: {final_plots_dir}")
+    else:
+        print("Training completed successfully!")
+        print(f"Model saved to: {final_output_path}")
+        print(f"Results saved to: {final_plots_dir}")
 
 
 if __name__ == '__main__':

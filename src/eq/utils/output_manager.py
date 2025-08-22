@@ -42,14 +42,12 @@ class OutputManager:
         output_dir_name = data_source_name.lower().replace(' ', '_')
         output_dir = self.base_output_dir / output_dir_name
         
-        # Create subdirectories
+        # Create subdirectories - SIMPLE structure only, NO LOGS HERE
         subdirs = {
             'main': output_dir,
             'models': output_dir / "models",
             'plots': output_dir / "plots", 
             'results': output_dir / "results",
-            'reports': output_dir / "reports",
-            'logs': output_dir / "logs",
             'cache': output_dir / "cache"
         }
         
@@ -124,7 +122,7 @@ class OutputManager:
             output_dirs: Dictionary of output directory paths
             run_info: Information about the run (config, results, etc.)
         """
-        summary_file = output_dirs['reports'] / "run_summary.md"
+        summary_file = output_dirs['main'] / "run_summary.md"
         
         summary_content = f"""# Pipeline Run Summary
 
@@ -149,8 +147,6 @@ class OutputManager:
 - **Models**: {output_dirs['models']}
 - **Plots**: {output_dirs['plots']}
 - **Results**: {output_dirs['results']}
-- **Reports**: {output_dirs['reports']}
-- **Logs**: {output_dirs['logs']}
 - **Cache**: {output_dirs['cache']}
 
 ## Files Generated
