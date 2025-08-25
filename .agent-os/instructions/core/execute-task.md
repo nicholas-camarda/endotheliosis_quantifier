@@ -13,21 +13,7 @@ encoding: UTF-8
 Execute a specific task along with its sub-tasks systematically following a TDD development workflow.
 
 <pre_flight_check>
-  EXECUTE: @~/.agent-os/instructions/meta/pre-flight.md
-  NOTE: Path conventions — Home: @~/.agent-os, Project: @.agent-os
-  BEST_PRACTICES_CHECK:
-    **MANDATORY**: ALWAYS read @~/.agent-os/standards/best-practices.md first
-    VERIFY: Following established best practices and coding standards
-    REFERENCE: This file for all development decisions and approaches
-  WEB_SEARCH_CHECK:
-    IF uncertain OR current info required:
-      USE: @Web to fetch latest official docs/best practices (never curl)
-  MCP_CONTEXT7_CHECK:
-    WHEN: docs/api/library/examples/usage are needed OR library usage/version is uncertain
-    USE: Context7 (resolve-library-id → get-library-docs) to fetch authoritative docs
-  SEQUENTIAL_THINKING:
-    ACTION: Use sequential-thinking MCP to outline steps, dependencies, and minimum-size test plan before coding
-  STANDARDS_INDEX_CHECK: If unsure which standard to consult, READ @~/.agent-os/standards/best-practices.md and @~/.agent-os/standards/testing-standards.md to pick targets
+  EXECUTE: @.agent-os/instructions/meta/pre-flight.md
 </pre_flight_check>
 
 
@@ -82,69 +68,11 @@ Search and extract relevant sections from technical-spec.md to understand the te
 
 </step>
 
-<step number="3" name="existing_functionality_verification">
+<step number="3" subagent="context-fetcher" name="best_practices_review">
 
-### Step 3: Existing Functionality Verification
+### Step 3: Best Practices Review
 
-**CRITICAL: Verify existing functionality for the current task before attempting implementation**
-
-Before implementing new features or modifications, thoroughly check what already exists to avoid duplication and understand integration points.
-
-<verification_requirements>
-  <codebase_analysis>
-    - Search for existing functions/methods that might handle similar functionality
-    - Check for existing UI components or patterns that could be reused
-    - Identify existing database models or schemas that might be relevant
-    - Review existing API endpoints that could be extended
-  </codebase_analysis>
-  <integration_check>
-    - Verify how new functionality will integrate with existing systems
-    - Check for existing patterns or conventions to follow
-    - Identify potential conflicts with current implementation
-    - Assess impact on existing functionality
-  </integration_check>
-  <duplication_prevention>
-    - Ensure new implementation doesn't duplicate existing code
-    - Check if existing functionality can be extended instead of replaced
-    - Verify that new features build upon existing architecture
-  </duplication_prevention>
-</verification_requirements>
-
-<verification_process>
-  <search_existing_code>
-    1. Search codebase for similar function names or patterns
-    2. Check existing test files for related functionality
-    3. Review documentation or comments for existing features
-    4. Examine database schema for relevant tables/columns
-  </search_existing_code>
-  <analyze_existing_implementation>
-    1. Understand how existing functionality works
-    2. Identify patterns and conventions used
-    3. Check for any technical debt or issues
-    4. Assess quality and maintainability of existing code
-  </analyze_existing_implementation>
-  <plan_integration>
-    1. Determine if new functionality should extend existing code
-    2. Plan how to integrate with current patterns
-    3. Identify any refactoring needed for existing code
-    4. Ensure backward compatibility is maintained
-  </plan_integration>
-</verification_process>
-
-<instructions>
-  **ACTION**: Thoroughly search and analyze existing functionality before implementation
-  **PURPOSE**: Prevent duplication, understand integration points, maintain consistency
-  **REQUIREMENT**: No implementation begins without understanding existing codebase
-  **OUTPUT**: Clear understanding of what exists and how to integrate new functionality
-</instructions>
-
-</step>
-
-<step number="4" subagent="context-fetcher" name="best_practices_review">
-
-### Step 4: Best Practices Review
-
-Use the context-fetcher subagent to retrieve relevant sections from @~/.agent-os/standards/best-practices.md that apply to the current task's technology stack and feature type.
+Use the context-fetcher subagent to retrieve relevant sections from @.agent-os/standards/best-practices.md that apply to the current task's technology stack and feature type.
 
 <selective_reading>
   <search_best_practices>
@@ -169,25 +97,25 @@ Use the context-fetcher subagent to retrieve relevant sections from @~/.agent-os
 
 </step>
 
-<step number="5" subagent="context-fetcher" name="testing_standards_review">
+<step number="4" subagent="context-fetcher" name="code_style_review">
 
-### Step 5: Testing Standards Review
+### Step 4: Code Style Review
 
-Use the context-fetcher subagent to retrieve relevant testing standards from @~/.agent-os/standards/testing-standards.md for the languages and file types being used in this task.
+Use the context-fetcher subagent to retrieve relevant code style rules from @.agent-os/standards/code-style.md for the languages and file types being used in this task.
 
 <selective_reading>
-  <search_testing_standards>
-    FIND testing standards for:
+  <search_code_style>
+    FIND style rules for:
     - Languages used in this task
     - File types being modified
     - Component patterns being implemented
     - Testing style guidelines
-  </search_testing_standards>
+  </search_code_style>
 </selective_reading>
 
 <instructions>
   ACTION: Use context-fetcher subagent
-  REQUEST: "Find testing standards for:
+  REQUEST: "Find code style rules for:
             - Languages: [LANGUAGES_IN_TASK]
             - File types: [FILE_TYPES_BEING_MODIFIED]
             - Component patterns: [PATTERNS_BEING_IMPLEMENTED]
@@ -198,34 +126,9 @@ Use the context-fetcher subagent to retrieve relevant testing standards from @~/
 
 </step>
 
-<step number="5.1" subagent="context-fetcher" name="code_style_review">
+<step number="5" name="task_execution">
 
-### Step 5.1: Code Style Review (Language-Specific)
-
-Use the context-fetcher subagent to retrieve relevant language-specific code style rules from @~/.agent-os/standards/code-style/[language]-style.md as needed.
-
-<selective_reading>
-  <search_code_style>
-    FIND code style rules for:
-    - Languages used in this task
-    - File types being modified
-  </search_code_style>
-</selective_reading>
-
-<instructions>
-  ACTION: Use context-fetcher subagent
-  REQUEST: "Find code style rules for:
-            - Languages: [LANGUAGES_IN_TASK]
-            - File types: [FILE_TYPES_BEING_MODIFIED]"
-  PROCESS: Returned style rules
-  APPLY: Relevant formatting and patterns
-</instructions>
-
-</step>
-
-<step number="6" name="task_execution">
-
-### Step 6: Task and Sub-task Execution
+### Step 5: Task and Sub-task Execution
 
 Execute the parent task and all sub-tasks in order using test-driven development (TDD) approach.
 
@@ -285,9 +188,9 @@ Execute the parent task and all sub-tasks in order using test-driven development
 
 </step>
 
-<step number="7" subagent="test-runner" name="task_test_verification">
+<step number="6" subagent="test-runner" name="task_test_verification">
 
-### Step 7: Task-Specific Test Verification
+### Step 6: Task-Specific Test Verification
 
 Use the test-runner subagent to run and verify only the tests specific to this parent task (not the full test suite) to ensure the feature is working correctly.
 
@@ -323,52 +226,11 @@ Use the test-runner subagent to run and verify only the tests specific to this p
 
 </step>
 
-<step number="8" name="ai_tool_problem_solving">
+<step number="7" name="task_status_updates">
 
-### Step 8: AI Tool Problem Solving (MANDATORY)
+### Step 7: Mark this task and sub-tasks complete
 
-**MANDATORY REQUIREMENT: When encountering ANY problem, test failure, or issue, ALWAYS use sequential-thinking and context7 to plan the solution and ensure most updated information.**
-
-<sequential_thinking_requirement>
-  **MANDATORY**: Use sequential-thinking MCP to:
-  - Break down the problem into logical steps
-  - Identify root causes and dependencies
-  - Plan the optimal solution approach
-  - Consider potential side effects and risks
-  - Outline step-by-step debugging strategy
-</sequential_thinking_requirement>
-
-<context7_requirement>
-  **MANDATORY**: Use Context7 MCP to:
-  - Fetch latest documentation for any libraries/frameworks involved
-  - Get current best practices for the specific problem type
-  - Research optimal solutions and patterns
-  - Verify any API or tool usage is current
-  - Find authoritative troubleshooting guides
-</context7_requirement>
-
-<problem_solving_output>
-  - Sequential-thinking analysis of the problem
-  - Context7 research results for current solutions
-  - Comprehensive solution plan with step-by-step approach
-  - Risk assessment and mitigation strategies
-  - Success criteria and validation methods
-</problem_solving_output>
-
-<instructions>
-  **ACTION**: ALWAYS use sequential-thinking MCP when ANY problem occurs
-  **ACTION**: ALWAYS use Context7 MCP for current documentation and solutions
-  **REQUIREMENT**: No problem-solving proceeds without both AI tool outputs
-  **OUTPUT**: Comprehensive solution plan based on AI tool analysis
-</instructions>
-
-</step>
-
-<step number="9" name="task_status_updates">
-
-### Step 9: Task Status Updates
-
-Update the tasks.md file immediately after completing each task to track progress.
+IMPORTANT: In the tasks.md file, mark this task and its sub-tasks complete by updating each task checkbox to [x].
 
 <update_format>
   <completed>- [x] Task description</completed>
@@ -379,8 +241,23 @@ Update the tasks.md file immediately after completing each task to track progres
   </blocked>
 </update_format>
 
-<todo_list_standards>
-  **Todo List Format Standards:**
-  - **Incomplete tasks**: `- [ ] Task description`
-  - **Completed tasks**: `- [x] Task description` 
-  - **Never use**: `
+<blocking_criteria>
+  <attempts>maximum 3 different approaches</attempts>
+  <action>document blocking issue</action>
+  <emoji>⚠️</emoji>
+</blocking_criteria>
+
+<instructions>
+  ACTION: Update tasks.md after each task completion
+  MARK: [x] for completed items immediately
+  DOCUMENT: Blocking issues with ⚠️ emoji
+  LIMIT: 3 attempts before marking as blocked
+</instructions>
+
+</step>
+
+</process_flow>
+
+<post_flight_check>
+  EXECUTE: @.agent-os/instructions/meta/post-flight.md
+</post_flight_check>

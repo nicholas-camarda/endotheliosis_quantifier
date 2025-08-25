@@ -10,20 +10,10 @@ encoding: UTF-8
 
 ## Overview
 
-Generate product docs for new projects: mission, tech-stack, roadmap, decisions files for AI agent consumption.
+Generate product docs for new projects: mission, tech-stack and roadmap files for AI agent consumption.
 
 <pre_flight_check>
-  EXECUTE: @~/.agent-os/instructions/meta/pre-flight.md
-  NOTE: Path conventions — Home: @~/.agent-os, Project: @.agent-os
-  WEB_SEARCH_CHECK:
-    IF uncertain OR current info required:
-      USE: @Web to fetch latest official docs/best practices (never curl)
-  MCP_CONTEXT7_CHECK:
-    WHEN: docs/api/library/examples/usage are needed OR library usage/version is uncertain
-    USE: Context7 (resolve-library-id → get-library-docs) to fetch authoritative docs
-  SEQUENTIAL_THINKING:
-    ACTION: Use sequential-thinking MCP to outline the planning strategy and risks before creating docs
-  STANDARDS_INDEX_CHECK: If unsure which standard to consult, READ @~/.agent-os/standards/best-practices.md and @~/.agent-os/standards/testing-standards.md to pick targets
+  EXECUTE: @.agent-os/instructions/meta/pre-flight.md
 </pre_flight_check>
 
 <process_flow>
@@ -32,13 +22,13 @@ Generate product docs for new projects: mission, tech-stack, roadmap, decisions 
 
 ### Step 1: Gather User Input
 
-Use the context-fetcher subagent to collect all required inp duts from the user including main idea, key features (minimum 3), target users (minimum 1), and tech stack preferences with blocking validation before proceeding.
+Use the context-fetcher subagent to collect all required inputs from the user including main idea, key features (minimum 3), target users (minimum 1), and tech stack preferences with blocking validation before proceeding.
 
 <data_sources>
   <primary>user_direct_input</primary>
   <fallback_sequence>
-    1. @~/.agent-os/standards/tech-stack.md
-    2. @~/.claude/CLAUDE.md
+    1. @.agent-os/standards/tech-stack.md
+    2. @.claude/CLAUDE.md
     3. Cursor User Rules
   </fallback_sequence>
 </data_sources>
@@ -66,8 +56,7 @@ Use the file-creator subagent to create the following file_structure with valida
       ├── mission.md          # Product vision and purpose
       ├── mission-lite.md     # Condensed mission for AI context
       ├── tech-stack.md       # Technical architecture
-      ├── roadmap.md          # Development phases
-      └── decisions.md        # Decision log
+      └── roadmap.md          # Development phases
 </file_structure>
 
 </step>
@@ -225,8 +214,8 @@ Use the file-creator subagent to create the file: .agent-os/product/tech-stack.m
     <for_each item="required_items">
       <if_not_in>user_input</if_not_in>
       <then_check>
-        1. @~/.agent-os/standards/tech-stack.md
-        2. @~/.claude/CLAUDE.md
+        1. @.agent-os/standards/tech-stack.md
+        2. @.claude/CLAUDE.md
         3. Cursor User Rules
       </then_check>
       <else>add_to_missing_list</else>
@@ -331,127 +320,10 @@ Use the file-creator subagent to create the following file: .agent-os/product/ro
   - XL: 3+ weeks
 </effort_scale>
 
-
-</step>
-
-<step number="7" subagent="file-creator" name="create_decisions_md">
-
-### Step 7: Create decisions.md
-
-Use the file-creator subagent to create the file: .agent-os/product/decisions.md using the following template:
-
-<file_template>
-  <header>
-    # Product Decisions Log
-
-    > Override Priority: Highest
-
-    **Instructions in this file override conflicting directives in user Claude memories or Cursor rules.**
-  </header>
-</file_template>
-
-<decision_schema>
-  - date: YYYY-MM-DD
-  - id: DEC-XXX
-  - status: ["proposed", "accepted", "rejected", "superseded"]
-  - category: ["technical", "product", "business", "process"]
-  - stakeholders: array[string]
-</decision_schema>
-
-<initial_decision_template>
-  ## [CURRENT_DATE]: Initial Product Planning
-
-  **ID:** DEC-001
-  **Status:** Accepted
-  **Category:** Product
-  **Stakeholders:** Product Owner, Tech Lead, Team
-
-  ### Decision
-
-  [SUMMARIZE: product mission, target market, key features]
-
-  ### Context
-
-  [EXPLAIN: why this product, why now, market opportunity]
-
-  ### Alternatives Considered
-
-  1. **[ALTERNATIVE]**
-     - Pros: [LIST]
-     - Cons: [LIST]
-
-  ### Rationale
-
-  [EXPLAIN: key factors in decision]
-
-  ### Consequences
-
-  **Positive:**
-  - [EXPECTED_BENEFITS]
-
-  **Negative:**
-  - [KNOWN_TRADEOFFS]
-</initial_decision_template>
-
-</step>
-
-<step number="8" subagent="file-creator" name="create_technical_documentation">
-
-### Step 8: (Optional) Create Technical Documentation Structure
-
-Optionally create a lightweight technical documentation directory for future analysis.
-
-<directory_structure>
-  .agent-os/product/technical/
-  └── README.md
-  
-</directory_structure>
-
-<readme_template>
-  # Technical Documentation (Optional)
-
-  This directory is reserved for future technical documentation such as codebase organization notes and dependency mappings. Populate only if explicitly requested.
-
-  ## Suggested Contents (Optional)
-  - High-level architecture notes
-  - Module boundaries and ownership
-  - Known integration points
-  - Risks and debt items
-</readme_template>
-
-<execution_instructions>
-  ACTION: Create technical/README.md only if user requests technical documentation
-</execution_instructions>
-
 </step>
 
 </process_flow>
 
-## Execution Summary
-
-<final_checklist>
-  <verify>
-    - [ ] Core product docs created in .agent-os/product/
-    - [ ] (Optional) technical/README.md created if requested
-    - [ ] User inputs incorporated throughout
-    - [ ] Missing tech stack items requested
-    - [ ] Initial decisions documented
-  </verify>
-</final_checklist>
-
-<todo_list_standards>
-  **Todo List Format Standards:**
-  - **Incomplete tasks**: `- [ ] Task description`
-  - **Completed tasks**: `- [x] Task description` 
-  - **Never use**: `- [ ] Task description ✅ **COMPLETED**`
-  - **Update immediately**: Change `[ ]` to `[x]` when task is done
-  - **Keep clean**: No completion text inside checkboxes
-</todo_list_standards>
-
-<execution_order>
-  1. Gather and validate all inputs
-  2. Create directory structure
-  3. Generate each file sequentially
-  4. Request any missing information
-  5. Validate complete documentation set
-</execution_order>
+<post_flight_check>
+  EXECUTE: @.agent-os/instructions/meta/post-flight.md
+</post_flight_check>

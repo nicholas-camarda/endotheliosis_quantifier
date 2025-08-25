@@ -20,6 +20,7 @@ from typing import Any, Dict
 
 import yaml
 
+from eq.evaluation.glomeruli_evaluator import evaluate_glomeruli_model
 from eq.features.data_loader import get_scores_from_annotations, load_annotations_from_json
 from eq.features.mitochondria_data_loader import load_mitochondria_patches
 from eq.io.convert_files_to_jpg import convert_tif_to_jpg
@@ -375,9 +376,50 @@ class SegmentationPipeline:
                 train_args['pretrained_path'] = pretrained_path
             
             # Train model
-            train_segmentation_model_fastai(**train_args)
+            segmenter = train_segmentation_model_fastai(**train_args)
         
         self.logger.info("Model training completed")
+
+        # If we just finished glomeruli fine-tuning, run evaluation mirroring mitochondria pattern
+        if self.stage == "glomeruli_finetuning":
+            try:
+                # Prepare validation data from cache as done in fastai_segmenter
+                from eq.utils.common import load_pickled_data
+                cache_dir = self.config.get('data', {}).get('processed', {}).get('cache_dir')
+                if cache_dir:
+                    val_images = load_pickled_data(Path(cache_dir) / 'val_images.pickle')
+                    val_masks = load_pickled_data(Path(cache_dir) / 'val_masks.pickle')
+                else:
+                    raise ValueError("Cache directory not specified in config for validation data")
+
+                # Determine output directory and model name
+                model_config = self.config.get('model', {})
+                checkpoint_path = model_config.get('checkpoint_path', '')
+                output_dir = os.path.dirname(checkpoint_path) if checkpoint_path else model_config.get('output_dir', 'models/segmentation/glomeruli_xfer_learn')
+                model_name = os.path.basename(checkpoint_path).replace('.pkl', '') if checkpoint_path else model_config.get('model_name', 'glom_model')
+
+                # load learner if not available from returned segmenter
+                learn = None
+                try:
+                    if segmenter is not None and hasattr(segmenter, 'learn') and segmenter.learn is not None:
+                        learn = segmenter.learn
+                except Exception:
+                    learn = None
+
+                if learn is None:
+                    # Try to load from checkpoint path if exists
+                    from fastai.vision.all import load_learner
+                    if checkpoint_path and os.path.exists(checkpoint_path):
+                        learn = load_learner(checkpoint_path)
+                    else:
+                        self.logger.warning("Learner not available for evaluation; skipping glomeruli evaluation step.")
+                        return
+
+                self.logger.info("🔍 Running glomeruli evaluation on validation data...")
+                _ = evaluate_glomeruli_model(learn, val_images, val_masks, output_dir, f"{model_name}_evaluation")
+                self.logger.info("Glomeruli evaluation completed successfully")
+            except Exception as e:
+                self.logger.warning(f"Glomeruli evaluation step failed: {e}")
     
     def _evaluate_mitochondria_model(self, learn, val_images, val_masks, output_dir, model_name):
         """Evaluate a pretrained mitochondria model on validation data."""
