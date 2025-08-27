@@ -26,9 +26,10 @@ from eq.data.loaders import (
     load_mitochondria_patches,
 )
 from eq.evaluation.glomeruli_evaluator import evaluate_glomeruli_model
-from eq.models.train_glomeruli_transfer_learning import (
-    train_glomeruli_transfer_learning_from_config,
-)
+# Training functions moved to eq.training module
+# from eq.models.train_glomeruli_transfer_learning import (
+#     train_glomeruli_transfer_learning_from_config,
+# )
 from eq.processing.convert_files import convert_tif_to_jpg
 from eq.utils.logger import get_logger
 
@@ -656,8 +657,16 @@ class SegmentationPipeline:
                 self.logger.info(f"✅ Model checkpoint already exists: {checkpoint_path}")
                 self.logger.info("Model will be loaded instead of retrained")
             
-            # Use the new transfer learning function
-            segmenter = train_glomeruli_transfer_learning_from_config(self.config_path)
+            # Use the new training module
+            from eq.training import train_glomeruli
+            # TODO: Update to use proper configuration-based training
+            # For now, use the basic training function
+            segmenter = train_glomeruli(
+                data_dir=self.config.get('data', {}).get('processed', {}).get('cache_dir', ''),
+                model_dir=self.config.get('model', {}).get('output_dir', 'models/segmentation/glomeruli_xfer_learn'),
+                base_model=self.config.get('model', {}).get('base_model', ''),
+                epochs=self.config.get('training', {}).get('epochs', 50)
+            )
         
         self.logger.info("Model training completed")
 
@@ -689,9 +698,16 @@ class SegmentationPipeline:
 
                 if learn is None:
                     # Try to load from checkpoint path if exists
-                    from fastai.vision.all import load_learner
                     if checkpoint_path and os.path.exists(checkpoint_path):
-                        learn = load_learner(checkpoint_path)
+                        try:
+                            # Try safer loading method first
+                            from fastai.learner import Learner
+                            learn = Learner.load(checkpoint_path, with_opt=False)
+                            self.logger.info("✅ Loaded model using safe method")
+                        except Exception as e:
+                            self.logger.warning(f"Safe loading failed ({e}), falling back to load_learner")
+                            from fastai.vision.all import load_learner
+                            learn = load_learner(checkpoint_path)
                     else:
                         self.logger.warning("Learner not available for evaluation; skipping glomeruli evaluation step.")
                         return

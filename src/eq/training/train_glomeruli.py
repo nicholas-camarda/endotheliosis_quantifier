@@ -100,7 +100,17 @@ def retrain_glomeruli_original():
     if not mito_model_path.exists():
         raise FileNotFoundError(f"Mitochondria model not found: {mito_model_path}")
     
-    segmentation_model = load_learner(mito_model_path)
+    # Use safer loading method to avoid pickle security warnings
+    try:
+        # Try to use the safer Learner.load method first
+        from fastai.learner import Learner
+        segmentation_model = Learner.load(mito_model_path, with_opt=False)
+        logger.info("✅ Loaded pretrained mitochondria model using safe method")
+    except Exception as e:
+        logger.warning(f"Safe loading failed ({e}), falling back to load_learner")
+        # Fallback to load_learner if safe method fails
+        segmentation_model = load_learner(mito_model_path)
+        logger.info("✅ Loaded pretrained mitochondria model using fallback method")
     logger.info("✅ Loaded pretrained mitochondria model")
     
     # Set up data augmentation (matching original)
@@ -167,7 +177,13 @@ def retrain_glomeruli_original():
     
     # Find optimal learning rate for head training
     logger.info("🔍 Finding optimal learning rate for head...")
-    lr_min, lr_steep, lr_valley, lr_slide = segmentation_model.lr_find(suggest_funcs=(minimum, steep, valley, slide))
+    
+    # Suppress NumPy deprecation warnings during lr_find
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=DeprecationWarning, module="numpy")
+        lr_min, lr_steep, lr_valley, lr_slide = segmentation_model.lr_find(suggest_funcs=(minimum, steep, valley, slide))
+    
     logger.info(f"Learning rates - min: {lr_min:.2e}, steep: {lr_steep:.2e}, valley: {lr_valley:.2e}")
     
     # Train the last layer(s) using fit_one_cycle
