@@ -12,8 +12,8 @@ Functions previously found in:
 - utils/model_loader.py
 - pipeline/extract_model_weights.py
 - pipeline/retrain_glomeruli_original.py
-- pipeline/run_glomeruli_prediction.py
-- inference/historical_glomeruli_inference.py
+- inference/run_glomeruli_prediction.py
+# Note: historical_glomeruli_inference.py has been removed during consolidation
 """
 
 from pathlib import Path

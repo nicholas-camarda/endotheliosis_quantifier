@@ -44,24 +44,24 @@ t- [x] 2.5. **Clean Up EQ Directory and Remove Redundancy**
   - [x] 3.6 Update imports and references throughout the codebase
   - [x] 3.7 Verify processing directory consolidation works correctly
 
-- [ ] 4. **Create Training Infrastructure and Move Training Scripts**
-  - [ ] 4.1 Create dedicated `src/eq/training/` directory
-  - [ ] 4.2 Move `models/train_mitochondria_fastai.py` to `training/train_mitochondria.py`
-  - [ ] 4.3 Move `pipeline/retrain_glomeruli_original.py` to `training/train_glomeruli.py`
-  - [ ] 4.4 Remove redundant `models/train_segmenter_fastai.py`
-  - [ ] 4.5 Remove redundant `models/train_glomeruli_transfer_learning.py`
-  - [ ] 4.6 Update imports and references throughout the codebase
-  - [ ] 4.7 Verify training directory structure works correctly
+- [x] 4. **Create Training Infrastructure and Move Training Scripts**
+  - [x] 4.1 Create dedicated `src/eq/training/` directory
+  - [x] 4.2 Move `models/train_mitochondria_fastai.py` to `training/train_mitochondria.py`
+  - [x] 4.3 Move `pipeline/retrain_glomeruli_original.py` to `training/train_glomeruli.py`
+  - [x] 4.4 Remove redundant `models/train_segmenter_fastai.py`
+  - [x] 4.5 Remove redundant `models/train_glomeruli_transfer_learning.py`
+  - [x] 4.6 Update imports and references throughout the codebase
+  - [x] 4.7 Verify training directory structure works correctly
 
-- [ ] 5. **Create Inference Infrastructure and Move Inference Scripts**
-  - [ ] 5.1 Create dedicated `src/eq/inference/` directory
-  - [ ] 5.2 Move `pipeline/run_glomeruli_prediction.py` to `inference/`
-  - [ ] 5.3 Move `pipeline/gpu_inference.py` to `inference/`
-  - [ ] 5.4 Create new `inference/run_mitochondria_prediction.py` (missing script)
-  - [ ] 5.5 Remove duplicate `pipeline/run_glomeruli_prediction_fixed.py`
-  - [ ] 5.6 Remove legacy `pipeline/historical_glomeruli_inference.py`
-  - [ ] 5.7 Update imports and references throughout the codebase
-  - [ ] 5.8 Verify inference directory structure works correctly
+- [x] 5. **Create Inference Infrastructure and Move Inference Scripts**
+  - [x] 5.1 Create dedicated `src/eq/inference/` directory
+  - [x] 5.2 Move `pipeline/run_glomeruli_prediction.py` to `inference/`
+  - [x] 5.3 Move `pipeline/gpu_inference.py` to `inference/`
+  - [x] 5.4 Create new `inference/run_mitochondria_prediction.py` (missing script)
+  - [x] 5.5 Remove duplicate `pipeline/run_glomeruli_prediction_fixed.py`
+  - [x] 5.6 Remove legacy `pipeline/historical_glomeruli_inference.py`
+  - [x] 5.7 Update imports and references throughout the codebase
+  - [x] 5.8 Verify inference directory structure works correctly
 
 - [ ] 6. **Clean Up Models and Pipeline Directories**
   - [ ] 6.1 Keep only `models/fastai_segmenter.py` (model architecture)

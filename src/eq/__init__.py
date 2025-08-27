@@ -114,7 +114,9 @@ except ImportError:
 
 __all__ = [
     "core",
-    "data_management", 
+    "data_management",
+    "training",
+    "inference",
     "evaluation",
     "models",
     "pipeline",
