@@ -5,6 +5,11 @@ Mitochondria Patch Creation Script
 This script creates patches from the organized mitochondria data and organizes them
 into the correct directory structure for training.
 
+IMPORTANT: This script follows the HISTORICAL mitochondria training approach:
+- Output size: 224x224 (not 256x256 like glomeruli)
+- Lighter preprocessing: min_scale=0.3 (not 0.45 like glomeruli)
+- Designed for transfer learning foundation
+
 Input Structure (from organize_lucchi_dataset.py):
 data/mitochondria_data/
 ├── training/
@@ -14,13 +19,13 @@ data/mitochondria_data/
     ├── images/          # Test images (TIF)
     └── masks/           # Test masks (TIF)
 
-Output Structure (matching my_valid_structure):
+Output Structure (matching historical training):
 data/mitochondria_data/
 ├── training/
 │   ├── images/          # Original training images
 │   ├── masks/           # Original training masks
-│   ├── image_patches/   # 256x256 image patches
-│   ├── mask_patches/    # 256x256 mask patches
+│   ├── image_patches/   # 224x224 image patches (historical size)
+│   ├── mask_patches/    # 224x224 mask patches (historical size)
 │   ├── image_patch_validation/  # Validation patches
 │   └── mask_patch_validation/   # Validation mask patches
 ├── testing/
@@ -33,7 +38,7 @@ data/mitochondria_data/
 └── cache/                # Dataset-specific cache
 
 Usage:
-    python -m eq.utils.create_mitochondria_patches --input-dir data/mitochondria_data
+    python -m eq.processing.create_mitochondria_patches --input-dir data/mitochondria_data
 """
 
 import argparse
@@ -50,14 +55,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-def create_patches_from_image(image_path: Path, mask_path: Path, patch_size: int = 256, overlap: float = 0.1):
+def create_patches_from_image(image_path: Path, mask_path: Path, patch_size: int = 224, overlap: float = 0.1):
     """
     Create patches from a single image and its corresponding mask.
     
     Args:
         image_path: Path to the image file
         mask_path: Path to the mask file
-        patch_size: Size of patches (default: 256)
+        patch_size: Size of patches (default: 224 for historical mitochondria training)
         overlap: Overlap between patches (default: 0.1)
     
     Returns:
@@ -93,7 +98,8 @@ def create_patches_from_image(image_path: Path, mask_path: Path, patch_size: int
             mask_patch = mask[y:y + patch_size, x:x + patch_size]
             
             # Filter out patches that are mostly empty (optional)
-            if np.mean(mask_patch) > 0.01:  # At least 1% of pixels are foreground
+            # Use lower threshold for mitochondria (more sensitive to small structures)
+            if np.mean(mask_patch) > 0.005:  # At least 0.5% of pixels are foreground
                 image_patches.append(image_patch)
                 mask_patches.append(mask_patch)
     
@@ -160,7 +166,7 @@ def create_validation_patches(
 
 
 def process_dataset_split(images_dir: Path, masks_dir: Path, output_dir: Path, split_name: str, 
-                         patch_size: int = 256, overlap: float = 0.1, val_ratio: float = 0.2):
+                         patch_size: int = 224, overlap: float = 0.1, val_ratio: float = 0.2):
     """
     Process a dataset split (training or testing) to create patches.
     
@@ -169,7 +175,7 @@ def process_dataset_split(images_dir: Path, masks_dir: Path, output_dir: Path, s
         masks_dir: Directory containing masks
         output_dir: Base output directory
         split_name: Name of the split ('training' or 'testing')
-        patch_size: Size of patches
+        patch_size: Size of patches (default: 224 for historical mitochondria training)
         overlap: Overlap between patches
         val_ratio: Ratio of patches for validation
     """
@@ -202,8 +208,9 @@ def process_dataset_split(images_dir: Path, masks_dir: Path, output_dir: Path, s
     logger.info(f"🔄 Processing {split_name} split...")
     logger.info(f"   📁 Images directory: {images_dir}")
     logger.info(f"   📁 Masks directory: {masks_dir}")
-    logger.info(f"   🎯 Patch size: {patch_size}x{patch_size}")
+    logger.info(f"   🎯 Patch size: {patch_size}x{patch_size} (historical mitochondria size)")
     logger.info(f"   🔗 Overlap: {overlap*100:.0f}%")
+    logger.info(f"   📊 Validation ratio: {val_ratio*100:.0f}%")
     
     # Get all image files
     image_files = list(images_dir.glob("*.tif"))
@@ -331,13 +338,17 @@ def process_dataset_split(images_dir: Path, masks_dir: Path, output_dir: Path, s
     logger.info(f"   📁 Validation masks: {val_mask_patches_output_dir}")
 
 
-def create_mitochondria_patches(input_dir: str, patch_size: int = 256, overlap: float = 0.1, val_ratio: float = 0.2):
+def create_mitochondria_patches(input_dir: str, patch_size: int = 224, overlap: float = 0.1, val_ratio: float = 0.2):
     """
     Create patches from organized mitochondria data.
     
+    IMPORTANT: This function follows the HISTORICAL mitochondria training approach:
+    - Default patch size: 224x224 (not 256x256 like glomeruli)
+    - Designed as foundation for transfer learning to glomeruli model
+    
     Args:
         input_dir: Path to organized mitochondria data directory
-        patch_size: Size of patches (default: 256)
+        patch_size: Size of patches (default: 224 for historical mitochondria training)
         overlap: Overlap between patches (default: 0.1)
         val_ratio: Ratio of patches for validation (default: 0.2)
     """
@@ -348,9 +359,10 @@ def create_mitochondria_patches(input_dir: str, patch_size: int = 256, overlap: 
     
     logger.info("🚀 Starting mitochondria patch creation...")
     logger.info(f"📁 Input directory: {input_path}")
-    logger.info(f"🎯 Patch size: {patch_size}x{patch_size}")
+    logger.info(f"🎯 Patch size: {patch_size}x{patch_size} (historical mitochondria size)")
     logger.info(f"🔗 Overlap: {overlap*100:.0f}%")
     logger.info(f"📊 Validation ratio: {val_ratio*100:.0f}%")
+    logger.info("💡 Note: Using 224x224 patches for historical mitochondria training compatibility")
     
     # Validate input structure
     required_dirs = [
@@ -400,6 +412,8 @@ def create_mitochondria_patches(input_dir: str, patch_size: int = 256, overlap: 
     logger.info("🎉 Mitochondria patch creation complete!")
     logger.info(f"⏱️  Total time: {elapsed_time:.1f} seconds")
     logger.info(f"📁 Output structure created at: {input_path}")
+    logger.info("💡 These 224x224 patches are optimized for mitochondria training")
+    logger.info("💡 They will serve as the foundation for glomeruli transfer learning")
     logger.info("="*60)
 
 
@@ -414,8 +428,8 @@ def main():
     parser.add_argument(
         "--patch-size", 
         type=int, 
-        default=256,
-        help="Size of patches (default: 256)"
+        default=224,  # Changed from 256 to 224 for historical compatibility
+        help="Size of patches (default: 224 for historical mitochondria training)"
     )
     parser.add_argument(
         "--overlap", 

@@ -25,12 +25,16 @@ from .data_loading import (
     setup_global_functions,
 )
 
-# Model loading functions
+# Model loading functions (consolidated from model_loader.py and model_loading.py)
 from .model_loading import (
     get_model_info,
     load_model_with_historical_support,
     setup_model_loading_environment,
     validate_model_compatibility,
+    load_model_safely,
+    load_mitochondria_model,
+    load_glomeruli_model,
+    load_model,  # Legacy alias
 )
 
 # Unified data loaders
@@ -76,11 +80,15 @@ __all__ = [
     'n_glom_codes',
     'setup_global_functions',
     
-    # Model loading
+    # Model loading (consolidated)
     'get_model_info',
     'load_model_with_historical_support',
     'setup_model_loading_environment',
     'validate_model_compatibility',
+    'load_model_safely',
+    'load_mitochondria_model',
+    'load_glomeruli_model',
+    'load_model',
     
     # Unified data loaders
     'Annotation',

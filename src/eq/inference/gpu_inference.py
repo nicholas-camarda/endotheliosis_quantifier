@@ -15,7 +15,7 @@ import torch
 from PIL import Image
 
 from eq.utils.logger import get_logger
-from eq.utils.model_loader import load_model_safely
+from eq.data_management.model_loading import load_model_safely
 
 
 class GPUGlomeruliInference:

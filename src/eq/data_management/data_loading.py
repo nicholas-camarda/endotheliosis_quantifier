@@ -9,7 +9,6 @@ binary segmentation approach for H&E glomeruli masks.
 Functions previously found in:
 - __main__.py
 - segmentation/fastai_segmenter.py  
-- utils/model_loader.py
 - pipeline/extract_model_weights.py
 - pipeline/retrain_glomeruli_original.py
 - inference/run_glomeruli_prediction.py
