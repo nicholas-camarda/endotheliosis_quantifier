@@ -63,14 +63,14 @@ t- [x] 2.5. **Clean Up EQ Directory and Remove Redundancy**
   - [x] 5.7 Update imports and references throughout the codebase
   - [x] 5.8 Verify inference directory structure works correctly
 
-- [ ] 6. **Clean Up Models and Pipeline Directories**
-  - [ ] 6.1 Keep only `models/fastai_segmenter.py` (model architecture)
-  - [ ] 6.2 Move `models/data_loader.py` to `data_management/`
-  - [ ] 6.3 Keep only `pipeline/segmentation_pipeline.py` and `pipeline/run_production_pipeline.py`
-  - [ ] 6.4 Remove demo script `pipeline/run_complete_mito_pipeline.py`
-  - [ ] 6.5 Move `pipeline/extract_model_weights.py` to `utils/`
-  - [ ] 6.6 Update imports and references throughout the codebase
-  - [ ] 6.7 Verify models and pipeline directories are clean and focused
+- [x] 6. **Clean Up Models and Pipeline Directories**
+  - [x] 6.1 Keep only `models/fastai_segmenter.py` (model architecture)
+  - [x] 6.2 Move `models/data_loader.py` to `data_management/`
+  - [x] 6.3 Keep only `pipeline/segmentation_pipeline.py` and `pipeline/run_production_pipeline.py`
+  - [x] 6.4 Remove demo script `pipeline/run_complete_mito_pipeline.py`
+  - [x] 6.5 Move `pipeline/extract_model_weights.py` to `utils/`
+  - [x] 6.6 Update imports and references throughout the codebase
+  - [x] 6.7 Verify models and pipeline directories are clean and focused
 
 - [ ] 7. **Consolidate Evaluation Directory and Remove Duplication**
   - [ ] 7.1 Keep `evaluation/evaluate_glomeruli_model.py` (production-ready evaluator)

@@ -7,6 +7,9 @@
 
 Implement FastAI v2 compatible retraining scripts for both mitochondria and glomeruli models, and reorganize the training infrastructure to separate training scripts from pipeline execution scripts. This will address the critical performance issues caused by FastAI v1 vs v2 incompatibility and establish a clean, maintainable training codebase.
 
+ALWAYS LOAD `conda activate eq` FIRST
+If new packages are needed, install with `mamba install <package>`
+
 ## User Stories
 
 ### Retrain Models for Production Performance

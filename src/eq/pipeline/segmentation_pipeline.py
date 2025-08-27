@@ -20,7 +20,7 @@ from typing import Any, Dict
 
 import yaml
 
-from eq.data.loaders import (
+from eq.data_management.loaders import (
     get_scores_from_annotations,
     load_annotations_from_json,
     load_mitochondria_patches,
