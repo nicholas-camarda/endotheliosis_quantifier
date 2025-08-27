@@ -26,7 +26,7 @@
   - [x] 2.8 Update imports and references throughout the codebase
   - [x] 2.9 Verify data_management directory consolidation works correctly
 
-- [x] 2.5. **Clean Up EQ Directory and Remove Redundancy**
+t- [x] 2.5. **Clean Up EQ Directory and Remove Redundancy**
   - [x] 2.5.1 Remove entire `src/eq/data/` directory (legacy compatibility layer)
   - [x] 2.5.2 Remove legacy utils files: `organize_raw_data.py`, `reorganize_preeclampsia_data.py`, `auto_suggestion.py`, `common.py`, `env_check.py`, `runtime_check.py`
   - [x] 2.5.3 Move `utils/create_mitochondria_patches.py` to `processing/`
@@ -35,14 +35,14 @@
   - [x] 2.5.6 Verify clean directory structure with no redundant files or empty directories
   - [x] 2.5.7 Ensure all tests pass after cleanup
 
-- [ ] 3. **Consolidate Image Processing and Eliminate Scattered Functions**
-  - [ ] 3.1 Move `data/preprocessing.py` to `processing/preprocessing.py`
-  - [ ] 3.2 Rename `processing/patchify.py` to `processing/image_mask_preprocessing.py`
-  - [ ] 3.3 Move `utils/create_mitochondria_patches.py` to `processing/`
-  - [ ] 3.4 Keep `processing/convert_files.py` in place
-  - [ ] 3.5 Consolidate all preprocessing functions into unified API
-  - [ ] 3.6 Update imports and references throughout the codebase
-  - [ ] 3.7 Verify processing directory consolidation works correctly
+- [x] 3. **Consolidate Image Processing and Eliminate Scattered Functions**
+  - [x] 3.1 Move `data/preprocessing.py` to `processing/preprocessing.py`
+  - [x] 3.2 Rename `processing/patchify.py` to `processing/image_mask_preprocessing.py`
+  - [x] 3.3 Move `utils/create_mitochondria_patches.py` to `processing/`
+  - [x] 3.4 Keep `processing/convert_files.py` in place
+  - [x] 3.5 Consolidate all preprocessing functions into unified API
+  - [x] 3.6 Update imports and references throughout the codebase
+  - [x] 3.7 Verify processing directory consolidation works correctly
 
 - [ ] 4. **Create Training Infrastructure and Move Training Scripts**
   - [ ] 4.1 Create dedicated `src/eq/training/` directory

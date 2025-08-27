@@ -345,9 +345,9 @@ class SegmentationPipeline:
                             temp_dir_path = Path(temp_dir)
                             
                             # Use smart patchification to only create patches with glomeruli content
-                            # TODO: Implement smart_patchify_image_and_mask_dirs in eq.processing.patchify
+                            # TODO: Implement smart_patchify_image_and_mask_dirs in eq.processing.image_mask_preprocessing
                             # For now, use the standard patchify function
-                            from eq.processing.patchify import patchify_image_and_mask_dirs
+                            from eq.processing.image_mask_preprocessing import patchify_image_and_mask_dirs
 
                             # Temporary smart patchify implementation
                             def smart_patchify_image_and_mask_dirs(square_size, image_dir, mask_dir, output_dir, overlap=0, min_foreground_ratio=0):
@@ -392,7 +392,7 @@ class SegmentationPipeline:
                             temp_dir_path = Path(temp_dir)
                             
                             # Patchify images only (no masks)
-                            from eq.processing.patchify import patchify_image_dir
+                            from eq.processing.image_mask_preprocessing import patchify_image_dir
                             patchify_image_dir(
                                 square_size=224,
                                 input_dir=str(subject_folder),

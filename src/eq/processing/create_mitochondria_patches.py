@@ -173,7 +173,31 @@ def process_dataset_split(images_dir: Path, masks_dir: Path, output_dir: Path, s
         overlap: Overlap between patches
         val_ratio: Ratio of patches for validation
     """
-    from alive_progress import alive_bar
+    try:
+        from alive_progress import alive_bar
+        has_alive_progress = True
+    except ImportError:
+        has_alive_progress = False
+        # Create a simple progress bar fallback
+        class SimpleProgressBar:
+            def __init__(self, total, title="", **kwargs):
+                self.total = total
+                self.current = 0
+                self.title = title
+                print(f"{title}: Starting...")
+            
+            def __enter__(self):
+                return self
+            
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                print(f"{self.title}: Complete!")
+            
+            def __call__(self):
+                self.current += 1
+                if self.current % max(1, self.total // 10) == 0:  # Print every 10%
+                    print(f"{self.title}: {self.current}/{self.total}")
+        
+        alive_bar = SimpleProgressBar
     
     logger.info(f"🔄 Processing {split_name} split...")
     logger.info(f"   📁 Images directory: {images_dir}")
