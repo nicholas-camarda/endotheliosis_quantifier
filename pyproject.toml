@@ -28,6 +28,7 @@ ignore = [
   "F841",  # no unused variable
   "E501",  # line length handled by formatter
   "F403", 
+  "F401", # Remove unused import
 ]
 
 [tool.ruff.format]

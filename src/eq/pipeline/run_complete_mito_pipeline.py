@@ -13,10 +13,9 @@ Usage:
     python -m eq.pipeline.run_complete_mito_pipeline
 """
 
-import os
-import sys
-import subprocess
 import logging
+import subprocess
+import sys
 from pathlib import Path
 
 # Setup logging
@@ -156,7 +155,7 @@ def main():
     training_patches = len(list((data_path / "training" / "image_patches").glob("*.jpg")))
     testing_patches = len(list((data_path / "testing" / "image_patches").glob("*.jpg")))
     
-    logger.info(f"✓ Data structure verified!")
+    logger.info("✓ Data structure verified!")
     logger.info(f"  Training patches: {training_patches}")
     logger.info(f"  Testing patches: {testing_patches}")
     
@@ -167,13 +166,12 @@ def main():
     
     # Create a simple demo of the training pipeline
     try:
-        from eq.segmentation.train_mitochondria_fastai import train_mitochondria_model
-        from eq.features.mitochondria_data_loader import load_mitochondria_patches
+        from eq.data import load_mitochondria_patches
         
         logger.info("Loading mitochondria data...")
         mitochondria_data = load_mitochondria_patches(data_dir)
         
-        logger.info(f"Data loaded successfully:")
+        logger.info("Data loaded successfully:")
         logger.info(f"  Training images: {mitochondria_data['train']['images'].shape}")
         logger.info(f"  Training masks: {mitochondria_data['train']['masks'].shape}")
         logger.info(f"  Validation images: {mitochondria_data['val']['images'].shape}")
@@ -190,9 +188,9 @@ def main():
     # Final summary
     logger.info("\n🎉 Complete Mitochondria Pipeline Demo Finished!")
     logger.info(f"📁 Data organized at: {data_dir}")
-    logger.info(f"✂️ Patches created for U-Net training")
-    logger.info(f"🧠 Model ready for training")
-    logger.info(f"🔄 Ready for transfer learning to glomeruli")
+    logger.info("✂️ Patches created for U-Net training")
+    logger.info("🧠 Model ready for training")
+    logger.info("🔄 Ready for transfer learning to glomeruli")
     
     return True
 

@@ -10,7 +10,7 @@ from typing import Optional
 
 import matplotlib.pyplot as plt
 
-from eq.segmentation.fastai_segmenter import FastaiSegmenter, SegmentationConfig
+from eq.models.fastai_segmenter import FastaiSegmenter, SegmentationConfig
 from eq.utils.config_manager import PipelineConfigManager
 from eq.utils.hardware_detection import HardwareDetector
 from eq.utils.output_manager import OutputManager

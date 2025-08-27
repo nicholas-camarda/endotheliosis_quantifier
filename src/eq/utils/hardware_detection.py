@@ -12,7 +12,10 @@ from enum import Enum
 from typing import Optional, Tuple
 
 import psutil
-import torch
+
+# Note: Avoid importing torch at module import time to keep CLI usable
+# in environments without PyTorch. We'll import inside functions and
+# gracefully degrade to CPU-only when PyTorch is unavailable.
 
 
 class BackendType(Enum):
@@ -70,18 +73,26 @@ class HardwareDetector:
         # Basic system information
         platform_name = platform.system()
         architecture = platform.machine()
-        cpu_count = psutil.cpu_count()
+        cpu_count = psutil.cpu_count() or 1
         
         # Memory information
         memory = psutil.virtual_memory()
         total_memory_gb = memory.total / (1024**3)
         available_memory_gb = memory.available / (1024**3)
         
-        # PyTorch backend detection
-        mps_available = torch.backends.mps.is_available()
-        mps_built = torch.backends.mps.is_built()
-        cuda_available = torch.cuda.is_available()
-        cuda_device_count = torch.cuda.device_count() if cuda_available else 0
+        # PyTorch backend detection (guarded if torch is missing)
+        try:
+            import torch  # type: ignore
+            mps_available = torch.backends.mps.is_available()
+            mps_built = torch.backends.mps.is_built()
+            cuda_available = torch.cuda.is_available()
+            cuda_device_count = torch.cuda.device_count() if cuda_available else 0
+        except Exception:
+            # If PyTorch is not installed or not functional, fall back to CPU-only
+            mps_available = False
+            mps_built = False
+            cuda_available = False
+            cuda_device_count = 0
         
         # Determine primary backend
         backend_type = self._determine_primary_backend(mps_available, cuda_available)
@@ -91,8 +102,13 @@ class HardwareDetector:
         gpu_memory_gb = None
         
         if backend_type == BackendType.CUDA and cuda_available:
-            gpu_name = torch.cuda.get_device_name(0)
-            gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            try:
+                import torch  # type: ignore
+                gpu_name = torch.cuda.get_device_name(0)
+                gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            except Exception:
+                gpu_name = None
+                gpu_memory_gb = None
         elif backend_type == BackendType.MPS and mps_available:
             # For MPS, we can't easily get GPU name/memory, but we can infer from system
             gpu_name = self._infer_apple_gpu_name()

@@ -3,28 +3,82 @@
 
 import argparse
 import logging
+import os
 import re
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from fastai.vision.all import *
 
-from eq.config.mode_manager import EnvironmentMode, ModeManager
-from eq.utils.hardware_detection import get_capability_report
 from eq.utils.logger import ProgressLogger, get_logger, log_function_call, setup_logging
+from eq.utils.mode_manager import EnvironmentMode, ModeManager
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from eq.pipeline.run_production_pipeline import run_pipeline
 
+# Optional conda environment activation (opt-in via EQ_AUTO_CONDA=1)
+try:
+    from eq import ensure_conda_environment
+    if os.environ.get('EQ_AUTO_CONDA', '0') == '1':
+        ensure_conda_environment()
+except Exception:
+    pass
+
+# AUTOMATIC ENVIRONMENT SETUP - runs at CLI import time
+def auto_setup_environment():
+    """Automatically set up environment and hardware detection on CLI startup."""
+    print("🔧 Auto-setting up environment...")
+    
+    try:
+        # Lazy import to avoid hard dependency when just showing help
+        from eq.utils.hardware_detection import get_hardware_capabilities
+
+        # Auto-detect hardware and set optimal mode
+        hardware_capabilities = get_hardware_capabilities()
+        print(f"✅ Hardware detected: {hardware_capabilities.backend_type.value.upper()}")
+        print(f"   Platform: {hardware_capabilities.platform}")
+        print(f"   Memory: {hardware_capabilities.total_memory_gb:.1f}GB")
+        print(f"   Hardware Tier: {hardware_capabilities.hardware_tier.value.upper()}")
+        
+        # Auto-select optimal mode based on hardware
+        mode_manager = ModeManager()
+        suggested_mode = mode_manager.get_suggested_mode()
+        mode_manager.set_mode(suggested_mode)
+        
+        print(f"✅ Auto-selected mode: {suggested_mode.value.upper()}")
+        print(f"   Device: {mode_manager.get_device_recommendation()}")
+        
+        # Configure platform-specific settings
+        if hardware_capabilities.platform == "Darwin":
+            import os
+            os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+            print("🍎 Configured for Apple Silicon (MPS)")
+        
+        print("✅ Environment setup complete!\n")
+        return mode_manager
+        
+    except Exception as e:
+        print(f"⚠️ Environment setup failed: {e}")
+        print("💡 Continuing with default settings...\n")
+        return None
+
+
+# Run automatic setup when module is imported
+_auto_mode_manager = auto_setup_environment()
+
 
 # Functions needed for loading pre-trained models
 def n_glom_codes(mask_files):
     """Get unique codes from mask files."""
     codes = set()
+    # Lazy import to avoid fastai dependency unless needed
+    try:
+        from fastai.vision.all import PILMask
+    except Exception:
+        raise ImportError("fastai not available; install fastai to use n_glom_codes")
     for mask_file in mask_files:
         mask = np.array(PILMask.create(mask_file))
         codes.update(np.unique(mask))
@@ -32,7 +86,7 @@ def n_glom_codes(mask_files):
 
 
 def get_glom_mask_file(image_file, p2c, thresh=127):
-    """Get mask file path for a given image file."""
+    """Get mask path for image file."""
     # this is the base path
     base_path = image_file.parent.parent.parent
     first_name = image_file.parent.name
@@ -45,6 +99,10 @@ def get_glom_mask_file(image_file, p2c, thresh=127):
     mask_path = (base_path / 'masks' / first_name / str_name)
     
     # convert to an array (mask)
+    try:
+        from fastai.vision.all import PILMask
+    except Exception:
+        raise ImportError("fastai not available; install fastai to use get_glom_mask_file")
     msk = np.array(PILMask.create(mask_path))
     # convert the image to binary if it isn't already (tends to happen when working with .jpg files)
     msk[msk <= thresh] = 0
@@ -66,7 +124,7 @@ def get_glom_y(o):
 
 # from eq.models.feature_extractor import run_feature_extraction
 # from eq.pipeline.quantify_endotheliosis import run_endotheliosis_quantification
-# from eq.segmentation.train_segmenter import train_segmentation_model
+# from eq.models.train_segmenter_fastai import train_segmentation_model
 
 
 @log_function_call
@@ -77,6 +135,14 @@ def pipeline_orchestrator_command(args):
     
     print("🚀 === ENDOTHELIOSIS QUANTIFIER PIPELINE ===")
     print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # Use the auto-detected mode manager
+    if _auto_mode_manager:
+        current_mode = _auto_mode_manager.current_mode
+        current_config = _auto_mode_manager.current_config
+        print(f"🎯 Current Mode: {current_mode.value.upper()}")
+        print(f"   Batch Size: {current_config.batch_size or 'Auto'}")
+        print(f"   Device: {_auto_mode_manager.get_device_recommendation()}")
     
     # Check for QUICK_TEST mode
     import os
@@ -114,63 +180,31 @@ def data_load_command(args):
     logger.info("🔄 Starting data loading and preprocessing pipeline...")
 
     # Lazy import heavy data utilities to avoid import-time side effects
-    from eq.features.data_loader import (
-        create_train_val_test_lists,
-        generate_binary_masks,
-        generate_final_dataset,
-        get_scores_from_annotations,
-        load_annotations_from_json,
-        organize_data_into_subdirs,
-    )
+    # Updated to consolidated loaders under eq.data
+    from eq.data.loaders import get_scores_from_annotations, load_annotations_from_json
+    from eq.data.loaders import load_glomeruli_data as generate_final_dataset  # compatibility alias
 
+    # Note: create_train_val_test_lists, organize_data_into_subdirs, and
+    # generate_binary_masks were part of legacy features modules. The
+    # consolidated loader returns train/val/test splits directly.
     # Set up progress tracking
     progress = ProgressLogger(logger, 6, "Data Loading Pipeline")
     
-    # Generate binary masks if annotation file provided
-    if args.annotation_file:
-        progress.step(f"Generating binary masks from {args.annotation_file}")
-        generate_binary_masks(
-            annotation_file=args.annotation_file,
-            data_dir=args.data_dir
-        )
-    else:
-        progress.step("Skipping binary mask generation (no annotation file provided)")
-    
-    # Organize test data
-    progress.step("Organizing test data into subdirectories")
-    test_images_1_paths, test_data_dict_1 = organize_data_into_subdirs(
-        data_dir=args.test_data_dir
+    # Load and split data using the unified loader (into cache)
+    progress.step("Loading and caching glomeruli dataset")
+    data_splits = generate_final_dataset(
+        processed_images_dir=args.data_dir,
+        cache_dir=args.cache_dir
     )
-    logger.info(f"📊 Found {len(test_images_1_paths)} test images")
-    
-    # Create train/val/test lists
-    progress.step("Creating train/val/test data splits")
-    train_images_paths, train_masks_paths, test_images_2_paths, train_data_dict, test_data_dict_2 = create_train_val_test_lists(
-        data_dir=args.data_dir
-    )
-    logger.info(f"📊 Training images: {len(train_images_paths)}")
-    logger.info(f"📊 Training masks: {len(train_masks_paths)}")
-    logger.info(f"📊 Test images: {len(test_images_2_paths)}")
-    
-    # Combine test images
-    import numpy as np
-    test_images_paths = np.concatenate((test_images_1_paths, test_images_2_paths))
-    test_data_dict = dict(sorted({**test_data_dict_1, **test_data_dict_2}.items()))
-    logger.info(f"📊 Combined test images: {len(test_images_paths)}")
-    
-    # Generate final dataset
-    progress.step(f"Generating final dataset with image size {args.image_size}")
-    generate_final_dataset(
-        train_images_paths, train_masks_paths, test_images_paths,
-        train_data_dict, test_data_dict, 
-        size=args.image_size, cache_dir=args.cache_dir
-    )
+    logger.info(f"📊 Train samples: {data_splits['metadata']['train_samples']}")
+    logger.info(f"📊 Val samples: {data_splits['metadata']['val_samples']}")
+    logger.info(f"📊 Test samples: {data_splits['metadata']['test_samples']}")
     
     # Process scores if annotation file provided
     if args.annotation_file:
         progress.step("Processing scores from annotations")
         annotations = load_annotations_from_json(args.annotation_file)
-        scores = get_scores_from_annotations(annotations, cache_dir=args.cache_dir)
+        scores = get_scores_from_annotations(annotations)
         logger.info(f"📊 Processed {len(scores)} scores from annotations")
     else:
         progress.step("Skipping score processing (no annotation file provided)")
@@ -363,6 +397,12 @@ def capabilities_command(args):
     """Report detected hardware capabilities and recommendations."""
     logger = get_logger("eq.capabilities")
     logger.info("🔍 Generating hardware capability report...")
+    try:
+        from eq.utils.hardware_detection import get_capability_report
+    except Exception as e:
+        print(f"❌ Unable to load hardware detection: {e}")
+        print("Install PyTorch to enable capability reporting.")
+        return
     report = get_capability_report()
     print(report)
 
@@ -691,5 +731,3 @@ Examples:
 
 if __name__ == '__main__':
     main()
-
-

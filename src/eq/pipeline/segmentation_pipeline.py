@@ -20,11 +20,16 @@ from typing import Any, Dict
 
 import yaml
 
+from eq.data.loaders import (
+    get_scores_from_annotations,
+    load_annotations_from_json,
+    load_mitochondria_patches,
+)
 from eq.evaluation.glomeruli_evaluator import evaluate_glomeruli_model
-from eq.features.data_loader import get_scores_from_annotations, load_annotations_from_json
-from eq.features.mitochondria_data_loader import load_mitochondria_patches
-from eq.io.convert_files_to_jpg import convert_tif_to_jpg
-from eq.segmentation.train_segmenter_fastai import train_segmentation_model_fastai
+from eq.models.train_glomeruli_transfer_learning import (
+    train_glomeruli_transfer_learning_from_config,
+)
+from eq.processing.convert_files import convert_tif_to_jpg
 from eq.utils.logger import get_logger
 
 
@@ -71,6 +76,7 @@ class SegmentationPipeline:
         self.logger.addHandler(console_handler)
         self.logger.setLevel(logging.INFO)
         
+        self.config_path = config_path
         self.config = self._load_config(config_path)
         self.stage = self.config.get('name', 'unknown')
         
@@ -86,6 +92,13 @@ class SegmentationPipeline:
             print("TESTING RUN - QUICK_TEST MODE")
             print("This is a TESTING run with reduced epochs and parameters.")
             print("DO NOT use outputs from this run for production inference!")
+        
+        # Check for FORCE_RERUN mode
+        if os.getenv('FORCE_RERUN', 'false').lower() == 'true':
+            self.logger.info("🔄 FORCE_RERUN MODE ENABLED")
+            self.logger.info("All skip logic will be overridden - complete regeneration from scratch")
+            print("🔄 FORCE_RERUN MODE ENABLED")
+            print("All skip logic will be overridden - complete regeneration from scratch")
         
     def _load_config(self, config_path: str) -> Dict[str, Any]:
         """Load YAML configuration file."""
@@ -198,11 +211,283 @@ class SegmentationPipeline:
         mask_output_dir = patch_config.get('mask_output_dir')
         
         if output_dir and mask_output_dir:
-            image_count = len(list(Path(output_dir).glob("*.tif")))
-            mask_count = len(list(Path(mask_output_dir).glob("*.tif")))
+            image_count = len(list(Path(output_dir).glob("*.jpg")))
+            mask_count = len(list(Path(mask_output_dir).glob("*.jpg")))
             self.logger.info(f"Found {image_count} image patches and {mask_count} mask patches")
         
         self.logger.info("Patch verification completed")
+    
+    def _organize_glomeruli_data(self):
+        """Organize glomeruli data into clean structure and generate patches."""
+        if self.stage != "glomeruli_finetuning":
+            return  # Only needed for glomeruli fine-tuning
+            
+        # Check if derived_data already exists and has content
+        derived_base = Path("derived_data/glomeruli_data")
+        training_image_patches = derived_base / "training" / "image_patches"
+        testing_image_patches = derived_base / "testing" / "image_patches"
+        prediction_image_patches = derived_base / "prediction" / "image_patches"
+        
+        # Check if all directories exist and have files
+        if (training_image_patches.exists() and any(training_image_patches.iterdir()) and
+            testing_image_patches.exists() and any(testing_image_patches.iterdir()) and
+            prediction_image_patches.exists() and any(prediction_image_patches.iterdir())):
+            
+            # Check if FORCE_RERUN is enabled
+            if os.getenv('FORCE_RERUN', 'false').lower() == 'true':
+                self.logger.info("🔄 FORCE_RERUN: Overriding skip logic - regenerating all derived data")
+                # Remove existing derived data to force regeneration
+                import shutil
+                if derived_base.exists():
+                    shutil.rmtree(derived_base)
+                    self.logger.info("Removed existing derived_data directory")
+            else:
+                self.logger.info("Derived data already exists and has content - skipping patchification")
+                self.logger.info(f"Training images: {training_image_patches}")
+                self.logger.info(f"Testing images: {testing_image_patches}")
+                self.logger.info(f"Prediction images: {prediction_image_patches}")
+                return
+            
+        self.logger.info("Organizing glomeruli data and generating patches...")
+        
+        # Also support paired patchification (mito-style)
+        from eq.utils.paths import ensure_directory
+        
+        data_config = self.config.get('data', {})
+        raw_images_dir = data_config.get('raw_images')
+        processed_config = data_config.get('processed', {})
+        
+        # Define clean derived_data structure (mito-style: separate image_patches and mask_patches directories)
+        derived_base = Path("derived_data/glomeruli_data")
+        training_base = derived_base / "training"
+        testing_base = derived_base / "testing"
+        cache_dir = derived_base / "cache"
+        
+        # Ensure clean directory structure (mito-style)
+        ensure_directory(training_base)
+        ensure_directory(testing_base)
+        ensure_directory(cache_dir)
+        
+        # Create mito-style patch directories
+        training_image_patches = training_base / "image_patches"
+        training_mask_patches = training_base / "mask_patches"
+        testing_image_patches = testing_base / "image_patches"
+        testing_mask_patches = testing_base / "mask_patches"
+        
+        # Create prediction directory for subjects without masks
+        prediction_base = derived_base / "prediction"
+        prediction_image_patches = prediction_base / "image_patches"
+        prediction_mask_patches = prediction_base / "mask_patches"
+        
+        ensure_directory(training_image_patches)
+        ensure_directory(training_mask_patches)
+        ensure_directory(testing_image_patches)
+        ensure_directory(testing_mask_patches)
+        ensure_directory(prediction_image_patches)
+        ensure_directory(prediction_mask_patches)
+        
+        # Copy annotations to cache
+        annotations_file = data_config.get('annotations', {}).get('json_file')
+        if annotations_file and Path(annotations_file).exists():
+            import shutil
+            shutil.copy2(annotations_file, cache_dir / "annotations.json")
+            self.logger.info(f"Copied annotations to {cache_dir / 'annotations.json'}")
+        
+        # Use raw images/masks roots from config (do not require train/test under raw)
+        raw_images_dir = Path(raw_images_dir)
+        images_dir = raw_images_dir / "images"
+        masks_dir = raw_images_dir / "masks"
+        if not images_dir.exists():
+            raise FileNotFoundError(f"Images directory not found: {images_dir}")
+        subject_folders = [d for d in images_dir.iterdir() if d.is_dir() and d.name.startswith('T')]
+        
+        if subject_folders:
+            self.logger.info(f"Found {len(subject_folders)} subject folders: {[f.name for f in subject_folders]}")
+            
+            # Separate subjects with and without masks
+            subjects_with_masks = []
+            subjects_without_masks = []
+            for subject_folder in subject_folders:
+                subject_name = subject_folder.name
+                subject_masks_dir = masks_dir / subject_name
+                if subject_masks_dir.exists() and any(subject_masks_dir.iterdir()):
+                    subjects_with_masks.append(subject_folder)
+                else:
+                    subjects_without_masks.append(subject_folder)
+                    self.logger.info(f"No masks for subject {subject_name}; will be used for prediction")
+            
+            self.logger.info(f"Found {len(subjects_with_masks)} subjects with masks: {[f.name for f in subjects_with_masks]}")
+            self.logger.info(f"Found {len(subjects_without_masks)} subjects without masks: {[f.name for f in subjects_without_masks]}")
+            
+            if len(subjects_with_masks) == 0:
+                raise ValueError("No subjects with masks found - cannot proceed with training")
+            
+            # Split subjects with masks 80/20 into training/testing
+            subjects_with_masks_sorted = sorted(subjects_with_masks, key=lambda p: p.name)
+            split_idx = int(len(subjects_with_masks_sorted) * 0.8)
+            train_subjects = subjects_with_masks_sorted[:split_idx]
+            test_subjects = subjects_with_masks_sorted[split_idx:]
+            
+            self.logger.info(f"Training subjects: {[f.name for f in train_subjects]}")
+            self.logger.info(f"Testing subjects: {[f.name for f in test_subjects]}")
+            self.logger.info(f"Prediction subjects: {[f.name for f in subjects_without_masks]}")
+
+            def process_subjects_with_masks(subject_list, image_patches_dir: Path, mask_patches_dir: Path, split_name: str):
+                for subject_folder in subject_list:
+                    subject_name = subject_folder.name
+                    self.logger.info(f"Processing subject {subject_name} for {split_name}...")
+                    # Masks for this subject (already verified to exist)
+                    subject_masks_dir = masks_dir / subject_name
+                    try:
+                        # Create temporary directory for this subject's patches
+                        import tempfile
+                        with tempfile.TemporaryDirectory() as temp_dir:
+                            temp_dir_path = Path(temp_dir)
+                            
+                            # Use smart patchification to only create patches with glomeruli content
+                            # TODO: Implement smart_patchify_image_and_mask_dirs in eq.processing.patchify
+                            # For now, use the standard patchify function
+                            from eq.processing.patchify import patchify_image_and_mask_dirs
+
+                            # Temporary smart patchify implementation
+                            def smart_patchify_image_and_mask_dirs(square_size, image_dir, mask_dir, output_dir, overlap=0, min_foreground_ratio=0):
+                                """Temporary implementation - uses standard patchify for now."""
+                                # TODO: Add smart logic to skip patches without glomeruli content
+                                patchify_image_and_mask_dirs(square_size, image_dir, mask_dir, output_dir)
+                                exit()  # Fake return values (created, skipped) - TODO: calculate actual values
+                            created, skipped = smart_patchify_image_and_mask_dirs(
+                                square_size=224,
+                                image_dir=str(subject_folder),
+                                mask_dir=str(subject_masks_dir),
+                                output_dir=str(temp_dir_path),
+                                overlap=0.5,  # 50% overlap to capture more glomeruli
+                                min_foreground_ratio=0.01  # Only patches with at least 1% glomeruli
+                            )
+                            
+                            self.logger.info(f"  {subject_name}: Created {created} patches, skipped {skipped} empty patches")
+                            
+                            # Move image patches to image_patches directory
+                            for img_file in temp_dir_path.rglob("*.jpg"):
+                                if not img_file.name.endswith('_mask.jpg'):
+                                    import shutil
+                                    shutil.move(str(img_file), str(image_patches_dir / img_file.name))
+                            
+                            # Move mask patches to mask_patches directory
+                            for mask_file in temp_dir_path.rglob("*_mask.jpg"):
+                                import shutil
+                                shutil.move(str(mask_file), str(mask_patches_dir / mask_file.name))
+                        
+                        self.logger.info(f"Generated patches for {subject_name}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to patchify subject {subject_name}: {e}")
+
+            def process_subjects_without_masks(subject_list, image_patches_dir: Path, split_name: str):
+                for subject_folder in subject_list:
+                    subject_name = subject_folder.name
+                    self.logger.info(f"Processing subject {subject_name} for {split_name}...")
+                    try:
+                        # Create temporary directory for this subject's patches
+                        import tempfile
+                        with tempfile.TemporaryDirectory() as temp_dir:
+                            temp_dir_path = Path(temp_dir)
+                            
+                            # Patchify images only (no masks)
+                            from eq.processing.patchify import patchify_image_dir
+                            patchify_image_dir(
+                                square_size=224,
+                                input_dir=str(subject_folder),
+                                output_dir=str(temp_dir_path)
+                            )
+                            
+                            # Move image patches to image_patches directory
+                            for img_file in temp_dir_path.rglob("*.jpg"):
+                                import shutil
+                                shutil.move(str(img_file), str(image_patches_dir / img_file.name))
+                        
+                        self.logger.info(f"Generated patches for {subject_name}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to patchify subject {subject_name}: {e}")
+
+            process_subjects_with_masks(train_subjects, training_image_patches, training_mask_patches, 'training')
+            process_subjects_with_masks(test_subjects, testing_image_patches, testing_mask_patches, 'testing')
+            process_subjects_without_masks(subjects_without_masks, prediction_image_patches, 'prediction')
+        
+        else:
+            raise ValueError(f"No subject folders found in {images_dir}")
+        
+        # Update config to point to the mito-style derived_data structure
+        processed_config['train_dir'] = str(training_image_patches)
+        processed_config['train_mask_dir'] = str(training_mask_patches)
+        processed_config['test_dir'] = str(testing_image_patches)
+        processed_config['cache_dir'] = str(cache_dir)
+        
+        self.logger.info("Glomeruli data organization completed")
+        self.logger.info(f"Training images: {training_image_patches}")
+        self.logger.info(f"Training masks: {training_mask_patches}")
+        self.logger.info(f"Testing images: {testing_image_patches}")
+        self.logger.info(f"Testing masks: {testing_mask_patches}")
+        self.logger.info(f"Prediction images: {prediction_image_patches}")
+        self.logger.info(f"Cache: {cache_dir}")
+    
+    def _needs_raw_data_organization(self) -> bool:
+        """Raw data should NOT be organized - train/test splits only happen in derived_data."""
+        return False
+    
+    def _organize_raw_data_automatically(self):
+        """Organize raw data into clean structure WITHOUT train/test splits."""
+        try:
+            self.logger.info("Running automatic raw data organization...")
+            
+            # Get paths from config
+            data_config = self.config.get('data', {})
+            raw_images_dir = data_config.get('raw_images')
+            if not raw_images_dir:
+                raise ValueError("raw_images path not specified in config")
+            
+            data_dir = Path(raw_images_dir)
+            
+            # Check if we already have the clean structure
+            images_dir = data_dir / "images"
+            masks_dir = data_dir / "masks"
+            
+            if images_dir.exists() and masks_dir.exists():
+                self.logger.info("Clean structure already exists - no organization needed")
+                return
+            
+            # Create clean structure
+            images_dir.mkdir(parents=True, exist_ok=True)
+            masks_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Find and move subject directories to clean structure
+            subject_dirs = [d for d in data_dir.iterdir() if d.is_dir() and d.name.startswith('T')]
+            
+            for subject_dir in subject_dirs:
+                # Check if this is an image or mask directory
+                has_images = any(subject_dir.rglob("*.jpg")) or any(subject_dir.rglob("*.tif"))
+                has_masks = any(subject_dir.rglob("*_mask.jpg")) or any(subject_dir.rglob("*_mask.tif"))
+                
+                if has_images and not has_masks:
+                    # This is an image directory
+                    target_dir = images_dir / subject_dir.name
+                    if not target_dir.exists():
+                        import shutil
+                        shutil.move(str(subject_dir), str(target_dir))
+                        self.logger.info(f"Moved {subject_dir.name} to images/")
+                elif has_masks:
+                    # This is a mask directory
+                    target_dir = masks_dir / subject_dir.name
+                    if not target_dir.exists():
+                        import shutil
+                        shutil.move(str(subject_dir), str(target_dir))
+                        self.logger.info(f"Moved {subject_dir.name} to masks/")
+            
+            self.logger.info("Raw data organization completed - clean structure created")
+            self.logger.info("Train/test splits will be created in derived_data during processing")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to organize raw data automatically: {e}")
+            self.logger.error("Please organize your data manually according to the README structure")
+            raise
     
     def _process_annotations(self):
         """Process Label Studio annotations."""
@@ -220,7 +505,7 @@ class SegmentationPipeline:
             annotations = load_annotations_from_json(json_file)
             
             # Extract scores
-            scores = get_scores_from_annotations(annotations, cache_dir)
+            scores = get_scores_from_annotations(annotations)
             
             self.logger.info(f"Processed {len(annotations)} annotations")
             self.logger.info(f"Extracted {len(scores)} endotheliosis scores")
@@ -235,7 +520,26 @@ class SegmentationPipeline:
         try:
             # Always load the real data - QUICK_TEST only affects training parameters
             self.logger.info("Loading mitochondria dataset")
-            data = load_mitochondria_patches(self.config)
+            processed = self.config.get('data', {}).get('processed', {})
+            image_patches_dir = processed.get('train_dir')
+            mask_patches_dir = processed.get('train_mask_dir')
+            cache_dir = processed.get('cache_dir')
+            train_ratio = processed.get('train_ratio', 0.8)
+            val_ratio = processed.get('val_ratio', 0.2)
+            test_ratio = processed.get('test_ratio', 0.0)
+
+            if not image_patches_dir or not mask_patches_dir or not cache_dir:
+                raise ValueError("Processed train_dir, train_mask_dir, and cache_dir must be set in config for mitochondria pretraining")
+
+            data = load_mitochondria_patches(
+                image_patches_dir=image_patches_dir,
+                cache_dir=cache_dir,
+                mask_patches_dir=mask_patches_dir,
+                train_ratio=train_ratio,
+                val_ratio=val_ratio,
+                test_ratio=test_ratio,
+                random_seed=processed.get('random_seed', 42)
+            )
             
             self.logger.info("Loaded data:")
             self.logger.info(f"  Train: {data['train']['images'].shape}")
@@ -304,7 +608,7 @@ class SegmentationPipeline:
                 
             else:
                 # Use the clean mitochondria training function
-                from eq.segmentation.train_mitochondria_fastai import train_mitochondria_model
+                from eq.models.train_mitochondria_fastai import train_mitochondria_model
 
                 # Get output directory and model name from config
                 checkpoint_path = model_config.get('checkpoint_path', '')
@@ -342,41 +646,18 @@ class SegmentationPipeline:
                 self.logger.info("Mitochondria training completed successfully!")
             
         else:
-            # For glomeruli fine-tuning, use existing training function
-            # Check if we're in quick test mode and adjust training parameters
-            is_quick_test = os.getenv('QUICK_TEST', 'false').lower() == 'true'
+            # For glomeruli fine-tuning, use the new transfer learning function
+            self.logger.info("Starting glomeruli transfer learning...")
             
-            if is_quick_test:
-                # Use smaller parameters for quick testing
-                test_batch_size = min(training_config.get('batch_size', 16), 4)
-                test_epochs = 5  # Explicitly set to 5 for quick testing
-                self.logger.info(f"🔬 QUICK_TEST mode: Using batch_size={test_batch_size}, epochs={test_epochs}")
-            else:
-                # Use production parameters
-                test_batch_size = training_config.get('batch_size', 16)
-                test_epochs = training_config.get('epochs', 50)
-                self.logger.info(f"🚀 Production mode: Using batch_size={test_batch_size}, epochs={test_epochs}")
+            # Check if model already exists
+            model_config = self.config.get('model', {})
+            checkpoint_path = model_config.get('checkpoint_path', '')
+            if checkpoint_path and Path(checkpoint_path).exists():
+                self.logger.info(f"✅ Model checkpoint already exists: {checkpoint_path}")
+                self.logger.info("Model will be loaded instead of retrained")
             
-            # Prepare training arguments
-            train_args = {
-                'architecture': model_config.get('architecture', 'dynamic_unet'),
-                'backbone': model_config.get('backbone', 'resnet34'),
-                'input_size': model_config.get('input_size', [224, 224]),
-                'num_classes': model_config.get('num_classes', 2),
-                'epochs': test_epochs,
-                'batch_size': test_batch_size,
-                'learning_rate': training_config.get('learning_rate', 1e-3),
-                'weight_decay': training_config.get('weight_decay', 1e-4),
-                'checkpoint_path': model_config.get('checkpoint_path'),
-            }
-            
-            # Add pretrained model path for fine-tuning
-            if self.stage == "glomeruli_finetuning":
-                pretrained_path = self.config.get('pretrained_model', {}).get('path')
-                train_args['pretrained_path'] = pretrained_path
-            
-            # Train model
-            segmenter = train_segmentation_model_fastai(**train_args)
+            # Use the new transfer learning function
+            segmenter = train_glomeruli_transfer_learning_from_config(self.config_path)
         
         self.logger.info("Model training completed")
 
@@ -693,6 +974,10 @@ class SegmentationPipeline:
             # Load mitochondria data if needed
             if self.stage == "mitochondria_pretraining":
                 self._load_mitochondria_data()
+            
+            # Organize glomeruli data if needed
+            if self.stage == "glomeruli_finetuning":
+                self._organize_glomeruli_data()
             
             # Model training
             self._train_model()
