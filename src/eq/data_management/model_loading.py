@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from typing import Optional, Union
 
-from .constants import MPS_FALLBACK_ENV_VAR
+from eq.core.constants import MPS_FALLBACK_ENV_VAR
 from .data_loading import setup_global_functions
 
 # Import FastAI components (with fallback handling)

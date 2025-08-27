@@ -166,7 +166,7 @@ def main():
     
     # Create a simple demo of the training pipeline
     try:
-        from eq.data import load_mitochondria_patches
+        from eq.data_management.loaders import load_mitochondria_patches
         
         logger.info("Loading mitochondria data...")
         mitochondria_data = load_mitochondria_patches(data_dir)

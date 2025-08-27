@@ -5,26 +5,35 @@
 
 ## Tasks
 
-- [ ] 1. **Reorganize Core Directory and Eliminate Mixed Concerns**
-  - [ ] 1.1 Write tests for new directory structure and script organization
-  - [ ] 1.2 Move `core/data_loading.py` to `data_management/data_loading.py`
-  - [ ] 1.3 Move `core/preprocessing.py` to `processing/preprocessing.py`
-  - [ ] 1.4 Move `core/model_loading.py` to `data_management/model_loading.py`
-  - [ ] 1.5 Keep only `core/constants.py` and create `core/types.py` for abstract interfaces
-  - [ ] 1.6 Update imports and references throughout the codebase
-  - [ ] 1.7 Verify core directory now contains only constants, types, and abstract interfaces
-  - [ ] 1.8 Verify all moved functions work in their new locations
+- [x] 1. **Reorganize Core Directory and Eliminate Mixed Concerns**
+  - [x] 1.1 Write tests for new directory structure and script organization
+  - [x] 1.2 Move `core/data_loading.py` to `data_management/data_loading.py`
+  - [x] 1.3 Move `core/preprocessing.py` to `processing/preprocessing.py`
+  - [x] 1.4 Move `core/model_loading.py` to `data_management/model_loading.py`
+  - [x] 1.5 Keep only `core/constants.py` and create `core/types.py` for abstract interfaces
+  - [x] 1.6 Update imports and references throughout the codebase
+  - [x] 1.7 Verify core directory now contains only constants, types, and abstract interfaces
+  - [x] 1.8 Verify all moved functions work in their new locations
 
-- [ ] 2. **Consolidate Data Management and Eliminate Redundancy**
-  - [ ] 2.1 Create dedicated `src/eq/data_management/` directory
-  - [ ] 2.2 Move `data/loaders.py` to `data_management/loaders.py`
-  - [ ] 2.3 Move `data/config.py` to `data_management/config.py`
-  - [ ] 2.4 Move `utils/organize_lucchi_dataset.py` to `data_management/`
-  - [ ] 2.5 Move `utils/output_manager.py` to `data_management/`
-  - [ ] 2.6 Move `utils/metadata_processor.py` to `data_management/`
-  - [ ] 2.7 Remove redundant `data/preprocessing.py` (functionality moved to processing/)
-  - [ ] 2.8 Update imports and references throughout the codebase
-  - [ ] 2.9 Verify data_management directory consolidation works correctly
+- [x] 2. **Consolidate Data Management and Eliminate Redundancy**
+  - [x] 2.1 Create dedicated `src/eq/data_management/` directory
+  - [x] 2.2 Move `data/loaders.py` to `data_management/loaders.py`
+  - [x] 2.3 Move `data/config.py` to `data_management/config.py`
+  - [x] 2.4 Move `utils/organize_lucchi_dataset.py` to `data_management/`
+  - [x] 2.5 Move `utils/output_manager.py` to `data_management/`
+  - [x] 2.6 Move `utils/metadata_processor.py` to `data_management/`
+  - [x] 2.7 Remove redundant `data/preprocessing.py` (functionality moved to processing/)
+  - [x] 2.8 Update imports and references throughout the codebase
+  - [x] 2.9 Verify data_management directory consolidation works correctly
+
+- [x] 2.5. **Clean Up EQ Directory and Remove Redundancy**
+  - [x] 2.5.1 Remove entire `src/eq/data/` directory (legacy compatibility layer)
+  - [x] 2.5.2 Remove legacy utils files: `organize_raw_data.py`, `reorganize_preeclampsia_data.py`, `auto_suggestion.py`, `common.py`, `env_check.py`, `runtime_check.py`
+  - [x] 2.5.3 Move `utils/create_mitochondria_patches.py` to `processing/`
+  - [x] 2.5.4 Move `utils/model_loader.py` to `data_management/`
+  - [x] 2.5.5 Update all imports and references throughout the codebase
+  - [x] 2.5.6 Verify clean directory structure with no redundant files or empty directories
+  - [x] 2.5.7 Ensure all tests pass after cleanup
 
 - [ ] 3. **Consolidate Image Processing and Eliminate Scattered Functions**
   - [ ] 3.1 Move `data/preprocessing.py` to `processing/preprocessing.py`

@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from eq.models.fastai_segmenter import FastaiSegmenter, SegmentationConfig
 from eq.utils.config_manager import PipelineConfigManager
 from eq.utils.hardware_detection import HardwareDetector
-from eq.utils.output_manager import OutputManager
+from eq.data_management.output_manager import OutputManager
 
 
 def run_pipeline(

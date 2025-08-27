@@ -116,7 +116,7 @@ def run_glomeruli_prediction(config_path: str = "configs/glomeruli_finetuning_co
     
     # Load fresh data using the data loader
     logger.info("📊 Loading glomeruli data...")
-    from eq.data import load_glomeruli_data
+    from eq.data_management.loaders import load_glomeruli_data
     
     data = load_glomeruli_data(config)
     

@@ -28,7 +28,7 @@ except ImportError:
     # Fallback for when FastAI is not available
     PILMask = None
 
-from .constants import BINARY_P2C, DEFAULT_MASK_THRESHOLD
+from eq.core.constants import BINARY_P2C, DEFAULT_MASK_THRESHOLD
 
 
 def get_glom_mask_file(image_file: Union[str, Path], 

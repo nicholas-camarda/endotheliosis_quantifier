@@ -64,21 +64,60 @@ if os.environ.get('EQ_AUTO_CONDA', '0') == '1':
         # Never fail import due to environment activation issues
         pass
 
-# Version info
-__version__ = "1.0.0"
-__author__ = "Nicholas Camarda"
-__email__ = "ncamarda93@gmail.com"
+def ensure_directory_structure():
+    """Ensure all required directories exist for the package structure."""
+    import pathlib
+    
+    # Get the package directory
+    package_dir = pathlib.Path(__file__).parent
+    
+    # Required directories from spec
+    required_dirs = [
+        'core',
+        'data_management',  # New consolidated data management
+        'processing',
+        'training',         # New dedicated training scripts
+        'inference',        # New dedicated inference scripts
+        'models',
+        'pipeline',
+        'evaluation',
+        'utils'
+    ]
+    
+    # Create directories if they don't exist
+    for dir_name in required_dirs:
+        dir_path = package_dir / dir_name
+        if not dir_path.exists():
+            dir_path.mkdir(parents=True, exist_ok=True)
+            
+        # Create __init__.py if it doesn't exist
+        init_file = dir_path / '__init__.py'
+        if not init_file.exists():
+            init_file.touch()
+
+# Ensure directory structure exists
+ensure_directory_structure()
 
 # Package imports - updated for consolidated structure
-from . import core, data, evaluation, models, pipeline, processing, quantification, utils
+from . import core, data_management, evaluation, models, pipeline, processing, utils
+
+# Optional imports for new directories (created on-demand)
+try:
+    from . import training
+except ImportError:
+    pass
+
+try:
+    from . import inference
+except ImportError:
+    pass
 
 __all__ = [
     "core",
-    "data", 
+    "data_management", 
     "evaluation",
     "models",
     "pipeline",
     "processing",
-    "quantification",
     "utils"
 ]

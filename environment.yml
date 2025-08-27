@@ -25,3 +25,4 @@ dependencies:
       - torchaudio
       - albumentations
       - scikit-optimize
+      - pytest

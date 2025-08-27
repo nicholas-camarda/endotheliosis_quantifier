@@ -2,22 +2,15 @@
 """
 EQ Core Module
 
-This module provides the core functionality that was previously duplicated 
-across multiple files in the codebase. It serves as the single source of truth
-for essential functions used throughout the endotheliosis quantifier package.
-
-Key consolidations:
-- Data loading functions (get_glom_y, get_glom_mask_file, n_glom_codes)
-- Model loading with proper binary mask support
-- Preprocessing functions  
-- Shared constants and mappings
-
-Uses the correct, principled binary segmentation approach for H&E glomeruli masks.
+This module provides core constants, types, and abstract interfaces for the endotheliosis quantifier package.
+After reorganization, core only contains:
+- Constants and configurations
+- Type definitions and abstract interfaces
+- Shared type hints
 
 Import Usage:
-    from eq.core import get_glom_y, get_glom_mask_file, BINARY_P2C
-    from eq.core import load_model_with_historical_support
-    from eq.core import preprocess_image_for_model
+    from eq.core.constants import BINARY_P2C, DEFAULT_MASK_THRESHOLD
+    from eq.core.types import DataLoaderInterface, ModelLoaderInterface
 """
 
 # Constants
@@ -35,31 +28,17 @@ from .constants import (
                         MPS_FALLBACK_ENV_VAR,
 )
 
-# Data loading functions
-from .data_loading import (
-                        get_glom_mask_file,
-                        get_glom_y,
-                        get_mask_path_patterns,
-                        n_glom_codes,
-                        p2c,  # Legacy compatibility - now uses BINARY_P2C
-                        setup_global_functions,
-)
-
-# Model loading functions
-from .model_loading import (
-                        get_model_info,
-                        load_model_with_historical_support,
-                        setup_model_loading_environment,
-                        validate_model_compatibility,
-)
-
-# Preprocessing functions
-from .preprocessing import (
-                        normalize_image_array,
-                        prepare_image_for_inference,
-                        preprocess_image_for_model,
-                        resize_image_large,
-                        resize_image_standard,
+# Types and interfaces
+from .types import (
+                        DataLoaderInterface,
+                        ModelLoaderInterface,
+                        PreprocessorInterface,
+                        TrainingConfig,
+                        InferenceConfig,
+                        ImageArray,
+                        MaskArray,
+                        ImagePath,
+                        MaskPath,
 )
 
 # Public API
@@ -77,29 +56,16 @@ __all__ = [
     'MPS_FALLBACK_ENV_VAR',
     'CACHE_PATTERNS',
     
-    # Data loading
-    'get_glom_mask_file',
-    'get_glom_y',
-    'n_glom_codes',
-    'get_mask_path_patterns',
-    'setup_global_functions',
-    'p2c',  # Legacy compatibility
-    
-    # Model loading
-    'setup_model_loading_environment',
-    'load_model_with_historical_support',
-    'get_model_info',
-    'validate_model_compatibility',
-    
-    # Preprocessing
-    'resize_image_standard',
-    'resize_image_large',
-    'preprocess_image_for_model',
-    'normalize_image_array',
-    'prepare_image_for_inference',
+    # Types and interfaces
+    'DataLoaderInterface',
+    'ModelLoaderInterface',
+    'PreprocessorInterface',
+    'TrainingConfig',
+    'InferenceConfig',
+    'ImageArray',
+    'MaskArray',
+    'ImagePath',
+    'MaskPath',
 ]
 
-# Version info
-__version__ = "1.0.0"
-__author__ = "EQ Development Team"
-__description__ = "Core functionality consolidation for endotheliosis quantifier"
+__description__ = "Core constants, types, and interfaces for endotheliosis quantifier"

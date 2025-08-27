@@ -20,7 +20,7 @@ except ImportError:
     Image = None
     PILImage = None
 
-from .constants import DEFAULT_IMAGE_SIZE, LARGE_IMAGE_SIZE
+from eq.core.constants import DEFAULT_IMAGE_SIZE, LARGE_IMAGE_SIZE
 
 
 def resize_image_standard(image: Union[str, Path, object], 

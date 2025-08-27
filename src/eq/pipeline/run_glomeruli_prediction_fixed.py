@@ -56,7 +56,7 @@ def run_glomeruli_prediction_fixed(config_path: str = "configs/glomeruli_finetun
     
     # Load glomeruli data
     print("📊 Loading glomeruli data...")
-    from eq.data import load_glomeruli_data
+    from eq.data_management.loaders import load_glomeruli_data
     
     data = load_glomeruli_data(config)
     
