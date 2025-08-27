@@ -135,7 +135,7 @@ src/eq/
 - `__main__.py` - Main CLI entry point
 
 **❌ MIXED CONCERNS (Need reorganization):**
-- `core/` - Contains functions that should be in other directories
+- `core/` - Contains functions that should be in other directoriesll 
 - `models/` - Contains training scripts that should be in `training/`
 - `pipeline/` - Contains training, inference, and utilities mixed with orchestration
 - `utils/` - Contains data processing mixed with pure utilities
