@@ -1,0 +1,33 @@
+{
+  "exclude": [
+    "models",
+    "raw_data",
+    "derived_data", 
+    "output",
+    "logs",
+    "backups",
+    "archive",
+    ".history",
+    ".ruff_cache",
+    ".pytest_cache",
+    "node_modules",
+    "__pycache__",
+    "*.pyc",
+    "*.pyo",
+    "*.pyd",
+    ".git",
+    ".venv",
+    "venv",
+    "env"
+  ],
+  "include": [
+    "src",
+    "tests",
+    "configs"
+  ],
+  "pythonVersion": "3.9",
+  "typeCheckingMode": "basic",
+  "useLibraryCodeForTypes": true,
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false
+}

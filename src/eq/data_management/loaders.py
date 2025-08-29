@@ -14,7 +14,7 @@ Uses the correct binary segmentation approach from eq.core.
 import json
 import pickle
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import cv2
 import numpy as np
@@ -24,6 +24,32 @@ from sklearn.model_selection import train_test_split
 from eq.core.constants import BINARY_P2C, DEFAULT_MASK_THRESHOLD
 from eq.data_management.data_loading import get_glom_mask_file
 from eq.utils.logger import get_logger
+
+
+def load_pickled_data(file_path: Union[str, Path]) -> Any:
+    """
+    Load data from a pickle file.
+    
+    Args:
+        file_path: Path to the pickle file
+        
+    Returns:
+        The unpickled data
+        
+    Raises:
+        FileNotFoundError: If the pickle file doesn't exist
+        Exception: If the pickle file cannot be loaded
+    """
+    file_path = Path(file_path)
+    
+    if not file_path.exists():
+        raise FileNotFoundError(f"Pickle file not found: {file_path}")
+    
+    try:
+        with open(file_path, 'rb') as f:
+            return pickle.load(f)
+    except Exception as e:
+        raise Exception(f"Failed to load pickle file {file_path}: {e}")
 
 
 class Annotation:

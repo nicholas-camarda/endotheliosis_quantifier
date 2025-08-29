@@ -24,7 +24,7 @@ class SegmentationMetrics:
                 f"recall={self.recall:.4f}, f1={self.f1_score:.4f})")
 
 
-def dice_coefficient(predicted: np.ndarray, ground_truth: np.ndarray, smooth: float = 1e-8) -> float:
+def dice_coefficient(predicted: np.ndarray, ground_truth: np.ndarray, smooth: float = 0.0) -> float:
     """
     Calculate Dice coefficient (Sørensen-Dice coefficient).
     
@@ -36,17 +36,26 @@ def dice_coefficient(predicted: np.ndarray, ground_truth: np.ndarray, smooth: fl
     Returns:
         Dice coefficient score (0-1, higher is better)
     """
+    # Validate inputs
+    if predicted.shape != ground_truth.shape:
+        raise ValueError('Predicted and ground truth must have the same shape')
+    if predicted.size == 0:
+        raise ValueError('Predicted and ground truth must be non-empty')
+    
     # Ensure masks are binary
     pred_binary = (predicted > 0.5).astype(np.uint8)
     gt_binary = (ground_truth > 0.5).astype(np.uint8)
     
     intersection = np.logical_and(pred_binary, gt_binary).sum()
-    dice = (2 * intersection + smooth) / (pred_binary.sum() + gt_binary.sum() + smooth)
+    denom = pred_binary.sum() + gt_binary.sum()
+    if denom == 0:
+        return 0.0
+    dice = (2 * intersection) / denom
     
     return float(dice)
 
 
-def iou_score(predicted: np.ndarray, ground_truth: np.ndarray, smooth: float = 1e-8) -> float:
+def iou_score(predicted: np.ndarray, ground_truth: np.ndarray, smooth: float = 0.0) -> float:
     """
     Calculate Intersection over Union (IoU) score, also known as Jaccard index.
     
@@ -58,18 +67,26 @@ def iou_score(predicted: np.ndarray, ground_truth: np.ndarray, smooth: float = 1
     Returns:
         IoU score (0-1, higher is better)
     """
+    # Validate inputs
+    if predicted.shape != ground_truth.shape:
+        raise ValueError('Predicted and ground truth must have the same shape')
+    if predicted.size == 0:
+        raise ValueError('Predicted and ground truth must be non-empty')
+    
     # Ensure masks are binary
     pred_binary = (predicted > 0.5).astype(np.uint8)
     gt_binary = (ground_truth > 0.5).astype(np.uint8)
     
     intersection = np.logical_and(pred_binary, gt_binary).sum()
     union = np.logical_or(pred_binary, gt_binary).sum()
+    if union == 0:
+        return 0.0
     
-    iou = (intersection + smooth) / (union + smooth)
+    iou = intersection / union
     return float(iou)
 
 
-def precision_score(predicted: np.ndarray, ground_truth: np.ndarray, smooth: float = 1e-8) -> float:
+def precision_score(predicted: np.ndarray, ground_truth: np.ndarray, smooth: float = 0.0) -> float:
     """
     Calculate precision score for binary segmentation.
     
@@ -81,18 +98,27 @@ def precision_score(predicted: np.ndarray, ground_truth: np.ndarray, smooth: flo
     Returns:
         Precision score (0-1, higher is better)
     """
+    # Validate inputs
+    if predicted.shape != ground_truth.shape:
+        raise ValueError('Predicted and ground truth must have the same shape')
+    if predicted.size == 0:
+        raise ValueError('Predicted and ground truth must be non-empty')
+    
     # Ensure masks are binary
     pred_binary = (predicted > 0.5).astype(np.uint8)
     gt_binary = (ground_truth > 0.5).astype(np.uint8)
     
     tp = np.logical_and(pred_binary, gt_binary).sum()
     fp = pred_binary.sum() - tp
+    denom = tp + fp
+    if denom == 0:
+        return 0.0
     
-    precision = (tp + smooth) / (tp + fp + smooth)
+    precision = tp / denom
     return float(precision)
 
 
-def recall_score(predicted: np.ndarray, ground_truth: np.ndarray, smooth: float = 1e-8) -> float:
+def recall_score(predicted: np.ndarray, ground_truth: np.ndarray, smooth: float = 0.0) -> float:
     """
     Calculate recall score (sensitivity) for binary segmentation.
     
@@ -104,14 +130,23 @@ def recall_score(predicted: np.ndarray, ground_truth: np.ndarray, smooth: float 
     Returns:
         Recall score (0-1, higher is better)
     """
+    # Validate inputs
+    if predicted.shape != ground_truth.shape:
+        raise ValueError('Predicted and ground truth must have the same shape')
+    if predicted.size == 0:
+        raise ValueError('Predicted and ground truth must be non-empty')
+    
     # Ensure masks are binary
     pred_binary = (predicted > 0.5).astype(np.uint8)
     gt_binary = (ground_truth > 0.5).astype(np.uint8)
     
     tp = np.logical_and(pred_binary, gt_binary).sum()
     fn = gt_binary.sum() - tp
+    denom = tp + fn
+    if denom == 0:
+        return 0.0
     
-    recall = (tp + smooth) / (tp + fn + smooth)
+    recall = tp / denom
     return float(recall)
 
 
@@ -132,6 +167,22 @@ def f1_score(predicted: np.ndarray, ground_truth: np.ndarray, smooth: float = 1e
     
     f1 = (2 * precision * recall + smooth) / (precision + recall + smooth)
     return float(f1)
+
+
+def pixel_accuracy(predicted: np.ndarray, ground_truth: np.ndarray) -> float:
+    """
+    Calculate pixel accuracy for binary segmentation masks.
+
+    Args:
+        predicted: Predicted mask (binary or probabilities)
+        ground_truth: Ground truth mask (binary or probabilities)
+
+    Returns:
+        Pixel accuracy (0-1, higher is better)
+    """
+    pred_binary = (predicted > 0.5).astype(np.uint8)
+    gt_binary = (ground_truth > 0.5).astype(np.uint8)
+    return float(np.mean(pred_binary == gt_binary))
 
 
 def specificity_score(predicted: np.ndarray, ground_truth: np.ndarray, smooth: float = 1e-8) -> float:

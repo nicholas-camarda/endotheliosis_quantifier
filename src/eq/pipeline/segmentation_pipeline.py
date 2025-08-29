@@ -25,7 +25,7 @@ from eq.data_management.loaders import (
     load_annotations_from_json,
     load_mitochondria_patches,
 )
-from eq.evaluation.glomeruli_evaluator import evaluate_glomeruli_model
+from eq.evaluation.evaluate_glomeruli_model import GlomeruliModelEvaluator
 # Training functions moved to eq.training module
 # from eq.models.train_glomeruli_transfer_learning import (
 #     train_glomeruli_transfer_learning_from_config,
@@ -592,11 +592,11 @@ class SegmentationPipeline:
                 if not os.path.exists(pretrained_model_path):
                     raise FileNotFoundError(f"Pretrained model not found: {pretrained_model_path}")
                 
-                # Import and load the pretrained model
-                from fastai.vision.all import load_learner
+                # Import and load the pretrained model using consolidated loader
+                from eq.data_management.model_loading import load_model_safely
 
                 # Load the pretrained model
-                learn = load_learner(pretrained_model_path)
+                learn = load_model_safely(pretrained_model_path, model_type="mito")
                 self.logger.info(f"✅ Loaded pretrained model: {pretrained_model_path}")
                 
                 # Get output directory for evaluation results
@@ -674,7 +674,7 @@ class SegmentationPipeline:
         if self.stage == "glomeruli_finetuning":
             try:
                 # Prepare validation data from cache as done in fastai_segmenter
-                from eq.utils.common import load_pickled_data
+                from eq.data_management.loaders import load_pickled_data
                 cache_dir = self.config.get('data', {}).get('processed', {}).get('cache_dir')
                 if cache_dir:
                     val_images = load_pickled_data(Path(cache_dir) / 'val_images.pickle')
@@ -700,20 +700,25 @@ class SegmentationPipeline:
                     # Try to load from checkpoint path if exists
                     if checkpoint_path and os.path.exists(checkpoint_path):
                         try:
-                            # Try safer loading method first
-                            from fastai.learner import Learner
-                            learn = Learner.load(checkpoint_path, with_opt=False)
-                            self.logger.info("✅ Loaded model using safe method")
+                            # Use consolidated model loader
+                            from eq.data_management.model_loading import load_model_safely
+                            learn = load_model_safely(checkpoint_path, model_type="glomeruli")
+                            self.logger.info("✅ Loaded model using consolidated loader")
                         except Exception as e:
-                            self.logger.warning(f"Safe loading failed ({e}), falling back to load_learner")
-                            from fastai.vision.all import load_learner
-                            learn = load_learner(checkpoint_path)
+                            self.logger.warning(f"Consolidated loading failed ({e}), falling back to historical method")
+                            from eq.data_management.model_loading import load_model_with_historical_support
+                            learn = load_model_with_historical_support(checkpoint_path)
                     else:
                         self.logger.warning("Learner not available for evaluation; skipping glomeruli evaluation step.")
                         return
 
                 self.logger.info("🔍 Running glomeruli evaluation on validation data...")
-                _ = evaluate_glomeruli_model(learn, val_images, val_masks, output_dir, f"{model_name}_evaluation")
+                
+                # Create evaluator instance for numpy array evaluation
+                temp_evaluator = GlomeruliModelEvaluator("pipeline_loaded_model", output_dir)
+                temp_evaluator.learn = learn  # Override the loaded model with our learner
+                
+                _ = temp_evaluator.evaluate_numpy_arrays(val_images, val_masks, output_dir, f"{model_name}_evaluation")
                 self.logger.info("Glomeruli evaluation completed successfully")
             except Exception as e:
                 self.logger.warning(f"Glomeruli evaluation step failed: {e}")
@@ -747,53 +752,43 @@ class SegmentationPipeline:
             img = val_images[i]
             true_mask = val_masks[i]
             
-            # Convert to 3-channel if needed
-            if img.shape[-1] == 1:
-                img = np.repeat(img, 3, axis=-1)
-            # Convert to PIL Image
-            img_pil = Image.fromarray((img * 255).astype(np.uint8))
+            # Use consolidated prediction core for image preparation and prediction
+            from eq.inference.prediction_core import create_prediction_core
+            core = create_prediction_core(224)  # Standard size for mitochondria models
+            
+            # Prepare image for prediction
+            img_pil = core.prepare_image_for_display(img)
+            
             # Make prediction
             pred_result = learn.predict(img_pil)
             
-            # Extract prediction mask
-            if isinstance(pred_result, tuple) and len(pred_result) >= 2:
-                pred_tensor = pred_result[1]
-            else:
-                pred_tensor = pred_result
-                
-            # Convert to numpy
-            if hasattr(pred_tensor, 'numpy'):
-                pred_mask = pred_tensor.numpy()
-            elif hasattr(pred_tensor, 'cpu'):
-                pred_mask = pred_tensor.cpu().numpy()
-            else:
-                pred_mask = pred_tensor
+            # Extract prediction mask using consolidated method
+            pred_tensor = core.extract_prediction_from_result(pred_result)
+            
+            # Convert to numpy using consolidated method
+            pred_mask = core.convert_tensor_to_numpy(pred_tensor)
             
             # Ensure binary masks for metric calculation
-            true_binary = (true_mask.squeeze() > 0.5).astype(np.float32)
+            true_binary = core.ensure_binary_mask(true_mask.squeeze())
             
-            # Simple fix: resize prediction to match ground truth
+            # Resize prediction to match ground truth if needed
             if pred_mask.shape != true_binary.shape:
-                from scipy.ndimage import zoom
-                scale_factors = [true_binary.shape[i] / pred_mask.shape[i] for i in range(len(pred_mask.shape))]
-                pred_mask = zoom(pred_mask, scale_factors, order=1)
+                pred_mask = core.resize_prediction_to_match(pred_mask, true_binary.shape)
             
-            pred_binary = (pred_mask > 0.5).astype(np.float32)
+            pred_binary = core.ensure_binary_mask(pred_mask)
             
-            # Calculate Dice score
-            intersection = np.sum(true_binary * pred_binary)
-            dice = (2.0 * intersection) / (np.sum(true_binary) + np.sum(pred_binary) + 1e-7)
+            # Calculate metrics using consolidated functions
+            from eq.evaluation.segmentation_metrics import (
+                dice_coefficient,
+                iou_score,
+                pixel_accuracy,
+            )
+            dice = dice_coefficient(pred_binary, true_binary)
+            iou = iou_score(pred_binary, true_binary)
+            pixel_acc = pixel_accuracy(pred_binary, true_binary)
+            
             dice_scores.append(dice)
-            
-            # Calculate IoU (Jaccard index)
-            union = np.sum(true_binary) + np.sum(pred_binary) - intersection
-            iou = intersection / (union + 1e-7)
             iou_scores.append(iou)
-            
-            # Calculate pixel accuracy
-            correct_pixels = np.sum(true_binary == pred_binary)
-            total_pixels = true_binary.size
-            pixel_acc = correct_pixels / total_pixels
             pixel_accuracies.append(pixel_acc)
         
         # Calculate summary statistics

@@ -68,7 +68,7 @@ class GPUGlomeruliInference:
     
     def preprocess_image(self, image: Image.Image) -> torch.Tensor:
         """
-        Preprocess image for GPU inference.
+        Preprocess image for GPU inference using consolidated prediction core.
         
         Args:
             image: PIL Image to preprocess
@@ -76,14 +76,9 @@ class GPUGlomeruliInference:
         Returns:
             Preprocessed tensor on GPU
         """
-        # Resize to expected input size
-        img_resized = image.resize((self.expected_size, self.expected_size), Image.BILINEAR)
-        
-        # Convert to tensor and normalize
-        img_tensor = torch.from_numpy(np.array(img_resized)).float() / 255.0
-        
-        # Convert to channels-first format (B, C, H, W)
-        img_tensor = img_tensor.permute(2, 0, 1).unsqueeze(0)
+        from eq.inference.prediction_core import create_prediction_core
+        core = create_prediction_core(self.expected_size)
+        img_tensor = core.preprocess_image(image)
         
         # Move to GPU
         img_tensor = img_tensor.to(self.device)
@@ -214,28 +209,30 @@ class GPUGlomeruliInference:
         return best_metrics
     
     def _calculate_metrics(self, pred_binary: torch.Tensor, ground_truth: torch.Tensor) -> Dict[str, float]:
-        """Calculate evaluation metrics."""
+        """Calculate evaluation metrics using consolidated metric functions."""
         # Ensure both are binary
         pred_binary = (pred_binary > 0.5).float()
         ground_truth = (ground_truth > 0.5).float()
         
-        # Calculate intersection and union
-        intersection = (pred_binary * ground_truth).sum()
-        union = pred_binary.sum() + ground_truth.sum() - intersection
+        # Convert to numpy for metric calculation
+        pred_np = pred_binary.squeeze().cpu().numpy()
+        gt_np = ground_truth.squeeze().cpu().numpy()
         
-        # Dice coefficient
-        dice = (2 * intersection) / (pred_binary.sum() + ground_truth.sum() + 1e-8)
+        # Use consolidated metric functions
+        from eq.evaluation.segmentation_metrics import (
+            dice_coefficient, iou_score, pixel_accuracy
+        )
         
-        # IoU (Jaccard)
-        iou = intersection / (union + 1e-8)
+        dice = dice_coefficient(pred_np, gt_np)
+        iou = iou_score(pred_np, gt_np)
         
-        # Pixel accuracy
-        pixel_acc = (pred_binary == ground_truth).float().mean()
+        # Pixel accuracy via consolidated helper
+        pixel_acc = pixel_accuracy(pred_np, gt_np)
         
         return {
-            'dice': dice.item(),
-            'iou': iou.item(),
-            'pixel_acc': pixel_acc.item(),
+            'dice': dice,
+            'iou': iou,
+            'pixel_acc': float(pixel_acc),
             'pred_pixels': pred_binary.sum().item(),
             'gt_pixels': ground_truth.sum().item()
         }

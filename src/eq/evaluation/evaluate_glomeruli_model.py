@@ -63,7 +63,7 @@ class GlomeruliModelEvaluator:
     
     def preprocess_image(self, image: Image.Image) -> torch.Tensor:
         """
-        Preprocess image for model input.
+        Preprocess image for model input using consolidated prediction core.
         
         Args:
             image: PIL Image to preprocess
@@ -71,16 +71,9 @@ class GlomeruliModelEvaluator:
         Returns:
             Preprocessed tensor ready for model input
         """
-        # Resize to expected input size
-        img_resized = image.resize((self.expected_size, self.expected_size), Image.BILINEAR)
-        
-        # Convert to tensor and normalize
-        img_tensor = torch.from_numpy(np.array(img_resized)).float() / 255.0
-        
-        # Convert to channels-first format (B, C, H, W)
-        img_tensor = img_tensor.permute(2, 0, 1).unsqueeze(0)
-        
-        return img_tensor
+        from eq.inference.prediction_core import create_prediction_core
+        core = create_prediction_core(self.expected_size)
+        return core.preprocess_image(image)
     
     def predict(self, image: Image.Image) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -113,7 +106,7 @@ class GlomeruliModelEvaluator:
     
     def calculate_metrics(self, pred_binary: torch.Tensor, ground_truth: torch.Tensor) -> Dict[str, float]:
         """
-        Calculate evaluation metrics.
+        Calculate evaluation metrics using consolidated metric functions.
         
         Args:
             pred_binary: Binary prediction tensor
@@ -126,29 +119,30 @@ class GlomeruliModelEvaluator:
         pred_binary = (pred_binary > 0.5).float()
         ground_truth = (ground_truth > 0.5).float()
         
-        # Calculate intersection and union
-        intersection = (pred_binary * ground_truth).sum()
-        union = pred_binary.sum() + ground_truth.sum() - intersection
+        # Convert to numpy for metric calculation
+        pred_np = pred_binary.squeeze().cpu().numpy()
+        gt_np = ground_truth.squeeze().cpu().numpy()
         
-        # Dice coefficient
-        dice = (2 * intersection) / (pred_binary.sum() + ground_truth.sum() + 1e-8)
+        # Use consolidated metric functions
+        from eq.evaluation.segmentation_metrics import (
+            dice_coefficient, iou_score, precision_score, recall_score
+        )
         
-        # IoU (Jaccard)
-        iou = intersection / (union + 1e-8)
+        dice = dice_coefficient(pred_np, gt_np)
+        iou = iou_score(pred_np, gt_np)
+        precision = precision_score(pred_np, gt_np)
+        recall = recall_score(pred_np, gt_np)
         
-        # Pixel accuracy
-        pixel_acc = (pred_binary == ground_truth).float().mean()
-        
-        # Precision and recall
-        precision = intersection / (pred_binary.sum() + 1e-8)
-        recall = intersection / (ground_truth.sum() + 1e-8)
+        # Pixel accuracy via consolidated helper
+        from eq.evaluation.segmentation_metrics import pixel_accuracy
+        pixel_acc = pixel_accuracy(pred_np, gt_np)
         
         return {
-            'dice': dice.item(),
-            'iou': iou.item(),
-            'pixel_acc': pixel_acc.item(),
-            'precision': precision.item(),
-            'recall': recall.item(),
+            'dice': dice,
+            'iou': iou,
+            'pixel_acc': float(pixel_acc),
+            'precision': precision,
+            'recall': recall,
             'pred_pixels': pred_binary.sum().item(),
             'gt_pixels': ground_truth.sum().item()
         }
@@ -178,7 +172,6 @@ class GlomeruliModelEvaluator:
             
             # Make prediction
             raw_output, probabilities, pred_binary = self.predict(image)
-            
             # Calculate metrics
             metrics = self.calculate_metrics(pred_binary.squeeze(), mask_tensor)
             
@@ -191,6 +184,175 @@ class GlomeruliModelEvaluator:
         except Exception as e:
             self.logger.error(f"Failed to evaluate {image_path}: {e}")
             return {'error': str(e)}
+    
+    def evaluate_numpy_arrays(self, images: np.ndarray, masks: np.ndarray, output_dir: str, model_name: str) -> Dict[str, float]:
+        """
+        Evaluate numpy arrays directly (for pipeline compatibility).
+        
+        Args:
+            images: Numpy array of images (N, H, W[, C]) normalized 0-1
+            masks: Numpy array of masks (N, H, W[, 1]) binary 0/1
+            output_dir: Base output directory
+            model_name: Folder name to write artifacts under output_dir
+            
+        Returns:
+            Metrics dict with means/stds and sample count
+        """
+        output_path = Path(output_dir) / model_name
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        dice_scores = []
+        iou_scores = []
+        pixel_accuracies = []
+        
+        for i in range(len(images)):
+            img = images[i]
+            true_mask = masks[i]
+            
+            # Ensure image 3-channel for PIL
+            if img.ndim == 3 and img.shape[-1] == 1:
+                img = np.repeat(img, 3, axis=-1)
+            elif img.ndim == 2:
+                img = np.repeat(img[..., None], 3, axis=-1)
+            
+            # Convert to PIL Image
+            img_pil = Image.fromarray((img * 255).astype(np.uint8))
+            
+            # Make prediction
+            raw_output, probabilities, pred_binary = self.predict(img_pil)
+            
+            # Extract prediction tensor
+            pred_mask = pred_binary.squeeze().cpu().numpy()
+            
+            # Squeeze ground truth to 2D
+            true_binary = (np.squeeze(true_mask) > 0.5).astype(np.float32)
+            
+            # Resize prediction if necessary
+            if pred_mask.shape != true_binary.shape:
+                from scipy.ndimage import zoom
+                scale_factors = [true_binary.shape[j] / pred_mask.shape[j] for j in range(len(true_binary.shape))]
+                pred_mask = zoom(pred_mask, scale_factors, order=1)
+            
+            pred_binary_np = (pred_mask > 0.5).astype(np.float32)
+            
+            # Calculate metrics using consolidated functions
+            from eq.evaluation.segmentation_metrics import (
+                dice_coefficient,
+                iou_score,
+                pixel_accuracy,
+            )
+            dice = dice_coefficient(pred_binary_np, true_binary)
+            iou = iou_score(pred_binary_np, true_binary)
+            pix_acc = pixel_accuracy(pred_binary_np, true_binary)
+            
+            dice_scores.append(dice)
+            iou_scores.append(iou)
+            pixel_accuracies.append(pix_acc)
+        
+        # Calculate summary metrics
+        metrics = {
+            'dice_mean': float(np.mean(dice_scores)) if dice_scores else 0.0,
+            'dice_std': float(np.std(dice_scores)) if dice_scores else 0.0,
+            'iou_mean': float(np.mean(iou_scores)) if iou_scores else 0.0,
+            'iou_std': float(np.std(iou_scores)) if iou_scores else 0.0,
+            'pixel_acc_mean': float(np.mean(pixel_accuracies)) if pixel_accuracies else 0.0,
+            'pixel_acc_std': float(np.std(pixel_accuracies)) if pixel_accuracies else 0.0,
+            'num_samples': int(len(images)),
+        }
+        
+        # Save sample predictions grid
+        self.save_sample_predictions_grid_from_arrays(images, masks, max_samples=4)
+        
+        # Save summary text file
+        summary_path = output_path / "evaluation_summary.txt"
+        try:
+            with open(summary_path, 'w') as f:
+                f.write("Glomeruli Segmentation Model Evaluation Summary\n")
+                f.write("================================================\n\n")
+                if os.getenv('QUICK_TEST', 'false').lower() == 'true':
+                    f.write("TESTING RUN - QUICK_TEST MODE\n")
+                    f.write("This is a TESTING run. DO NOT use for production.\n\n")
+                f.write(f"Model: {model_name}\n")
+                f.write(f"Evaluation samples: {len(images)}\n")
+                f.write(f"Output directory: {output_path}\n\n")
+                f.write("QUANTITATIVE EVALUATION METRICS:\n")
+                f.write("================================\n")
+                f.write(f"Dice Score:      {metrics['dice_mean']:.4f} ± {metrics['dice_std']:.4f}\n")
+                f.write(f"IoU Score:       {metrics['iou_mean']:.4f} ± {metrics['iou_std']:.4f}\n")
+                f.write(f"Pixel Accuracy:  {metrics['pixel_acc_mean']:.4f} ± {metrics['pixel_acc_std']:.4f}\n")
+                f.write(f"Sample Count:    {metrics['num_samples']}\n")
+        except Exception as e:
+            self.logger.error(f"Could not write evaluation summary: {e}")
+        
+        return metrics
+    
+    def save_sample_predictions_grid_from_arrays(self, images: np.ndarray, masks: np.ndarray, max_samples: int = 4):
+        """Save a grid of sample predictions from numpy arrays."""
+        try:
+            n_show = min(max_samples, len(images))
+            if n_show <= 0:
+                return
+            
+            fig, axes = plt.subplots(n_show, 3, figsize=(12, 4 * n_show))
+            if n_show == 1:
+                axes = np.array([axes])
+            
+            # Check for QUICK_TEST environment variable
+            is_quick_test = os.getenv('QUICK_TEST', 'false').lower() == 'true'
+            title = 'Glomeruli Evaluation: Image | Ground Truth | Prediction'
+            if is_quick_test:
+                title = 'TESTING RUN - ' + title
+            fig.suptitle(title, fontsize=16)
+            
+            for i in range(n_show):
+                # Get image and mask
+                img = images[i]
+                mask = masks[i]
+                
+                # Ensure image 3-channel for display
+                if img.ndim == 3 and img.shape[-1] == 1:
+                    img_disp = img.squeeze()
+                elif img.ndim == 2:
+                    img_disp = img
+                else:
+                    img_disp = img
+                
+                # Display original image
+                axes[i, 0].imshow(img_disp, cmap='gray')
+                axes[i, 0].set_title(f'Image {i+1}')
+                axes[i, 0].axis('off')
+                
+                # Display ground truth mask
+                axes[i, 1].imshow(np.squeeze(mask), cmap='gray')
+                axes[i, 1].set_title(f'Ground Truth {i+1}')
+                axes[i, 1].axis('off')
+                
+                # Make prediction and display
+                if img.ndim == 3 and img.shape[-1] == 1:
+                    img_for_pred = np.repeat(img, 3, axis=-1)
+                elif img.ndim == 2:
+                    img_for_pred = np.repeat(img[..., None], 3, axis=-1)
+                else:
+                    img_for_pred = img
+                
+                img_pil = Image.fromarray((img_for_pred * 255).astype(np.uint8))
+                raw_output, probabilities, pred_binary = self.predict(img_pil)
+                pred_np = pred_binary.squeeze().cpu().numpy()
+                axes[i, 2].imshow(pred_np, cmap='gray')
+                axes[i, 2].set_title(f'Prediction {i+1}')
+                axes[i, 2].axis('off')
+            
+            plt.tight_layout()
+            
+            # Save grid visualization
+            grid_path = self.output_dir / "sample_predictions_grid.png"
+            plt.savefig(grid_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            self.logger.info(f"Sample predictions grid saved: {grid_path}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to save sample predictions grid: {e}")
     
     def find_matching_pairs(self, image_dir: str, mask_dir: str) -> List[Tuple[str, str]]:
         """
@@ -253,15 +415,25 @@ class GlomeruliModelEvaluator:
         
         # Evaluate each pair
         results = []
+        image_paths = []
+        mask_paths = []
+        
         for i, (img_path, mask_path) in enumerate(matching_pairs):
             self.logger.info(f"Evaluating {i+1}/{len(matching_pairs)}: {os.path.basename(img_path)}")
             
             metrics = self.evaluate_single_image(img_path, mask_path)
             results.append(metrics)
             
-            # Save visualization for first few samples
+            # Collect paths for grid visualization
+            image_paths.append(img_path)
+            mask_paths.append(mask_path)
+            
+            # Save individual visualization for first few samples
             if i < 5:
                 self.save_visualization(img_path, mask_path, metrics, i+1)
+        
+        # Save sample predictions grid
+        self.save_sample_predictions_grid(image_paths, mask_paths, max_samples=4)
         
         # Calculate summary statistics
         summary = self.calculate_summary(results)
@@ -321,6 +493,62 @@ class GlomeruliModelEvaluator:
         except Exception as e:
             self.logger.error(f"Failed to save visualization: {e}")
     
+    def save_sample_predictions_grid(self, image_paths: List[str], mask_paths: List[str], max_samples: int = 4):
+        """Save a grid of sample predictions similar to the legacy evaluator."""
+        try:
+            n_show = min(max_samples, len(image_paths))
+            if n_show <= 0:
+                return
+            
+            fig, axes = plt.subplots(n_show, 3, figsize=(12, 4 * n_show))
+            if n_show == 1:
+                axes = np.array([axes])
+            
+            # Check for QUICK_TEST environment variable
+            is_quick_test = os.getenv('QUICK_TEST', 'false').lower() == 'true'
+            title = 'Glomeruli Evaluation: Image | Ground Truth | Prediction'
+            if is_quick_test:
+                title = 'TESTING RUN - ' + title
+            fig.suptitle(title, fontsize=16)
+            
+            for i in range(n_show):
+                # Load image and mask
+                image = Image.open(image_paths[i]).convert('RGB')
+                mask = Image.open(mask_paths[i]).convert('L')
+                
+                # Resize to expected size
+                image_resized = image.resize((self.expected_size, self.expected_size), Image.BILINEAR)
+                mask_resized = mask.resize((self.expected_size, self.expected_size), Image.NEAREST)
+                
+                # Display original image
+                axes[i, 0].imshow(image_resized)
+                axes[i, 0].set_title(f'Image {i+1}')
+                axes[i, 0].axis('off')
+                
+                # Display ground truth mask
+                axes[i, 1].imshow(mask_resized, cmap='gray')
+                axes[i, 1].set_title(f'Ground Truth {i+1}')
+                axes[i, 1].axis('off')
+                
+                # Make prediction and display
+                raw_output, probabilities, pred_binary = self.predict(image)
+                pred_np = pred_binary.squeeze().cpu().numpy()
+                axes[i, 2].imshow(pred_np, cmap='gray')
+                axes[i, 2].set_title(f'Prediction {i+1}')
+                axes[i, 2].axis('off')
+            
+            plt.tight_layout()
+            
+            # Save grid visualization
+            grid_path = self.output_dir / "sample_predictions_grid.png"
+            plt.savefig(grid_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            self.logger.info(f"Sample predictions grid saved: {grid_path}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to save sample predictions grid: {e}")
+    
     def calculate_summary(self, results: List[Dict]) -> Dict:
         """Calculate summary statistics from individual results."""
         # Filter out error results
@@ -352,6 +580,13 @@ class GlomeruliModelEvaluator:
         with open(results_path, 'w') as f:
             f.write("Glomeruli Model Evaluation Results\n")
             f.write("==================================\n\n")
+            
+            # Check for QUICK_TEST environment variable
+            is_quick_test = os.getenv('QUICK_TEST', 'false').lower() == 'true'
+            if is_quick_test:
+                f.write("TESTING RUN - QUICK_TEST MODE\n")
+                f.write("This is a TESTING run. DO NOT use for production.\n\n")
+            
             f.write(f"Model: {self.model_path}\n")
             f.write(f"Total samples: {len(results)}\n\n")
             
@@ -412,6 +647,12 @@ def main():
     
     if 'error' not in results:
         print("\n✅ === EVALUATION COMPLETE ===")
+        
+        # Show QUICK_TEST status
+        is_quick_test = os.getenv('QUICK_TEST', 'false').lower() == 'true'
+        if is_quick_test:
+            print("⚠️  QUICK_TEST MODE - This was a testing run")
+        
         print(f"Results saved to: {args.output_dir}")
         print(f"Total samples: {results['total_samples']}")
         
@@ -427,4 +668,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

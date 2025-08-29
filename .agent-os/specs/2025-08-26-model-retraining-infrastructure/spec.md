@@ -33,6 +33,38 @@ As a **developer**, I want to properly organize training scripts separate from p
 
 ## Current Infrastructure Problems Identified
 
+### **CRITICAL ISSUE: Massive Code Duplication and Overlap**
+
+**🚨 MAJOR PROBLEM DISCOVERED**: There is extensive code duplication across evaluation, inference, and training modules that creates maintenance nightmares and confusion:
+
+**Metric Calculation Duplication (SAME CODE in 3+ places):**
+- `evaluation/segmentation_metrics.py`: Pure metric functions (Dice, IoU, precision, recall)
+- `evaluation/evaluate_glomeruli_model.py`: `calculate_metrics()` method (lines 114-154) - **DUPLICATES** the above
+- `inference/gpu_inference.py`: `_calculate_metrics()` method (lines 216-241) - **DUPLICATES** the above
+- `inference/run_glomeruli_prediction.py`: Inline metric calculations - **DUPLICATES** the above
+
+**Model Loading Duplication:**
+- `evaluation/evaluate_glomeruli_model.py`: `load_model_safely(model_path)`
+- `inference/gpu_inference.py`: `load_model_safely(model_path)`  
+- `inference/run_glomeruli_prediction.py`: `load_learner(backup_model_path)`
+- Multiple other files have similar model loading patterns
+
+**Prediction Logic Duplication:**
+- All three modules have identical image preprocessing code
+- All three handle FastAI model prediction the same way
+- All three have identical tensor conversion logic
+- All three handle prediction result extraction identically
+
+**File Purpose Confusion:**
+- `evaluation/evaluate_glomeruli_model.py` (676 lines) - Does inference + evaluation
+- `inference/gpu_inference.py` (387 lines) - Does inference + evaluation  
+- `inference/run_glomeruli_prediction.py` (238 lines) - Does inference + evaluation
+- `evaluation/segmentation_metrics.py` (316 lines) - Pure metric functions (only non-overlapping one)
+
+**Result**: 4 different ways to do the same thing, massive maintenance burden, and no clear separation of concerns.
+
+### **Directory Organization Problems**
+
 The `src/eq/pipeline/` directory contains mixed concerns that need reorganization:
 
 **Training Scripts (should be in `training/`):**

@@ -327,6 +327,55 @@ def get_optimal_batch_size(mode: str = "auto") -> int:
     return hardware_detector.get_optimal_batch_size(mode)
 
 
+def get_device_info(device: Optional[str] = None) -> dict:
+    """
+    Get device information for inference.
+    
+    Args:
+        device: Specific device to use ("cpu", "cuda", "mps", etc.) or None for auto
+        
+    Returns:
+        Dictionary with device information including:
+        - device: The actual device string to use
+        - backend: The backend type (mps/cuda/cpu)
+        - name: Human-readable device name
+    """
+    capabilities = get_hardware_capabilities()
+    
+    if device is None:
+        # Auto-select the best device
+        backend, explanation = get_device_recommendation("auto")
+        device_str = backend.value
+    else:
+        device_str = device.lower()
+        
+    # Validate device availability
+    if device_str == "mps":
+        if not capabilities.mps_available:
+            device_str = "cpu"
+            backend = BackendType.CPU
+        else:
+            backend = BackendType.MPS
+    elif device_str == "cuda":
+        if not capabilities.cuda_available:
+            device_str = "cpu"
+            backend = BackendType.CPU
+        else:
+            backend = BackendType.CUDA
+    else:
+        device_str = "cpu"
+        backend = BackendType.CPU
+    
+    # Create device info
+    device_info = {
+        "device": device_str,
+        "backend": backend.value,
+        "name": capabilities.gpu_name if capabilities.gpu_name else f"{capabilities.platform} CPU"
+    }
+    
+    return device_info
+
+
 if __name__ == "__main__":
     # Example usage
     print(get_capability_report())

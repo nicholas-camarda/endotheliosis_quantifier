@@ -319,7 +319,4 @@ def validate_model_compatibility(model_path: Union[str, Path]) -> dict:
     return results
 
 
-# Legacy compatibility aliases
-def load_model(model_path: str, model_type: str = "auto") -> Learner:
-    """Legacy alias for load_model_safely."""
-    return load_model_safely(model_path, model_type)
+# Note: legacy aliases removed to minimize duplication

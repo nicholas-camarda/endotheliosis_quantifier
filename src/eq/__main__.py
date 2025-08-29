@@ -182,7 +182,7 @@ def data_load_command(args):
     # Lazy import heavy data utilities to avoid import-time side effects
     # Updated to consolidated loaders under eq.data
     from eq.data_management.loaders import get_scores_from_annotations, load_annotations_from_json
-from eq.data_management.loaders import load_glomeruli_data as generate_final_dataset  # compatibility alias
+    from eq.data_management.loaders import load_glomeruli_data as generate_final_dataset  # compatibility alias
 
     # Note: create_train_val_test_lists, organize_data_into_subdirs, and
     # generate_binary_masks were part of legacy features modules. The

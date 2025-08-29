@@ -47,9 +47,10 @@ def extract_model_weights():
     
     print("🔧 Extracting model weights for production use...")
     
-    # Load the original FastAI learner
+    # Load the original FastAI learner using consolidated loader
     backup_model_path = "backups/glomerulus_segmentation_model-dynamic_unet-e50_b16_s84.pkl"
-    learn = load_learner(backup_model_path)
+    from eq.data_management.model_loading import load_model_safely
+    learn = load_model_safely(backup_model_path, model_type="glomeruli")
     
     print(f"✅ Loaded original model from: {backup_model_path}")
     

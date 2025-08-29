@@ -100,16 +100,16 @@ def retrain_glomeruli_original():
     if not mito_model_path.exists():
         raise FileNotFoundError(f"Mitochondria model not found: {mito_model_path}")
     
-    # Use safer loading method to avoid pickle security warnings
+    # Use consolidated model loader
     try:
-        # Try to use the safer Learner.load method first
-        from fastai.learner import Learner
-        segmentation_model = Learner.load(mito_model_path, with_opt=False)
-        logger.info("✅ Loaded pretrained mitochondria model using safe method")
+        from eq.data_management.model_loading import load_model_safely
+        segmentation_model = load_model_safely(mito_model_path, model_type="mito")
+        logger.info("✅ Loaded pretrained mitochondria model using consolidated loader")
     except Exception as e:
-        logger.warning(f"Safe loading failed ({e}), falling back to load_learner")
-        # Fallback to load_learner if safe method fails
-        segmentation_model = load_learner(mito_model_path)
+        logger.warning(f"Consolidated loading failed ({e}), falling back to historical method")
+        # Fallback to historical method if consolidated method fails
+        from eq.data_management.model_loading import load_model_with_historical_support
+        segmentation_model = load_model_with_historical_support(mito_model_path)
         logger.info("✅ Loaded pretrained mitochondria model using fallback method")
     logger.info("✅ Loaded pretrained mitochondria model")
     

@@ -2,37 +2,25 @@
 """
 Inference Module
 
-This module provides inference functionality for trained models.
+Minimal, explicit exports. No stubs or fallbacks.
 """
 
-# Import inference functionality
-try:
-    from .run_glomeruli_prediction import run_glomeruli_prediction
-except ImportError:
-    # Placeholder if module not fully implemented
-    def run_glomeruli_prediction(*args, **kwargs):
-        raise NotImplementedError("run_glomeruli_prediction not fully implemented yet")
+from .run_glomeruli_prediction import run_glomeruli_prediction
+from .run_mitochondria_prediction import run_mitochondria_prediction
+from .gpu_inference import GPUGlomeruliInference
+from .prediction_core import PredictionCore, create_prediction_core
 
-try:
-    from .run_mitochondria_prediction import run_mitochondria_prediction
-except ImportError:
-    # Placeholder if module not fully implemented
-    def run_mitochondria_prediction(*args, **kwargs):
-        raise NotImplementedError("run_mitochondria_prediction not fully implemented yet")
-
-try:
-    from .gpu_inference import run_gpu_inference
-except ImportError:
-    # Placeholder if module not fully implemented
-    def run_gpu_inference(*args, **kwargs):
-        raise NotImplementedError("run_gpu_inference not fully implemented yet")
+# Create a convenience function for run_gpu_inference
+def run_gpu_inference(*args, **kwargs):
+    """Convenience wrapper for GPUGlomeruliInference."""
+    inference = GPUGlomeruliInference(*args, **kwargs)
+    return inference
 
 __all__ = [
     'run_glomeruli_prediction',
-    'run_mitochondria_prediction', 
+    'run_mitochondria_prediction',
     'run_gpu_inference',
+    'GPUGlomeruliInference',
+    'PredictionCore',
+    'create_prediction_core',
 ]
-
-# Version info
-__version__ = "1.0.0"
-__description__ = "Unified inference infrastructure for mitochondria and glomeruli models"

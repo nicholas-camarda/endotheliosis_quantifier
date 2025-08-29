@@ -34,7 +34,6 @@ from .model_loading import (
     load_model_safely,
     load_mitochondria_model,
     load_glomeruli_model,
-    load_model,  # Legacy alias
 )
 
 # Unified data loaders
@@ -88,7 +87,6 @@ __all__ = [
     'load_model_safely',
     'load_mitochondria_model',
     'load_glomeruli_model',
-    'load_model',
     
     # Unified data loaders
     'Annotation',

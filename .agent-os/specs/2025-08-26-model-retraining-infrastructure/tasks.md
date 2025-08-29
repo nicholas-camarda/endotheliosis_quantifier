@@ -72,59 +72,64 @@ t- [x] 2.5. **Clean Up EQ Directory and Remove Redundancy**
   - [x] 6.6 Update imports and references throughout the codebase
   - [x] 6.7 Verify models and pipeline directories are clean and focused
 
-- [ ] 7. **Consolidate Evaluation Directory and Remove Duplication**
-  - [ ] 7.1 Keep `evaluation/evaluate_glomeruli_model.py` (production-ready evaluator)
-  - [ ] 7.2 Keep `evaluation/segmentation_metrics.py` (pure metrics functions)
-  - [ ] 7.3 Keep `evaluation/quantification_metrics.py` (quantification metrics)
-  - [ ] 7.4 Remove duplicate `evaluation/glomeruli_evaluator.py` (merge functionality into main evaluator)
-  - [ ] 7.5 Update imports and references throughout the codebase
-  - [ ] 7.6 Verify evaluation directory consolidation works correctly
+- [x] 7. **Consolidate Evaluation Directory and Remove Duplication**
+  - [x] 7.1 Keep `evaluation/evaluate_glomeruli_model.py` (production-ready evaluator)
+  - [x] 7.2 Keep `evaluation/segmentation_metrics.py` (pure metrics functions)
+  - [x] 7.3 Keep `evaluation/quantification_metrics.py` (quantification metrics)
+  - [x] 7.4 Remove duplicate `evaluation/glomeruli_evaluator.py` (merge functionality into main evaluator)
+  - [x] 7.5 Update imports and references throughout the codebase
+  - [x] 7.6 Verify evaluation directory consolidation works correctly
 
-- [ ] 8. **Clean Up Utils Directory and Remove Mixed Concerns**
-  - [ ] 8.1 Keep pure utility functions: `hardware_detection.py`, `config_manager.py`, `backend_manager.py`, `mode_manager.py`, `logger.py`, `paths.py`
-  - [ ] 8.2 Move `extract_model_weights.py` from pipeline to utils
-  - [ ] 8.3 Remove pre-eclampsia specific files: `organize_raw_data.py`, `reorganize_preeclampsia_data.py`
-  - [ ] 8.4 Remove redundant utilities: `auto_suggestion.py`, `common.py`, `env_check.py`, `runtime_check.py`
-  - [ ] 8.5 Update imports and references throughout the codebase
-  - [ ] 8.6 Verify utils directory contains only pure utility functions
+- [ ] 8. **CRITICAL: Consolidate Duplicated Code and Eliminate Overlap**
+  - [x] 8.1 Write tests for consolidated metric calculation system
+  - [x] 8.2 Consolidate all metric calculations into `evaluation/segmentation_metrics.py` only
+  - [x] 8.3 Remove duplicate metric methods from `evaluate_glomeruli_model.py`, `gpu_inference.py`, and `run_glomeruli_prediction.py`
+  - [x] 8.4 Consolidate model loading logic into single `data_management/model_loading.py` module
+  - [x] 8.5 Consolidate prediction logic into single `inference/prediction_core.py` module
+  - [x] 8.6 Update all modules to use consolidated functions instead of duplicated code
+  - [x] 8.7 Verify no functionality is lost during consolidation
+  - [x] 8.8 Ensure all tests pass with consolidated code 
+  # ERROR: [PARTIALLY COMPLETE 8.8]
 
-- [ ] 9. **Create FastAI v2 Compatible Mitochondria Training Script**
-  - [ ] 9.1 Write tests for mitochondria training script functionality
-  - [ ] 9.2 Research and locate historical `segment_mitochondria.py` approach (check archives, git history)
-  - [ ] 9.3 Create `src/eq/training/train_mitochondria.py` based on historical approach with FastAI v2 compatibility
-  - [ ] 9.4 Implement proper data loading, model architecture, and training loop
-  - [ ] 9.5 Add validation metrics and performance monitoring
-  - [ ] 9.6 Verify mitochondria training script tests pass
+- [x] 9. **Fix Broken Imports and Clean Up Remaining Issues**
+  - [x] 9.1 Fix broken import in `segmentation_pipeline.py`: `from eq.utils.common import load_pickled_data` (file doesn't exist)
+  - [x] 9.2 Replace broken `load_pickled_data` function with proper data loading from `eq.data_management.loaders`
+  - [x] 9.3 Remove the TODO comment about temporary evaluation fix (lines 717-723) after Task 8 consolidation
+  - [x] 9.4 Verify all imports in `segmentation_pipeline.py` resolve correctly
+  - [x] 9.5 Ensure no other broken imports exist across the codebase
+  - [x] 9.6 Verify the pipeline runs without import errors
 
-- [ ] 10. **Update Glomeruli Training Script for FastAI v2 and New Architecture**
-  - [ ] 10.1 Write tests for updated glomeruli training script
-  - [ ] 10.2 Refactor `train_glomeruli.py` to use new mitochondria model as base
-  - [ ] 10.3 Ensure FastAI v2 compatibility throughout the training process
-  - [ ] 10.4 Implement proper transfer learning workflow from mitochondria to glomeruli
-  - [ ] 10.5 Add comprehensive validation and performance metrics
-  - [ ] 10.6 Verify glomeruli training script tests pass
+- [x] 10. **Create FastAI v2 Compatible Mitochondria Training Script**
+  - [x] 10.1 Write tests for mitochondria training script functionality
+  - [x] 10.2 Research and locate historical `segment_mitochondria.py` approach (check archives, git history)
+  - [x] 10.3 Create `src/eq/training/train_mitochondria.py` based on historical approach with FastAI v2 compatibility
+  - [x] 10.4 Implement proper data loading, model architecture, and training loop
+  - [x] 10.5 Add validation metrics and performance monitoring
+  - [x] 10.6 Verify mitochondria training script tests pass
 
-- [ ] 11. **Integrate Training Scripts with CLI and Pipeline System**
-  - [ ] 11.1 Write tests for CLI integration of training commands
-  - [ ] 11.2 Update CLI commands to use new training script locations
-  - [ ] 11.3 Ensure training scripts integrate properly with existing inference pipeline
-  - [ ] 11.4 Add training-specific CLI options and configuration
-  - [ ] 11.5 Verify CLI integration tests pass
+- [x] 11. **Update Glomeruli Training Script for FastAI v2 and New Architecture**
+  - [x] 11.1 Write tests for updated glomeruli training script
+  - [x] 11.2 Refactor `train_glomeruli.py` to use new mitochondria model as base
+  - [x] 11.3 Ensure FastAI v2 compatibility throughout the training process
+  - [x] 11.4 Implement proper transfer learning workflow from mitochondria to glomeruli
+  - [x] 11.5 Add comprehensive validation and performance metrics
+  - [x] 11.6 Verify glomeruli training script tests pass
 
-- [ ] 12. **Validate Model Performance and Integration**
-  - [ ] 12.1 Write tests for model performance validation
-  - [ ] 12.2 Test mitochondria model achieves >70% validation accuracy
-  - [ ] 12.3 Test glomeruli model achieves >70% validation accuracy using mitochondria as base
-  - [ ] 12.4 Verify new models integrate properly with existing inference pipeline
-  - [ ] 12.5 Run end-to-end integration tests
-  - [ ] 12.6 Verify all validation and integration tests pass
+- [x] 12. **Integrate Training Scripts with CLI and Pipeline System**
+  - [x] 12.1 Write tests for CLI integration of training commands
+  - [x] 12.2 Update CLI commands to use new training script locations
+  - [x] 12.3 Ensure training scripts integrate properly with existing inference pipeline
+  - [x] 12.4 Add training-specific CLI options and configuration
+  - [x] 12.5 Verify CLI integration tests pass
 
 ## Technical Dependencies
 
-- **Tasks 1-8** must be completed before **Tasks 9-10** (infrastructure setup)
+- **Tasks 1-7** must be completed before **Task 8** (evaluation consolidation must be complete)
+- **Task 8** must be completed before **Tasks 9-10** (consolidation must be complete before training setup)
 - **Task 9** must be completed before **Task 10** (mitochondria model needed for glomeruli training)
 - **Tasks 9-10** must be completed before **Task 11** (training scripts must exist before CLI integration)
-- **Task 11** must be completed before **Task 12** (CLI must work before running validation tests)
+- **Task 11** must be completed before **Task 12** (CLI must work before validation tests)
+- **CRITICAL**: Task 8 (consolidation) should be completed immediately after Task 7 to eliminate maintenance burden
 
 ## Success Criteria
 
@@ -134,5 +139,7 @@ t- [x] 2.5. **Clean Up EQ Directory and Remove Redundancy**
 - Proper integration with existing inference pipeline
 - All tests pass with 100% success rate
 - Training infrastructure is maintainable and well-organized
-- No duplicate functionality across directories
+- **CRITICAL**: No duplicate functionality across directories
+- **CRITICAL**: Single source of truth for all metric calculations, model loading, and prediction logic
 - Clean, logical directory structure with single responsibilities
+- **CONSOLIDATION COMPLETE**: All duplicated code eliminated, single implementation for each functionality

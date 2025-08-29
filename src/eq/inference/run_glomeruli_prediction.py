@@ -132,7 +132,8 @@ def run_glomeruli_prediction(config_path: str = "configs/glomeruli_finetuning_co
     logger.info(f"🧠 Loading backup model: {backup_model_path}")
     
     try:
-        learn = load_learner(backup_model_path)
+        from eq.data_management.model_loading import load_model_safely
+        learn = load_model_safely(backup_model_path, model_type="glomeruli")
         logger.info("✅ Successfully loaded backup glomeruli model")
         model = learn
     except Exception as e:
@@ -153,53 +154,37 @@ def run_glomeruli_prediction(config_path: str = "configs/glomeruli_finetuning_co
         img = val_images[i]
         true_mask = val_masks[i]
         
-        # Ensure image is 3-channel for prediction
-        if img.ndim == 3 and img.shape[-1] == 1:
-            img_3ch = np.repeat(img, 3, axis=-1)
-        else:
-            img_3ch = img
+        # Use consolidated prediction core for image preparation and prediction
+        from eq.inference.prediction_core import create_prediction_core
+        core = create_prediction_core(224)  # Standard size for glomeruli models
         
-        # Convert to PIL for prediction
-        img_pil = Image.fromarray((img_3ch * 255).astype(np.uint8))
+        # Prepare image for prediction
+        img_pil = core.prepare_image_for_display(img)
         
         # Get prediction
         pred_result = learn.predict(img_pil)
         
-        # Extract prediction tensor
-        if isinstance(pred_result, tuple) and len(pred_result) >= 2:
-            pred_tensor = pred_result[1]
-        else:
-            pred_tensor = pred_result
+        # Extract prediction tensor using consolidated method
+        pred_tensor = core.extract_prediction_from_result(pred_result)
         
-        # Convert to numpy
-        if hasattr(pred_tensor, 'numpy'):
-            pred_mask = pred_tensor.numpy()
-        elif hasattr(pred_tensor, 'cpu'):
-            pred_mask = pred_tensor.cpu().numpy()
-        else:
-            pred_mask = np.asarray(pred_tensor)
+        # Convert to numpy using consolidated method
+        pred_mask = core.convert_tensor_to_numpy(pred_tensor)
         
         # Resize prediction to match ground truth size if needed
-        from scipy.ndimage import zoom
         if pred_mask.shape != true_mask.shape:
-            if len(true_mask.shape) == 3 and len(pred_mask.shape) == 2:
-                pred_mask = pred_mask[..., None]
-            
-            if pred_mask.shape != true_mask.shape:
-                scale_factors = [true_mask.shape[j] / pred_mask.shape[j] for j in range(len(true_mask.shape))]
-                pred_mask = zoom(pred_mask, scale_factors, order=1)
+            pred_mask = core.resize_prediction_to_match(pred_mask, true_mask.shape)
         
-        # Calculate metrics
+        # Calculate metrics using consolidated functions
         true_binary = (np.squeeze(true_mask) > 0.5).astype(np.float32)
         pred_binary = (pred_mask > 0.5).astype(np.float32)
         
-        # Calculate intersection and union
-        intersection = float(np.sum(true_binary * pred_binary))
-        union = float(np.sum(true_binary) + np.sum(pred_binary) - intersection)
+        # Use consolidated metric functions
+        from eq.evaluation.segmentation_metrics import dice_coefficient, iou_score
         
-        dice = (2.0 * intersection) / (np.sum(true_binary) + np.sum(pred_binary) + 1e-7)
-        iou = intersection / (union + 1e-7)
-        accuracy = float(np.sum(true_binary == pred_binary)) / true_binary.size
+        dice = dice_coefficient(pred_binary, true_binary)
+        iou = iou_score(pred_binary, true_binary)
+        from eq.evaluation.segmentation_metrics import pixel_accuracy
+        accuracy = pixel_accuracy(pred_binary, true_binary)
         
         total_dice += dice
         total_iou += iou
