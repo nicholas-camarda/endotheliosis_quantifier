@@ -3,7 +3,6 @@
 
 from fastai.vision.all import *
 from eq.data_management.datablock_loader import build_segmentation_dls
-from fastai.losses import BCEWithLogitsLossFlat
 from eq.core.constants import DEFAULT_IMAGE_SIZE, DEFAULT_BATCH_SIZE, DEFAULT_EPOCHS, DEFAULT_LEARNING_RATE
 from pathlib import Path
 
@@ -26,11 +25,9 @@ def main():
     
     print(f"✅ Data loaded: {len(dls.train_ds)} train, {len(dls.valid_ds)} val samples")
     
-    # Create learner
-    learn = unet_learner(dls, resnet34, n_out=1, metrics=Dice)
-    
-    # Set the correct loss function for binary segmentation
-    learn.loss_func = BCEWithLogitsLossFlat()
+    # Create learner - use FastAI v2 best practices for binary segmentation
+    learn = unet_learner(dls, resnet34, n_out=2, metrics=Dice)
+    # FastAI automatically sets CrossEntropyLossFlat for n_out=2
     
     print("🏗️  U-Net model created")
     

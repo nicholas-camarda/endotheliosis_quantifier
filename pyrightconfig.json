@@ -1,8 +1,8 @@
 {
   "exclude": [
     "models",
-    "raw_data",
-    "derived_data", 
+    "data/raw_data",
+    "data/derived_data", 
     "output",
     "logs",
     "backups",

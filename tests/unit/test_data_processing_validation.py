@@ -31,7 +31,7 @@ from eq.processing.preprocessing import (
 from eq.processing.image_mask_preprocessing import (
     patchify_dataset,
 )
-from eq.data_management.data_loader import SegmentationDataLoader, DataConfig
+from eq.data_management.datablock_loader import build_segmentation_dls, build_segmentation_datablock
 
 
 class TestDataProcessingComponents:
@@ -219,8 +219,8 @@ class TestDataProcessingComponents:
         print(f"\nTesting data loader initialization...")
         
         try:
-            config = DataConfig()
-            loader = SegmentationDataLoader(config)
+            config = build_segmentation_datablock()
+            loader = build_segmentation_dls(data_root="data/raw_data/preeclampsia_project/data", bs=4, num_workers=0)
             
             assert loader is not None, "Data loader should be created"
             assert loader.config is not None, "Config should be accessible"
@@ -283,7 +283,7 @@ class TestRealDataValidation:
         print(f"\nTesting real data availability...")
         
         # Check if project data exists
-        project_data_dir = Path("raw_data/preeclampsia_project/data")
+        project_data_dir = Path("data/raw_data/preeclampsia_project/data")
         assert project_data_dir.exists(), f"Project data directory should exist: {project_data_dir}"
         
         # Check for images (recursively search subdirectories)
@@ -310,7 +310,7 @@ class TestRealDataValidation:
         """Test loading actual project data."""
         print(f"\nTesting real data loading...")
         
-        project_data_dir = Path("raw_data/preeclampsia_project/data")
+        project_data_dir = Path("data/raw_data/preeclampsia_project/data")
         
         # Try to load a few real images
         images_dir = project_data_dir / "images"
@@ -333,7 +333,7 @@ class TestRealDataValidation:
         """Test patching with real project data."""
         print(f"\nTesting real data patching...")
         
-        project_data_dir = Path("raw_data/preeclampsia_project/data")
+        project_data_dir = Path("data/raw_data/preeclampsia_project/data")
         images_dir = project_data_dir / "images"
         
         if images_dir.exists():

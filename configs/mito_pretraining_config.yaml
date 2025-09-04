@@ -27,14 +27,14 @@ data:
   patches:
     size: 256  # U-Net input size - modern standard
     overlap: 0.1  # 10% overlap between patches
-    output_dir: "derived_data/mitochondria_data/training/image_patches"
-    mask_output_dir: "derived_data/mitochondria_data/training/mask_patches"
+    output_dir: "data/derived_data/mitochondria_data/training/image_patches"
+    mask_output_dir: "data/derived_data/mitochondria_data/training/mask_patches"
   
   # Step 5: Data loading for U-Net training
   processed:
-    train_dir: "derived_data/mitochondria_data/training/image_patches"
-    train_mask_dir: "derived_data/mitochondria_data/training/mask_patches"
-    cache_dir: "derived_data/mitochondria_data/cache"
+    train_dir: "data/derived_data/mitochondria_data/training/image_patches"
+    train_mask_dir: "data/derived_data/mitochondria_data/training/mask_patches"
+    cache_dir: "data/derived_data/mitochondria_data/cache"
     train_ratio: 0.8
     val_ratio: 0.2
     random_seed: 42

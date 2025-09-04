@@ -14,24 +14,24 @@ pretrained_model:
 # Data Pipeline Configuration
 data:
   # Raw data paths (project-based organization)
-  raw_images: "raw_data/preeclampsia_project/data"
-  raw_annotations: "raw_data/preeclampsia_project/annotations/annotations.json"
-  raw_metadata: "raw_data/preeclampsia_project/subject_metadata.xlsx"
+  raw_images: "data/raw_data/preeclampsia_project/data"
+  raw_annotations: "data/raw_data/preeclampsia_project/annotations/annotations.json"
+  raw_metadata: "data/raw_data/preeclampsia_project/subject_metadata.xlsx"
   
   # Processed data paths
-  metadata: "derived_data/glomeruli_data/metadata/standardized_metadata.xlsx"
+  metadata: "data/derived_data/glomeruli_data/metadata/standardized_metadata.xlsx"
   
   # Label Studio annotations
   annotations:
-    json_file: "raw_data/preeclampsia_project/annotations/annotations.json"  # Path to Label Studio export - will be copied to derived_data/cache
+    json_file: "data/raw_data/preeclampsia_project/annotations/annotations.json"  # Path to Label Studio export - will be copied to data/derived_data/cache
     processor: "load_annotations_from_json"  # Function from data_loader.py
     
   # Processed data structure
   processed:
-    train_dir: "derived_data/glomeruli_data/training/image_patches"
-    train_mask_dir: "derived_data/glomeruli_data/training/mask_patches"
-    test_dir: "derived_data/glomeruli_data/testing/image_patches"
-    cache_dir: "derived_data/glomeruli_data/cache"
+    train_dir: "data/derived_data/glomeruli_data/training/image_patches"
+    train_mask_dir: "data/derived_data/glomeruli_data/training/mask_patches"
+    test_dir: "data/derived_data/glomeruli_data/testing/image_patches"
+    cache_dir: "data/derived_data/glomeruli_data/cache"
     
   # Image preprocessing
   preprocessing:
