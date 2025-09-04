@@ -202,14 +202,14 @@ learn = unet_learner(
 
 2. **Stage 2 - Glomeruli Fine-tuning**:
    - Transfer mitochondria model to glomeruli task
-   - **Key Innovation**: Leverage learned substructure features for glomerular segmentation
+   - **Approach**: Leverage learned substructure features for glomerular segmentation
    - Adapt features to light microscopy domain
    - Fine-tune for glomerular structure recognition using learned line and boundary features
 
-**Why This Innovation Works**:
+**Why This Approach Works**:
 - **Substructure Learning**: Mitochondria training teaches the model to recognize cellular boundaries, membranes, and linear structures
 - **Feature Transfer**: These learned features are directly applicable to glomerular structures
-- **High Segmentation Accuracy**: Transfer learning achieves superior performance compared to training from scratch
+- **High Segmentation Accuracy**: Transfer learning achieves better performance compared to training from scratch
 - **Domain Adaptation**: EM → LM knowledge transfer with preserved structural understanding
 - **Reduced Data Requirements**: Less glomeruli data needed due to pretrained features
 
@@ -218,7 +218,7 @@ learn = unet_learner(
 - **Faster Convergence**: Pretrained features accelerate training
 - **Better Generalization**: Robust feature representations
 - **Reduced Data Requirements**: Less glomeruli data needed
-- **Superior Accuracy**: High segmentation accuracy through learned substructure features
+- **High Accuracy**: High segmentation accuracy through learned substructure features
 
 ---
 
@@ -286,7 +286,7 @@ While this program was not used in the paper, the scoring standard is based on t
 **DataBlock Approach**: Modern FastAI v2 data loading
 
 ```python
-# Optimal transform pipeline organization
+# Transform pipeline organization
 item_tfms = [
     Resize(DEFAULT_IMAGE_SIZE),
     *aug_transforms(
@@ -312,7 +312,7 @@ batch_tfms = [
 - **Epochs**: 50 (sufficient for convergence)
 - **Batch Size**: 16 (balanced memory/performance)
 - **Learning Rate**: 1e-3 (standard for transfer learning)
-- **Image Size**: 256×256 (optimal for medical imaging)
+- **Image Size**: 256×256 (suitable for medical imaging)
 
 **Glomeruli Training**:
 - **Epochs**: 30 (fewer needed with transfer learning)
@@ -441,7 +441,7 @@ def get_y(x):
 - ✅ **No Runtime Failures**: Data filtering prevents errors
 - ✅ **Clean Visualization**: No matplotlib clipping warnings
 - ✅ **Excellent Dice Scores**: >0.9 achieved in minimal epochs
-- ✅ **Fast Convergence**: Optimal training setup enables rapid learning
+- ✅ **Fast Convergence**: Training setup enables rapid learning
 - ✅ **Robust Augmentation**: All transforms working
 - ✅ **Proper Validation**: Images without masks filtered out
 - ✅ **Full Logging**: Complete visibility into data quality
@@ -462,7 +462,7 @@ def get_y(x):
 **Why This Works**:
 - Mitochondria provide rich training data for learning biological substructures
 - Learned features (boundaries, lines, textures) are directly applicable to glomerular structures
-- Transfer learning achieves superior performance compared to training from scratch
+- Transfer learning achieves better performance compared to training from scratch
 - Domain adaptation from EM to LM while preserving structural understanding
 
 **Impact**: Achieved high segmentation accuracy with reduced data requirements
@@ -485,7 +485,7 @@ def get_y(x):
 
 The Endotheliosis Quantifier represents a comprehensive solution for automated endotheliosis assessment in preeclampsia. The system successfully combines:
 
-- **Innovative Transfer Learning**: Strategic mitochondria-to-glomeruli training for superior segmentation accuracy
+- **Transfer Learning**: Strategic mitochondria-to-glomeruli training for high segmentation accuracy
 - **Advanced Deep Learning**: U-Net with ResNet encoders for robust segmentation
 - **Substructure Learning**: Mitochondria training teaches cellular boundaries, membranes, and linear features
 - **Domain Adaptation**: EM → LM knowledge transfer with preserved structural understanding
@@ -493,7 +493,7 @@ The Endotheliosis Quantifier represents a comprehensive solution for automated e
 - **Robust Infrastructure**: Comprehensive error handling and validation
 - **Quantitative Analysis**: Objective, standardized assessment protocols
 
-**Key Innovation**: The mitochondria-to-glomeruli transfer learning approach represents a novel strategy for medical image segmentation, leveraging the rich substructure features learned from mitochondria training to achieve high accuracy in glomeruli segmentation.
+**Technical Contribution**: The mitochondria-to-glomeruli transfer learning approach represents a novel strategy for medical image segmentation, leveraging the rich substructure features learned from mitochondria training to achieve high accuracy in glomeruli segmentation.
 
 The project demonstrates the potential of deep learning for medical image analysis, providing a foundation for automated, quantitative assessment of endotheliosis severity in preeclampsia research and clinical practice.
 
