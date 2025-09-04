@@ -13,7 +13,7 @@ from pathlib import Path
 import tifffile
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# logging configured centrally via eq.utils.logger.setup_logging
 logger = logging.getLogger(__name__)
 
 def extract_tif_stack(tif_path: Path, output_dir: Path, prefix: str):
@@ -63,7 +63,7 @@ def extract_tif_stack(tif_path: Path, output_dir: Path, prefix: str):
     logger.info(f"✅ Extracted {num_images} images to {output_dir}")
     logger.info(f"   ⏱️  Time: {elapsed_time:.1f}s, Rate: {num_images/elapsed_time:.1f} img/s")
 
-def organize_lucchi_dataset(input_dir: str, output_dir: str = "data/mitochondria_data"):
+def organize_lucchi_dataset(input_dir: str, output_dir: str = "derived_data/mito"):
     """
     Organize the Lucchi dataset into the pipeline's expected structure.
     
@@ -202,7 +202,7 @@ To recreate this structure:
 def main():
     parser = argparse.ArgumentParser(description="Organize Lucchi mitochondria dataset")
     parser.add_argument("--input-dir", required=True, help="Input directory containing img/ and label/ folders")
-    parser.add_argument("--output-dir", default="data/mitochondria_data", help="Output directory (default: data/mitochondria_data)")
+    parser.add_argument("--output-dir", default="derived_data/mito", help="Output directory (default: derived_data/mito)")
     
     args = parser.parse_args()
     

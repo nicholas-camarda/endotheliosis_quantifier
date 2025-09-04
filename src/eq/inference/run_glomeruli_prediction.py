@@ -14,9 +14,11 @@ import numpy as np
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
 
-from fastai.vision.all import *
+from fastai.vision.all import PILMask  # type: ignore
 
 from eq.utils.logger import get_logger
+from eq.utils.config_manager import ConfigManager
+from eq.core.constants import DEFAULT_MASK_THRESHOLD
 
 logger = get_logger("eq.glomeruli_prediction")
 
@@ -35,7 +37,7 @@ def get_glom_mask_file(o, p2c):
     msk = np.array(Image.open(o))
 
     # Apply threshold
-    thresh = 127
+    thresh = DEFAULT_MASK_THRESHOLD
     msk[msk <= thresh] = 0
     msk[msk > thresh] = 1
 
@@ -55,12 +57,12 @@ def get_all_paths(directory_path):
             paths.append(path)
     return paths
 
-def get_glom_mask_file_current(image_file, p2c, thresh=127):
+def get_glom_mask_file_current(image_file, p2c, thresh=DEFAULT_MASK_THRESHOLD):
     """Get glomeruli mask file for current data structure."""
-    # Current structure: image_patches/T19_Image0_10_10.jpg -> mask_patches/T19_Image0_10_10_mask.jpg
+    # Current structure: image_patches/T19_Image0_10_10.jpg -> mask_patches/T19_Image0_10_10_mask.png
     base_path = image_file.parent.parent
     mask_dir = base_path / "mask_patches"
-    mask_name = image_file.stem + "_mask" + image_file.suffix
+    mask_name = image_file.stem + "_mask.png"
     mask_path = mask_dir / mask_name
     
     # Convert to an array (mask)
@@ -83,7 +85,7 @@ def run_glomeruli_prediction(config_path: str = "configs/glomeruli_finetuning_co
     """Run glomeruli prediction using fresh data loading approach."""
     logger.info("🚀 Starting glomeruli prediction with fresh data approach")
     
-    # Load configuration
+    # Load configuration file (optional overrides)
     import yaml
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
@@ -104,13 +106,11 @@ def run_glomeruli_prediction(config_path: str = "configs/glomeruli_finetuning_co
         os.environ['CUDA_VISIBLE_DEVICES'] = ''
         logger.info("✅ Forced CPU usage")
     
-    # Get paths from configuration
-    data_config = config.get('data', {})
-    processed_config = data_config.get('processed', {})
-    
-    train_image_path = Path(processed_config.get('train_dir'))
-    train_mask_path = Path(processed_config.get('train_mask_dir'))
-    
+    # Centralized paths via ConfigManager
+    cfg = ConfigManager()
+    derived_root = Path(cfg.global_config.output_path)
+    train_image_path = derived_root / 'glomeruli_data/training/image_patches'
+    train_mask_path = derived_root / 'glomeruli_data/training/mask_patches'
     logger.info(f"📁 Image path: {train_image_path}")
     logger.info(f"📁 Mask path: {train_mask_path}")
     
@@ -118,7 +118,8 @@ def run_glomeruli_prediction(config_path: str = "configs/glomeruli_finetuning_co
     logger.info("📊 Loading glomeruli data...")
     from eq.data_management.loaders import load_glomeruli_data
     
-    data = load_glomeruli_data(config)
+    # Expect processed paths from config manager; pass as strings
+    data = load_glomeruli_data(str(train_image_path.parent), cache_dir=str(derived_root / 'cache'))
     
     # Get validation data
     val_images = data['val']['images']
@@ -127,20 +128,22 @@ def run_glomeruli_prediction(config_path: str = "configs/glomeruli_finetuning_co
     logger.info(f"✅ Validation data loaded: {val_images.shape}")
     logger.info(f"✅ Validation masks loaded: {val_masks.shape}")
     
-    # Load the backup model
-    backup_model_path = "backups/glomerulus_segmentation_model-dynamic_unet-e50_b16_s84.pkl"
-    logger.info(f"🧠 Loading backup model: {backup_model_path}")
+    # Load model path from config; fallback to historical backup path
+    model_path = Path(cfg.global_config.model_path) / 'segmentation/glomeruli/glomerulus_segmentation_model-dynamic_unet-e50_b16_s84.pkl'
+    if not model_path.exists():
+        model_path = Path('backups/glomerulus_segmentation_model-dynamic_unet-e50_b16_s84.pkl')
+    logger.info(f"🧠 Loading model: {model_path}")
     
     try:
         from eq.data_management.model_loading import load_model_safely
-        learn = load_model_safely(backup_model_path, model_type="glomeruli")
+        learn = load_model_safely(str(model_path), model_type="glomeruli")
         logger.info("✅ Successfully loaded backup glomeruli model")
         model = learn
     except Exception as e:
         logger.error(f"❌ Failed to load model: {e}")
         return
     
-    # Test predictions on validation data
+    # Test predictions on validation data 
     logger.info("🔍 Testing predictions on validation data...")
     
     total_dice = 0

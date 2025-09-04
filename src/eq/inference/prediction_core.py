@@ -15,13 +15,14 @@ Features:
 
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
 import torch
 from PIL import Image
 
 from eq.utils.logger import get_logger
+from eq.core.constants import DEFAULT_IMAGE_SIZE
 
 
 class PredictionCore:
@@ -31,8 +32,8 @@ class PredictionCore:
     This class consolidates all the duplicate prediction logic that was
     scattered across different modules.
     """
-    
-    def __init__(self, expected_size: int = 224):
+
+    def __init__(self, expected_size: int = DEFAULT_IMAGE_SIZE):
         """
         Initialize prediction core.
         
@@ -67,7 +68,10 @@ class PredictionCore:
             raise ValueError(f"Expected PIL Image or numpy array, got {type(image)}")
         
         # Resize to expected input size
-        img_resized = image.resize((self.expected_size, self.expected_size), Image.BILINEAR)
+        img_resized = image.resize(
+            (self.expected_size, self.expected_size),
+            Image.Resampling.BILINEAR,
+        )
         
         # Convert to tensor and normalize
         img_tensor = torch.from_numpy(np.array(img_resized)).float() / 255.0
@@ -123,22 +127,26 @@ class PredictionCore:
             Tuple of (raw_output, probabilities, binary_prediction)
         """
         # Use FastAI's predict method
-        pred_result = learn.predict(image)
+        pred_result: Any = learn.predict(image)
         
         # Extract prediction tensor from fastai tuple
         if isinstance(pred_result, tuple) and len(pred_result) >= 2:
-            pred_tensor = pred_result[1]
+            pred_tensor_any: Any = pred_result[1]
         else:
-            pred_tensor = pred_result
+            pred_tensor_any = pred_result
         
         # Convert to tensor if needed
-        if not isinstance(pred_tensor, torch.Tensor):
-            if hasattr(pred_tensor, 'numpy'):
-                pred_tensor = torch.from_numpy(pred_tensor.numpy())
-            elif hasattr(pred_tensor, 'cpu'):
-                pred_tensor = pred_tensor.cpu()
-            else:
+        pred_tensor: torch.Tensor
+        if isinstance(pred_tensor_any, torch.Tensor):
+            pred_tensor = pred_tensor_any
+        elif hasattr(pred_tensor_any, 'cpu'):
+            pred_tensor = cast(Any, pred_tensor_any).cpu()
+            if not isinstance(pred_tensor, torch.Tensor):
                 pred_tensor = torch.from_numpy(np.asarray(pred_tensor))
+        elif hasattr(pred_tensor_any, 'numpy'):
+            pred_tensor = torch.from_numpy(cast(Any, pred_tensor_any).numpy())
+        else:
+            pred_tensor = torch.from_numpy(np.asarray(pred_tensor_any))
         
         # Apply threshold to get binary prediction
         pred_binary = (pred_tensor > threshold).float()
@@ -146,7 +154,7 @@ class PredictionCore:
         # For compatibility, return similar structure
         return pred_tensor, pred_tensor, pred_binary
     
-    def extract_prediction_from_result(self, pred_result: Union[torch.Tensor, Tuple, np.ndarray]) -> torch.Tensor:
+    def extract_prediction_from_result(self, pred_result: Union[torch.Tensor, Tuple[Any, ...], np.ndarray]) -> torch.Tensor:
         """
         Extract prediction tensor from various result formats.
         
@@ -161,7 +169,7 @@ class PredictionCore:
         
         elif isinstance(pred_result, tuple) and len(pred_result) >= 2:
             # FastAI format: (prediction, target, loss)
-            return pred_result[1]
+            return self._to_tensor(pred_result[1])
         
         elif isinstance(pred_result, np.ndarray):
             return torch.from_numpy(pred_result)
@@ -169,14 +177,24 @@ class PredictionCore:
         else:
             # Try to convert
             try:
-                if hasattr(pred_result, 'numpy'):
-                    return torch.from_numpy(pred_result.numpy())
-                elif hasattr(pred_result, 'cpu'):
-                    return pred_result.cpu()
-                else:
-                    return torch.from_numpy(np.asarray(pred_result))
+                return self._to_tensor(pred_result)  # type: ignore[arg-type]
             except Exception as e:
                 raise ValueError(f"Cannot extract prediction from {type(pred_result)}: {e}")
+
+    def _to_tensor(self, obj: Any) -> torch.Tensor:
+        """Best-effort conversion to torch.Tensor."""
+        if isinstance(obj, torch.Tensor):
+            return obj
+        if hasattr(obj, 'cpu'):
+            maybe = cast(Any, obj).cpu()
+            if isinstance(maybe, torch.Tensor):
+                return maybe
+        if hasattr(obj, 'numpy'):
+            try:
+                return torch.from_numpy(cast(Any, obj).numpy())
+            except Exception:
+                pass
+        return torch.from_numpy(np.asarray(obj))
     
     def convert_tensor_to_numpy(self, tensor: torch.Tensor) -> np.ndarray:
         """
@@ -195,7 +213,7 @@ class PredictionCore:
         else:
             return np.asarray(tensor)
     
-    def resize_prediction_to_match(self, pred_mask: np.ndarray, target_shape: Tuple[int, ...]) -> np.ndarray:
+    def resize_prediction_to_match(self, pred_mask: np.ndarray, target_shape: Tuple[int, int]) -> np.ndarray:
         """
         Resize prediction mask to match target shape.
         
@@ -222,7 +240,9 @@ class PredictionCore:
             # Fallback to basic resize
             from PIL import Image
             pred_img = Image.fromarray(pred_mask)
-            target_img = pred_img.resize(target_shape[::-1], Image.NEAREST)  # PIL uses (W, H)
+            # Ensure size is a 2-tuple (width, height)
+            size_wh = (int(target_shape[1]), int(target_shape[0]))
+            target_img = pred_img.resize(size_wh, Image.Resampling.NEAREST)  # PIL uses (W, H)
             return np.array(target_img)
     
     def ensure_binary_mask(self, mask: np.ndarray, threshold: float = 0.5) -> np.ndarray:
@@ -261,7 +281,7 @@ class PredictionCore:
             raise ValueError(f"Unsupported image type: {type(image)}")
 
 
-def create_prediction_core(expected_size: int = 224) -> PredictionCore:
+def create_prediction_core(expected_size: int = DEFAULT_IMAGE_SIZE) -> PredictionCore:
     """
     Factory function to create a prediction core instance.
     
@@ -276,7 +296,7 @@ def create_prediction_core(expected_size: int = 224) -> PredictionCore:
 
 # Convenience functions for common operations
 def preprocess_image_for_prediction(image: Union[Image.Image, np.ndarray], 
-                                  expected_size: int = 224) -> torch.Tensor:
+                                  expected_size: int = DEFAULT_IMAGE_SIZE) -> torch.Tensor:
     """
     Convenience function to preprocess image for prediction.
     

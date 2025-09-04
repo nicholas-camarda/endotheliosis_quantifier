@@ -13,6 +13,7 @@ import numpy as np
 
 from eq.utils.logger import ProgressLogger, get_logger, log_function_call, setup_logging
 from eq.utils.mode_manager import EnvironmentMode, ModeManager
+from eq.core.constants import DEFAULT_MASK_THRESHOLD, DEFAULT_IMAGE_SIZE
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -30,39 +31,34 @@ except Exception:
 # AUTOMATIC ENVIRONMENT SETUP - runs at CLI import time
 def auto_setup_environment():
     """Automatically set up environment and hardware detection on CLI startup."""
-    print("🔧 Auto-setting up environment...")
-    
     try:
         # Lazy import to avoid hard dependency when just showing help
         from eq.utils.hardware_detection import get_hardware_capabilities
 
-        # Auto-detect hardware and set optimal mode
+        # Auto-detect hardware and set optimal mode (completely silent)
         hardware_capabilities = get_hardware_capabilities()
-        print(f"✅ Hardware detected: {hardware_capabilities.backend_type.value.upper()}")
-        print(f"   Platform: {hardware_capabilities.platform}")
-        print(f"   Memory: {hardware_capabilities.total_memory_gb:.1f}GB")
-        print(f"   Hardware Tier: {hardware_capabilities.hardware_tier.value.upper()}")
         
-        # Auto-select optimal mode based on hardware
+        # Temporarily suppress logging during auto-setup
+        import logging
+        original_level = logging.getLogger().level
+        logging.getLogger().setLevel(logging.ERROR)
+        
         mode_manager = ModeManager()
         suggested_mode = mode_manager.get_suggested_mode()
         mode_manager.set_mode(suggested_mode)
         
-        print(f"✅ Auto-selected mode: {suggested_mode.value.upper()}")
-        print(f"   Device: {mode_manager.get_device_recommendation()}")
+        # Restore logging level
+        logging.getLogger().setLevel(original_level)
         
         # Configure platform-specific settings
         if hardware_capabilities.platform == "Darwin":
             import os
             os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
-            print("🍎 Configured for Apple Silicon (MPS)")
         
-        print("✅ Environment setup complete!\n")
         return mode_manager
         
-    except Exception as e:
-        print(f"⚠️ Environment setup failed: {e}")
-        print("💡 Continuing with default settings...\n")
+    except Exception:
+        # Completely silent fallback
         return None
 
 
@@ -85,7 +81,7 @@ def n_glom_codes(mask_files):
     return sorted(list(codes))
 
 
-def get_glom_mask_file(image_file, p2c, thresh=127):
+def get_glom_mask_file(image_file, p2c, thresh=DEFAULT_MASK_THRESHOLD):
     """Get mask path for image file."""
     # this is the base path
     base_path = image_file.parent.parent.parent
@@ -180,9 +176,11 @@ def data_load_command(args):
     logger.info("🔄 Starting data loading and preprocessing pipeline...")
 
     # Lazy import heavy data utilities to avoid import-time side effects
-    # Updated to consolidated loaders under eq.data
-    from eq.data_management.loaders import get_scores_from_annotations, load_annotations_from_json
-    from eq.data_management.loaders import load_glomeruli_data as generate_final_dataset  # compatibility alias
+    # Note: These functions are not yet implemented in the consolidated architecture
+    # TODO: Implement these functions in the appropriate modules
+    logger.warning("⚠️  Data loading functions not yet implemented in consolidated architecture")
+    logger.warning("⚠️  Skipping data loading step")
+    return
 
     # Note: create_train_val_test_lists, organize_data_into_subdirs, and
     # generate_binary_masks were part of legacy features modules. The
@@ -213,12 +211,94 @@ def data_load_command(args):
     logger.info("🎉 Data loading pipeline completed successfully!")
 
 
-@log_function_call
+def process_data_command(args):
+    """Process raw data into derived_data."""
+    logger = get_logger("eq.process_data")
+    logger.info("🔄 Starting data processing pipeline...")
+
+    from pathlib import Path
+    import os
+    from datetime import datetime
+    from eq.processing.image_mask_preprocessing import patchify_dataset
+    from eq.core.constants import EXPECTED_INPUT_WIDTH, EXPECTED_INPUT_HEIGHT, EXPECTED_PATCHES_PER_IMAGE
+    
+    # Set up progress tracking
+    progress = ProgressLogger(logger, 4, "Data Processing Pipeline")
+    
+    # Validate input directory
+    input_path = Path(args.input_dir)
+    if not input_path.exists():
+        logger.error(f"❌ Input directory does not exist: {input_path}")
+        sys.exit(1)
+    
+    # Show expected processing info
+    logger.info(f"📏 Expected input image dimensions: {EXPECTED_INPUT_WIDTH}x{EXPECTED_INPUT_HEIGHT}")
+    logger.info(f"✂️  Creating {args.patch_size}x{args.patch_size} patches")
+    logger.info(f"📊 Expected patches per image: ~{EXPECTED_PATCHES_PER_IMAGE}")
+    
+    # Create output directory structure
+    output_path = Path(args.output_dir)
+    progress.step("Creating output directory structure")
+    
+    # Create the main derived_data structure
+    image_patches_dir = output_path / "image_patches"
+    mask_patches_dir = output_path / "mask_patches"
+    cache_dir = output_path / "cache"
+    
+    for dir_path in [image_patches_dir, mask_patches_dir, cache_dir]:
+        dir_path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"📁 Created directory: {dir_path}")
+    
+    # Single unified processing step
+    progress.step("Processing data (auto-detect masks and structure)")
+    counts = patchify_dataset(
+        input_root=str(input_path),
+        output_root=str(output_path),
+        patch_size=args.patch_size,
+    )
+    
+    # Count processed files (search recursively through subdirectories)
+    image_count = counts.get("images", 0)
+    mask_count = counts.get("masks", 0)
+    subjects_count = counts.get("subjects", 0)
+    
+    progress.step("Finalizing output")
+    
+    # Create metadata file
+    metadata = {
+        'input_directory': str(input_path),
+        'output_directory': str(output_path),
+        'patch_size': args.patch_size,
+        'overlap': args.overlap,
+        'has_masks': mask_count > 0,
+        'processed_at': datetime.now().isoformat(),
+        'statistics': {
+            'image_patches': image_count,
+            'mask_patches': mask_count,
+            'subjects_processed': subjects_count,
+            'total_files': image_count + mask_count
+        }
+    }
+    
+    import json
+    metadata_file = output_path / "processing_metadata.json"
+    with open(metadata_file, 'w') as f:
+        json.dump(metadata, f, indent=2, default=str)
+    
+    progress.complete("Data processing")
+    logger.info(f"🎉 Data processing completed successfully!")
+    logger.info(f"📊 Generated {image_count} image patches from {subjects_count} subjects")
+    if mask_count > 0:
+        logger.info(f"📊 Generated {mask_count} mask patches")
+    logger.info(f"📁 Output saved to: {output_path}")
+    logger.info(f"📄 Metadata saved to: {metadata_file}")
+
+
 def mode_command(args):
     """Inspect and manage environment mode selection."""
     logger = get_logger("eq.mode")
     logger.info("⚙️ Managing environment mode...")
-
+ 
     # Initialize manager (respects persisted config at ~/.eq/config.json)
     manager = ModeManager()
 
@@ -491,17 +571,23 @@ def seg_command(args):
     try:
         # Use the actual working pipeline for segmentation training with proper data paths
         from eq.pipeline.run_production_pipeline import run_pipeline
-        
-        run_pipeline(
-            epochs=args.epochs, 
-            run_type="development" if is_quick_test else "production", 
+
+        success = run_pipeline(
+            epochs=args.epochs,
+            run_type="development" if is_quick_test else "production",
             use_existing_models=False,  # Force training new models
             data_dir=data_dir,
             cache_dir=cache_dir
         )
-        
-        logger.info("✅ Segmentation training complete!")
-        
+
+        if success:
+            logger.info("✅ Segmentation training complete!")
+            print("🎉 Segmentation training completed successfully!")
+        else:
+            logger.error("❌ Segmentation training failed!")
+            print("❌ Segmentation training failed!")
+            sys.exit(1)
+
     except Exception as e:
         logger.error(f"❌ Segmentation training failed: {e}")
         print(f"❌ Segmentation training failed: {e}")
@@ -591,6 +677,10 @@ Examples:
     # Add global options
     parser.add_argument('--verbose', '-v', action='store_true', 
                        help='Enable verbose logging with more details')
+    parser.add_argument('--quiet', '-q', action='store_true', 
+                       help='Run in quiet mode (no logs except errors)')
+    parser.add_argument('--info', action='store_true',
+                       help='Show hardware info and environment setup')
     parser.add_argument('--log-file', type=str, 
                        help='Write logs to specified file')
     parser.add_argument('--mode', choices=['auto', 'development', 'production'], default='auto',
@@ -612,8 +702,19 @@ Examples:
     data_parser.add_argument('--test-data-dir', required=True, help='Test data directory')
     data_parser.add_argument('--cache-dir', required=True, help='Cache directory')
     data_parser.add_argument('--annotation-file', help='Annotation JSON file')
-    data_parser.add_argument('--image-size', type=int, default=256, help='Image size for processing')
+    data_parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Image size for processing')
     data_parser.set_defaults(func=data_load_command)
+
+    # Data processing command (NEW - direct processing to derived_data)
+    process_parser = subparsers.add_parser('process-data', help='Process raw data into derived_data with auto-detection')
+    process_parser.add_argument('--input-dir', required=True, help='Input directory with raw images (supports nested images/ and masks/ subdirs)')
+    process_parser.add_argument('--output-dir', default='derived_data', help='Output directory (default: derived_data)')
+    from eq.core.constants import DEFAULT_PATCH_SIZE, EXPECTED_PATCHES_PER_IMAGE
+    process_parser.add_argument('--patch-size', type=int, default=DEFAULT_PATCH_SIZE, help=f'Patch size for processing (default: {DEFAULT_PATCH_SIZE}, expected ~{EXPECTED_PATCHES_PER_IMAGE} patches per image)')
+    from eq.core.constants import DEFAULT_PATCH_OVERLAP
+    process_parser.add_argument('--overlap', type=float, default=DEFAULT_PATCH_OVERLAP, help=f'Overlap between patches (default: {DEFAULT_PATCH_OVERLAP})')
+    # auto-detect masks; no explicit flag needed
+    process_parser.set_defaults(func=process_data_command)
     
     # Training command
     train_parser = subparsers.add_parser('train-segmenter', help='Train segmentation model')
@@ -629,7 +730,7 @@ Examples:
     seg_parser = subparsers.add_parser('seg', help='Train segmentation model to find glomeruli')
     seg_parser.add_argument('--data-dir', required=True, help='Training data directory')
     seg_parser.add_argument('--annotation-file', help='Annotation JSON file')
-    seg_parser.add_argument('--image-size', type=int, default=256, help='Image size for processing')
+    seg_parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Image size for processing')
     seg_parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     seg_parser.add_argument('--epochs', type=int, default=50, help='Number of epochs')
     seg_parser.set_defaults(func=seg_command)
@@ -682,7 +783,7 @@ Examples:
     production_parser.add_argument('--test-data-dir', required=True, help='Path to test data directory')
     production_parser.add_argument('--annotation-file', help='Path to annotation file')
     production_parser.add_argument('--base-model-path', default='segmentation_model_dir', help='Path to base model directory')
-    production_parser.add_argument('--image-size', type=int, default=256, help='Image size for processing')
+    production_parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Image size for processing')
     production_parser.add_argument('--batch-size', type=int, default=8, help='Batch size for processing')
     production_parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
     production_parser.add_argument('--segmentation-model', help='Segmentation model to use (glomeruli, mitochondria, etc.)')
@@ -700,32 +801,62 @@ Examples:
     except Exception:
         session_mode = EnvironmentMode.AUTO
     
-    mode_manager = ModeManager(mode=session_mode)
+    # Use the global mode manager from auto-setup to avoid duplicates
+    if _auto_mode_manager:
+        mode_manager = _auto_mode_manager
+        # Only change mode if explicitly requested and different
+        if session_mode != _auto_mode_manager.current_mode:
+            mode_manager.set_mode(session_mode)
+    else:
+        # Fallback: only create new one if auto-setup failed
+        mode_manager = ModeManager(mode=session_mode)
+    
+    # Show hardware info if requested
+    if args.info:
+        from eq.utils.hardware_detection import get_hardware_capabilities
+        hardware_capabilities = get_hardware_capabilities()
+        if hardware_capabilities and hardware_capabilities.backend_type:
+            print("🔧 Hardware Info:")
+            print(f"   Platform: {hardware_capabilities.platform}")
+            print(f"   Backend: {hardware_capabilities.backend_type.value.upper()}")
+            print(f"   Memory: {hardware_capabilities.total_memory_gb:.1f}GB")
+            print(f"   Hardware Tier: {hardware_capabilities.hardware_tier.value.upper()}")
+            print(f"   Mode: {mode_manager.current_mode.value.upper()}")
+            print()
+        else:
+            print("⚠️ Hardware detection unavailable")
+            print()
     
     # Set up logging
     log_file = Path(args.log_file) if args.log_file else None
+    log_level = logging.DEBUG if args.verbose else (logging.WARNING if args.quiet else logging.INFO)
+    
     logger = setup_logging(
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        level=log_level,
         log_file=log_file,
         verbose=args.verbose
     )
     
-    logger.info(f"🔧 Starting eq command: {args.command}")
-    logger.info(f"📋 Arguments: {vars(args)}")
-    logger.info(f"🔧 Mode: {mode_manager.current_mode.value}")
+    # Only log essential info unless verbose mode
+    if not args.quiet:
+        logger.info(f"Starting eq command: {args.command}")
+        if args.verbose:
+            logger.debug(f"Arguments: {vars(args)}")
+            logger.debug(f"Mode: {mode_manager.current_mode.value}")
     
     try:
         args.func(args)
-        logger.info("🎉 Command completed successfully!")
+        if not args.quiet:
+            logger.info("Command completed successfully!")
     except Exception as e:
-        logger.error(f"❌ Command failed: {str(e)}")
+        logger.error(f"Command failed: {str(e)}")
         
         # Handle mode-specific error recovery
         _handle_mode_specific_errors(e, mode_manager, args.command)
         
         if args.verbose:
             import traceback
-            logger.error(f"📋 Full traceback:\n{traceback.format_exc()}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
         sys.exit(1)
 
 

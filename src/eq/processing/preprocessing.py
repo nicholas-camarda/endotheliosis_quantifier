@@ -8,7 +8,7 @@ Uses standard, principled approaches for binary glomeruli segmentation.
 """
 
 from pathlib import Path
-from typing import Tuple, Union
+from typing import Tuple, Union, Optional, Any
 
 import numpy as np
 
@@ -23,8 +23,8 @@ except ImportError:
 from eq.core.constants import DEFAULT_IMAGE_SIZE, LARGE_IMAGE_SIZE
 
 
-def resize_image_standard(image: Union[str, Path, object], 
-                         target_size: int = DEFAULT_IMAGE_SIZE) -> object:
+def resize_image_standard(image: Union[str, Path, Any], 
+                         target_size: int = DEFAULT_IMAGE_SIZE) -> Any:
     """
     Resize image using standard approach (224px).
     
@@ -36,7 +36,7 @@ def resize_image_standard(image: Union[str, Path, object],
         target_size: Target size (default: 224px for standard compatibility)
         
     Returns:
-        Resized image object
+        Resized PILImage object with .size attribute
     """
     if PILImage is None:
         raise ImportError("FastAI not available. Please install fastai to use this function.")
@@ -47,15 +47,19 @@ def resize_image_standard(image: Union[str, Path, object],
     elif hasattr(image, 'resize'):
         img = image
     else:
-        img = PILImage.create(image)
+        # Convert any other object to PILImage if possible
+        try:
+            img = PILImage.create(image)
+        except Exception as e:
+            raise ValueError(f"Cannot convert {type(image)} to PILImage: {e}")
     
     # Resize to target size
     resized_img = img.resize((target_size, target_size))
     return resized_img
 
 
-def resize_image_large(image: Union[str, Path, object], 
-                      target_size: int = LARGE_IMAGE_SIZE) -> object:
+def resize_image_large(image: Union[str, Path, Any], 
+                      target_size: int = LARGE_IMAGE_SIZE) -> Any:
     """
     Resize image using large size approach (512px).
     
@@ -66,14 +70,14 @@ def resize_image_large(image: Union[str, Path, object],
         target_size: Target size (default: 512px)
         
     Returns:
-        Resized image object
+        Resized PILImage object with .size attribute
     """
     return resize_image_standard(image, target_size)
 
 
 def preprocess_image_for_model(image_path: Union[str, Path], 
                               use_large_size: bool = False,
-                              target_size: int = None) -> object:
+                              target_size: Optional[int] = None) -> Any:
     """
     Preprocess image for model input using specified approach.
     
@@ -83,7 +87,7 @@ def preprocess_image_for_model(image_path: Union[str, Path],
         target_size: Override target size (if None, uses approach default)
         
     Returns:
-        Preprocessed image ready for model input
+        Preprocessed PILImage object ready for model input with .size attribute
     """
     if target_size is None:
         target_size = LARGE_IMAGE_SIZE if use_large_size else DEFAULT_IMAGE_SIZE
@@ -116,7 +120,7 @@ def normalize_image_array(image_array: np.ndarray,
 
 
 def prepare_image_for_inference(image_path: Union[str, Path],
-                               use_large_preprocessing: bool = False) -> Tuple[object, dict]:
+                               use_large_preprocessing: bool = False) -> Tuple[Any, dict[str, Any]]:
     """
     Prepare image for inference with metadata.
     
@@ -125,7 +129,7 @@ def prepare_image_for_inference(image_path: Union[str, Path],
         use_large_preprocessing: Whether to use large size preprocessing
         
     Returns:
-        Tuple of (processed_image, metadata)
+        Tuple of (processed_PILImage, metadata)
     """
     # Load original image to get metadata
     if PILImage is None:

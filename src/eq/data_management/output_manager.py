@@ -3,7 +3,7 @@
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from eq.utils.logger import get_logger
 
@@ -89,7 +89,7 @@ class OutputManager:
         
         self.logger.info(f"Saved metadata to: {metadata_file}")
     
-    def get_data_source_name(self, data_path: str) -> str:
+    def get_data_source_name(self, data_path: Union[str, Path]) -> str:
         """Extract data source name from data path.
         
         Args:

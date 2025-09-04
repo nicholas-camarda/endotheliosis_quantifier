@@ -323,12 +323,12 @@ def calculate_batch_metrics(predicted_masks: List[np.ndarray],
             avg_hausdorff = np.mean(valid_distances)
     
     average_metrics = SegmentationMetrics(
-        dice_coefficient=np.mean(dice_scores),
-        iou_score=np.mean(iou_scores),
-        precision=np.mean(precision_scores),
-        recall=np.mean(recall_scores),
-        f1_score=np.mean(f1_scores),
-        hausdorff_distance=avg_hausdorff
+        dice_coefficient=float(np.mean(dice_scores)),
+        iou_score=float(np.mean(iou_scores)),
+        precision=float(np.mean(precision_scores)),
+        recall=float(np.mean(recall_scores)),
+        f1_score=float(np.mean(f1_scores)),
+        hausdorff_distance=float(avg_hausdorff) if avg_hausdorff is not None else None
     )
     
     return average_metrics, individual_metrics

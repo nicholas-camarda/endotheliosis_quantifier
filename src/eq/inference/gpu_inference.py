@@ -61,8 +61,9 @@ class GPUGlomeruliInference:
         self.learn.model.to(self.device)
         self.learn.model.eval()
         
-        # Determine expected input size (most glomeruli models expect 224x224)
-        self.expected_size = 224
+        # Determine expected input size
+        from eq.core.constants import DEFAULT_IMAGE_SIZE
+        self.expected_size = DEFAULT_IMAGE_SIZE
         
         self.logger.info(f"Model loaded on {self.device} with input size: {self.expected_size}x{self.expected_size}")
     
@@ -181,14 +182,18 @@ class GPUGlomeruliInference:
         mask = Image.open(mask_path).convert('L')
         
         # Resize mask to match expected size
-        mask_resized = mask.resize((self.expected_size, self.expected_size), Image.NEAREST)
+        mask_resized = mask.resize(
+            (self.expected_size, self.expected_size),
+            Image.Resampling.NEAREST,
+        )
         mask_tensor = torch.from_numpy(np.array(mask_resized)).float() / 255.0
         mask_tensor = (mask_tensor > 0.5).float()
         
         # Test different thresholds
         thresholds = [0.001, 0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
-        best_metrics = None
-        best_threshold = None
+        from typing import Optional
+        best_metrics: Optional[Dict[str, float]] = None
+        best_threshold: Optional[float] = None
         best_dice = -1
         
         for threshold in thresholds:
@@ -206,7 +211,8 @@ class GPUGlomeruliInference:
                 best_threshold = threshold
         
         self.logger.info(f"Best threshold: {best_threshold:.3f} (Dice: {best_dice:.4f})")
-        return best_metrics
+        # Ensure dictionary is returned
+        return best_metrics or {'threshold': float('nan'), 'dice': 0.0, 'iou': 0.0, 'pixel_acc': 0.0}
     
     def _calculate_metrics(self, pred_binary: torch.Tensor, ground_truth: torch.Tensor) -> Dict[str, float]:
         """Calculate evaluation metrics using consolidated metric functions."""
@@ -296,10 +302,10 @@ class GPUGlomeruliInference:
             self.logger.info(f"   GPU Memory: {torch.cuda.memory_allocated() / 1e9:.1f} GB")
         
         return {
-            'avg_time': avg_time,
-            'std_time': std_time,
-            'images_per_second': images_per_second,
-            'gpu_memory_gb': torch.cuda.memory_allocated() / 1e9 if self.device == 'cuda' else 0
+            'avg_time': float(avg_time),
+            'std_time': float(std_time),
+            'images_per_second': float(images_per_second),
+            'gpu_memory_gb': float(torch.cuda.memory_allocated() / 1e9) if self.device == 'cuda' else 0.0,
         }
 
 
@@ -324,14 +330,14 @@ def main():
     image_dir = Path(args.image_dir)
     mask_dir = Path(args.mask_dir)
     
-    image_files = [f for f in image_dir.glob("*.jpg")]
-    mask_files = [f for f in mask_dir.glob("*_mask.jpg")]
+    image_files = [f for f in image_dir.glob("*.png")]
+    mask_files = [f for f in mask_dir.glob("*_mask.png")]
     
     # Find matching pairs
     matching_pairs = []
     for img_file in image_files:
         base_name = img_file.stem
-        mask_file = mask_dir / f"{base_name}_mask.jpg"
+        mask_file = mask_dir / f"{base_name}_mask.png"
         if mask_file.exists():
             matching_pairs.append((img_file, mask_file))
     

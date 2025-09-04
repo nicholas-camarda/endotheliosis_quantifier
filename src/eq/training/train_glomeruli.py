@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-Retrain Glomeruli Model Using Original Approach - FastAI v2 Compatible
+Train Glomeruli Segmentation Model with Transfer Learning - FastAI v2 Compatible
 
-This script reproduces the exact training approach used in the original git commits,
-adapted for FastAI v2 syntax and API.
+This script trains a glomeruli segmentation model using transfer learning from a 
+pretrained mitochondria segmentation model. The approach:
+1. Loads a pretrained mitochondria model
+2. Fine-tunes it on glomeruli data using transfer learning
+3. Saves the trained glomeruli model
+
+This is the second stage of the two-stage training pipeline.
 """
 
 import random
@@ -20,8 +25,30 @@ import matplotlib.pyplot as plt
 from fastai.vision.all import *
 
 from eq.utils.logger import get_logger
+from eq.utils.config_manager import ConfigManager
+from eq.data_management.datablock_loader import build_segmentation_dls
+from eq.data_management.standard_getters import get_y_glomeruli, get_y_universal
+from eq.training.transfer_learning import transfer_learn_glomeruli
+from fastai.losses import BCEWithLogitsLossFlat
+from eq.core.constants import (
+    DEFAULT_IMAGE_SIZE, DEFAULT_MASK_THRESHOLD, DEFAULT_PREDICTION_THRESHOLD, 
+    DEFAULT_BATCH_SIZE, DEFAULT_EPOCHS, DEFAULT_LEARNING_RATE,
+    DEFAULT_FLIP_VERT, DEFAULT_MAX_ROTATE, DEFAULT_MIN_ZOOM, DEFAULT_MAX_ZOOM,
+    DEFAULT_MAX_WARP, DEFAULT_MAX_LIGHTING, DEFAULT_RANDOM_ERASING_P,
+    DEFAULT_RANDOM_ERASING_SL, DEFAULT_RANDOM_ERASING_SH, 
+    DEFAULT_RANDOM_ERASING_MIN_ASPECT, DEFAULT_RANDOM_ERASING_MAX_COUNT,
+    DEFAULT_GLOMERULI_MODEL_DIR
+)
 
 logger = get_logger("eq.retrain_glomeruli_original")
+
+def _format_run_suffix(epochs: int, batch_size: int, learning_rate: float, image_size: int, tag: str = "") -> str:
+    """Create a concise, filesystem-safe suffix describing training params."""
+    lr_str = (f"{learning_rate:.0e}" if learning_rate < 1e-2 else f"{learning_rate:.3f}").replace("-0", "-")
+    parts = [f"e{epochs}", f"b{batch_size}", f"lr{lr_str}", f"sz{image_size}"]
+    if tag:
+        parts.insert(0, tag)
+    return "_".join(parts)
 
 def get_all_paths(directory_path):
     """Get all file paths from a directory recursively."""
@@ -49,7 +76,7 @@ def n_glom_codes(fnames, is_partial=True):
         p2c[i] = vals[i]
     return p2c
 
-def get_glom_mask_file(image_file, p2c, thresh=127):
+def get_glom_mask_file(image_file, p2c, thresh=DEFAULT_MASK_THRESHOLD):
     """Get glomeruli mask file with color mapping."""
     # For derived data, mask is in the mask_patches directory with '_mask' suffix
     mask_path = image_file.parent.parent / "mask_patches" / f"{image_file.stem}_mask{image_file.suffix}"
@@ -57,218 +84,255 @@ def get_glom_mask_file(image_file, p2c, thresh=127):
     # Convert to an array (mask)
     msk = np.array(PILMask.create(mask_path))
     # Derived data should already be binary, but ensure it's 0/1
-    msk = (msk > thresh).astype(np.uint8)
+    msk = (msk > DEFAULT_MASK_THRESHOLD).astype(np.uint8)
     return PILMask.create(msk)
 
-def get_glom_y(o):
-    """Get glomeruli mask for a given image file."""
-    return get_glom_mask_file(o, p2c)
+# Use standardized getter function for compatibility
+get_y = get_y_glomeruli
 
-def retrain_glomeruli_original():
-    """Retrain glomeruli model using the original approach."""
-    logger.info("🔄 Starting glomeruli retraining using original approach")
+
+def train_glomeruli_with_transfer_learning(
+    data_dir: str,
+    output_dir: str,
+    model_name: str,
+    base_model_path: Optional[str] = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    epochs: int = DEFAULT_EPOCHS,
+    learning_rate: float = 1e-4,  # Lower LR for transfer learning
+    image_size: int = DEFAULT_IMAGE_SIZE
+) -> Learner:
+    """
+    Train glomeruli model using transfer learning from mitochondria model.
     
-    # Set up paths (using derived data that already has train/test splits)
-    project_directory = Path.cwd()
-    train_mask_path = project_directory / 'derived_data/glomeruli_data/training/mask_patches'
-    train_image_path = project_directory / 'derived_data/glomeruli_data/training/image_patches'
+    Args:
+        data_dir: Directory containing glomeruli data
+        output_dir: Directory to save trained model
+        model_name: Name for the model
+        base_model_path: Path to pretrained mitochondria model
+        batch_size: Training batch size
+        epochs: Number of training epochs
+        learning_rate: Learning rate for fine-tuning
+        image_size: Input image size
+        
+    Returns:
+        Learner: Trained glomeruli model
+    """
+    logger.info("Starting glomeruli training with transfer learning")
     
-    # Load data paths
-    logger.info("📁 Loading data paths...")
-    glom_mask_files = get_all_paths(train_mask_path)
-    glom_image_files = get_all_paths(train_image_path)
+    if base_model_path is None:
+        # Default path to mitochondria model
+        base_model_path = "models/segmentation/mitochondria/mitochondria_model.pkl"
     
-    logger.info(f"Found {len(glom_image_files)} images and {len(glom_mask_files)} masks")
-    assert len(glom_image_files) <= len(glom_mask_files)
+    if not Path(base_model_path).exists():
+        logger.warning(f"Base model not found at {base_model_path}, training from scratch")
+        return train_glomeruli_with_datablock(
+            data_dir=data_dir,
+            output_dir=output_dir,
+            model_name=model_name,
+            batch_size=batch_size,
+            epochs=epochs,
+            learning_rate=learning_rate,
+            image_size=image_size,
+        )
     
-    # Get color codes
-    logger.info("🎨 Determining color codes...")
-    p2c = n_glom_codes(glom_mask_files)
-    logger.info(f"Color codes: {p2c}")
+    # Use transfer learning
+    learn = transfer_learn_glomeruli(
+        base_model_path=base_model_path,
+        glomeruli_data_dir=data_dir,
+        output_dir=output_dir,
+        model_name=model_name,
+        epochs=epochs,
+        batch_size=batch_size,
+        learning_rate=learning_rate
+    )
     
-    # Set up namespace for model loading (required for FastAI v1 models)
-    logger.info("🔧 Setting up namespace for model loading...")
-    import __main__
-    __main__.__dict__['get_y'] = get_glom_y
-    __main__.__dict__['get_glom_mask_file'] = get_glom_mask_file
-    __main__.__dict__['n_glom_codes'] = n_glom_codes
-    __main__.__dict__['p2c'] = p2c
+    return learn
+
+
+def train_glomeruli_with_datablock(
+    data_dir: str,
+    output_dir: str,
+    model_name: str,
+    base_model_path: Optional[str] = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    epochs: int = DEFAULT_EPOCHS,
+    learning_rate: float = DEFAULT_LEARNING_RATE,
+    image_size: int = DEFAULT_IMAGE_SIZE
+):
+    """
+    Train glomeruli segmentation model using FastAI v2 DataBlock approach with transfer learning.
     
-    # Load pretrained mitochondria model
-    logger.info("🧠 Loading pretrained mitochondria model...")
-    mito_model_path = project_directory / "backups/mito_dynamic_unet_seg_model-e50_b16.pkl"
-    if not mito_model_path.exists():
-        raise FileNotFoundError(f"Mitochondria model not found: {mito_model_path}")
+    Args:
+        data_dir: Directory containing image_patches/ and mask_patches/
+        output_dir: Directory to save model and results
+        model_name: Name for the model
+        base_model_path: Path to pretrained mitochondria model for transfer learning
+        batch_size: Training batch size
+        epochs: Number of training epochs
+        learning_rate: Learning rate
+        image_size: Input image size
+        
+    Returns:
+        Trained learner
+    """
+    logger = get_logger("eq.glomeruli_training")
+    logger.info("Starting glomeruli model training with DataBlock and transfer learning...")
     
-    # Use consolidated model loader
+    # Create output directory
+    output_path = Path(output_dir) / model_name
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    logger.info(f"Loading data from: {data_dir}")
+    
+    # Build DataLoaders using DataBlock approach
+    dls = build_segmentation_dls(data_dir, bs=batch_size, num_workers=0)
+    
+    logger.info(f"Data loaded: {len(dls.train_ds)} train, {len(dls.valid_ds)} val samples")
+    
+    # Create learner
+    learn = unet_learner(dls, resnet34, n_out=2, metrics=DiceMulti())
+    
+    # Load pretrained model if provided
+    if base_model_path and Path(base_model_path).exists():
+        logger.info(f"Loading pretrained model from: {base_model_path}")
+        # For transfer learning, we need to load the exported learner and extract the model
+        pretrained_learn = load_learner(base_model_path)
+        # Copy the pretrained model weights to our new learner
+        learn.model.load_state_dict(pretrained_learn.model.state_dict())
+        logger.info("✅ Pretrained model loaded successfully")
+    else:
+        logger.info("No pretrained model provided, training from scratch")
+    
+    # Train the model
+    logger.info(f"Training for {epochs} epochs...")
+    learn.fit_one_cycle(epochs, lr_max=learning_rate)
+    
+    # Save training plots similar to mito
     try:
-        from eq.data_management.model_loading import load_model_safely
-        segmentation_model = load_model_safely(mito_model_path, model_type="mito")
-        logger.info("✅ Loaded pretrained mitochondria model using consolidated loader")
-    except Exception as e:
-        logger.warning(f"Consolidated loading failed ({e}), falling back to historical method")
-        # Fallback to historical method if consolidated method fails
-        from eq.data_management.model_loading import load_model_with_historical_support
-        segmentation_model = load_model_with_historical_support(mito_model_path)
-        logger.info("✅ Loaded pretrained mitochondria model using fallback method")
-    logger.info("✅ Loaded pretrained mitochondria model")
-    
-    # Set up data augmentation (matching original)
-    logger.info("🔄 Setting up data augmentation...")
-    gpt_rec_batch_aug = [*aug_transforms(size=256,  # 256x256 output
-                                       flip_vert=True,
-                                       max_rotate=45,
-                                       min_zoom=0.8,
-                                       max_zoom=1.3,
-                                       max_warp=0.4,
-                                       max_lighting=0.2),
-                       RandomErasing(p=0.5, sl=0.01, sh=0.3, min_aspect=0.3, max_count=3)]
-    
-    # Create DataBlock (matching original)
-    logger.info("📊 Creating DataBlock...")
-    
-    # Debug: Check what we have
-    logger.info(f"glom_image_files type: {type(glom_image_files)}")
-    logger.info(f"glom_image_files length: {len(glom_image_files)}")
-    logger.info(f"First few image files: {glom_image_files[:3]}")
-    logger.info(f"p2c: {p2c}")
-    
-    # Create a closure that captures the p2c value
-    def get_glom_y_with_p2c(o):
-        logger.info(f"get_glom_y_with_p2c called with: {o}")
-        result = get_glom_mask_file(o, p2c)
-        logger.info(f"get_glom_y_with_p2c result: {type(result)}")
-        return result
-    
-    # Test the function on a sample
+        learn.recorder.plot_loss()
+        plt.savefig(output_path / f"{model_name}_training_loss.png")
+        plt.close()
+    except Exception as _e:
+        logger.warning(f"Could not save training loss plot: {_e}")
+
     try:
-        test_result = get_glom_y_with_p2c(glom_image_files[0])
-        logger.info(f"Test call successful: {type(test_result)}")
+        learn.show_results(max_n=8, figsize=(8, 8))
+        plt.savefig(output_path / f"{model_name}_validation_predictions.png")
+        plt.close()
+    except Exception as _e:
+        logger.warning(f"Could not save validation predictions plot: {_e}")
+
+    # Save the model (include params in name)
+    model_tag = _format_run_suffix(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate, image_size=image_size, tag="scratch")
+    model_path = output_path / f"{model_name}-{model_tag}.pkl"
+    learn.export(model_path)
+    logger.info(f"Model saved to: {model_path}")
+    
+    # Return the learner for now (can be wrapped later if needed)
+    return learn
+
+
+def _removed_legacy_transfer():
+    """Placeholder to mark removal of legacy duplicate function."""
+    return None
+
+def main():
+    """CLI interface for glomeruli training."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Train glomeruli segmentation model')
+    parser.add_argument('--config', help='Optional YAML config file to override defaults')
+    parser.add_argument('--data-dir', required=True, help='Directory containing derived_data (from eq process-data)')
+    parser.add_argument('--model-dir', default=DEFAULT_GLOMERULI_MODEL_DIR, help='Directory to save trained model')
+    parser.add_argument('--model-name', default='glomeruli_model', help='Base name for saved model files')
+    parser.add_argument('--base-model', help='Path to base model for transfer learning')
+    parser.add_argument('--epochs', type=int, default=DEFAULT_EPOCHS, help='Number of training epochs')
+    parser.add_argument('--batch-size', type=int, default=DEFAULT_BATCH_SIZE, help='Training batch size')
+    parser.add_argument('--learning-rate', type=float, default=DEFAULT_LEARNING_RATE, help='Learning rate')
+    parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Input image size')
+    
+    args = parser.parse_args()
+
+    # Optional: load YAML config and overlay onto args
+    if args.config:
+        try:
+            import yaml  # type: ignore
+            with open(args.config, 'r') as f:
+                cfg_yaml = yaml.safe_load(f) or {}
+            # Map common fields from YAML if present
+            # pretrained model
+            base_model = (
+                cfg_yaml.get('pretrained_model', {}).get('path')
+                if isinstance(cfg_yaml.get('pretrained_model'), dict) else None
+            )
+            if base_model and not args.base_model:
+                args.base_model = base_model
+            # training hyperparams
+            model_cfg = cfg_yaml.get('model', {}) if isinstance(cfg_yaml.get('model'), dict) else {}
+            training_cfg = model_cfg.get('training', {}) if isinstance(model_cfg.get('training'), dict) else {}
+            if 'epochs' in training_cfg and not parser.get_default('epochs') == args.epochs:
+                args.epochs = int(training_cfg['epochs'])
+            if 'batch_size' in training_cfg and not parser.get_default('batch_size') == args.batch_size:
+                args.batch_size = int(training_cfg['batch_size'])
+            if 'learning_rate' in training_cfg and not parser.get_default('learning_rate') == args.learning_rate:
+                args.learning_rate = float(training_cfg['learning_rate'])
+            # image size
+            if 'input_size' in model_cfg and isinstance(model_cfg['input_size'], (list, tuple)) and len(model_cfg['input_size']) >= 1:
+                args.image_size = int(model_cfg['input_size'][0])
+            # output model dir and name from checkpoint_path
+            if 'checkpoint_path' in model_cfg:
+                from pathlib import Path as _P
+                ckpt = _P(model_cfg['checkpoint_path'])
+                args.model_dir = str(ckpt.parent)
+                # Only set model_name from YAML if CLI did not provide it
+                if parser.get_default('model_name') == args.model_name:
+                    args.model_name = ckpt.stem
+        except Exception as _e:  # pragma: no cover
+            print(f"⚠️  Failed to load config {args.config}: {_e}")
+    
+    try:
+        logger = get_logger("eq.glomeruli_training")
+        logger.info("🚀 Starting glomeruli model training...")
+        logger.info(f"📁 Data directory: {args.data_dir}")
+        logger.info(f"📁 Model directory: {args.model_dir}")
+        logger.info(f"🧾 Model name: {args.model_name}")
+        logger.info(f"⚙️  Epochs: {args.epochs}, Batch size: {args.batch_size}")
+        
+        if args.base_model:
+            logger.info(f"🔄 Using base model: {args.base_model}")
+        
+        # Train the model using transfer learning if base model provided, otherwise from scratch
+        if args.base_model:
+            model = train_glomeruli_with_transfer_learning(
+                data_dir=args.data_dir,
+                output_dir=args.model_dir,
+                model_name=args.model_name,
+                base_model_path=args.base_model,
+                batch_size=args.batch_size,
+                epochs=args.epochs,
+                learning_rate=args.learning_rate,
+                image_size=args.image_size
+            )
+        else:
+            model = train_glomeruli_with_datablock(
+                data_dir=args.data_dir,
+                output_dir=args.model_dir,
+                model_name=args.model_name,
+                base_model_path=args.base_model,
+                batch_size=args.batch_size,
+                epochs=args.epochs,
+                learning_rate=args.learning_rate,
+                image_size=args.image_size
+            )
+        
+        logger.info("🎉 Glomeruli training completed successfully!")
+        print(f"✅ Model saved to: {args.model_dir}/glomeruli_model")
+        
     except Exception as e:
-        logger.error(f"Test call failed: {e}")
+        logger.error(f"❌ Training failed: {e}")
+        print(f"❌ Training failed: {e}")
         raise
-    
-    gloms = DataBlock(blocks=(ImageBlock, MaskBlock(codes=np.array(['not_glom', 'glom']))),
-                     splitter=RandomSplitter(valid_pct=0.2, seed=42),
-                     get_items=lambda x: glom_image_files,
-                     get_y=get_glom_y_with_p2c,
-                     item_tfms=[RandomResizedCrop(512, min_scale=0.45)],  # 512x512 crop, then resize
-                     batch_tfms=gpt_rec_batch_aug,
-                     n_inp=1)
-    
-    # Create dataloaders
-    batch_size = 16
-    glom_dls = gloms.dataloaders(glom_image_files, bs=batch_size)
-    logger.info(f"Created dataloaders: {len(glom_dls.train_ds)} train, {len(glom_dls.valid_ds)} val")
-    
-    # Show batch to verify
-    logger.info("👀 Showing sample batch...")
-    glom_dls.show_batch(max_n=4, vmin=0, vmax=1, figsize=(8, 8))
-    plt.savefig('debug_original_batch.png')
-    plt.close()
-    
-    # Set up model for transfer learning
-    logger.info("🔄 Setting up transfer learning...")
-    segmentation_model.dls = glom_dls
-    
-    # Freeze the model except the last layer(s)
-    logger.info("🔒 Freezing pretrained layers...")
-    segmentation_model.freeze()
-    
-    # Find optimal learning rate for head training
-    logger.info("🔍 Finding optimal learning rate for head...")
-    
-    # Suppress NumPy deprecation warnings during lr_find
-    import warnings
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=DeprecationWarning, module="numpy")
-        lr_min, lr_steep, lr_valley, lr_slide = segmentation_model.lr_find(suggest_funcs=(minimum, steep, valley, slide))
-    
-    logger.info(f"Learning rates - min: {lr_min:.2e}, steep: {lr_steep:.2e}, valley: {lr_valley:.2e}")
-    
-    # Train the last layer(s) using fit_one_cycle
-    n_epochs_head = 15
-    lr_max_head = lr_min
-    logger.info(f"🎯 Training head for {n_epochs_head} epochs with LR {lr_max_head:.2e}")
-    
-    segmentation_model.fit_one_cycle(n_epochs_head, lr_max_head,
-                                    cbs=[EarlyStoppingCallback(monitor='valid_loss', min_delta=0.001, patience=5),
-                                         SaveModelCallback(monitor='valid_loss', fname='best_model')])
-    
-    # Plot training history
-    segmentation_model.recorder.plot_loss()
-    plt.savefig('debug_head_training_loss.png')
-    plt.close()
-    
-    # Unfreeze the entire model
-    logger.info("🔓 Unfreezing all layers...")
-    segmentation_model.unfreeze()
-    
-    # Find optimal learning rate for full fine-tuning
-    logger.info("🔍 Finding optimal learning rate for full fine-tuning...")
-    lr_min, lr_steep, lr_valley, lr_slide = segmentation_model.lr_find(suggest_funcs=(minimum, steep, valley, slide))
-    logger.info(f"Learning rates - min: {lr_min:.2e}, steep: {lr_steep:.2e}, valley: {lr_valley:.2e}")
-    
-    # Full fine-tuning
-    n_epochs = 50
-    my_lr_max = 5e-4  # From original notebook
-    logger.info(f"🎯 Full fine-tuning for {n_epochs} epochs with LR {my_lr_max:.2e}")
-    
-    segmentation_model.fit_one_cycle(n_epochs, my_lr_max,
-                                    cbs=[EarlyStoppingCallback(monitor='valid_loss', min_delta=0.0001, patience=5),
-                                         SaveModelCallback(monitor='valid_loss', fname='best_model')])
-    
-    # Plot final training history
-    segmentation_model.recorder.plot_loss()
-    plt.savefig('debug_full_training_loss.png')
-    plt.close()
-    
-    # Show results
-    logger.info("📊 Showing final results...")
-    segmentation_model.show_results(max_n=6, figsize=(2, 6))
-    plt.savefig('debug_final_results.png')
-    plt.close()
-    
-    # Print final metrics safely
-    logger.info("Final metrics:")
-    try:
-        names = segmentation_model.recorder.metric_names
-        vals = segmentation_model.recorder.log
-        last = vals[-1] if len(vals) > 0 else None
-        logger.info(f"  Names: {names}")
-        logger.info(f"  Last row: {last}")
-        if last is not None:
-            # Typically: train_loss, valid_loss, dice, time
-            if len(last) >= 1:
-                logger.info(f"  Training loss: {last[0]:.4f}")
-            if len(last) >= 2:
-                logger.info(f"  Validation loss: {last[1]:.4f}")
-            if len(last) >= 3 and isinstance(last[2], (float, int)):
-                logger.info(f"  Dice Coef: {last[2]:.4f}")
-    except Exception as e:
-        logger.warning(f"Could not parse metrics from recorder: {e}")
-    
-    # Save the model
-    logger.info("💾 Saving model...")
-    output_dir = project_directory / "models/segmentation/glomeruli_retrained"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    fname = f"glomerulus_segmentation_model-dynamic_unet-e{n_epochs}_b{batch_size}_s{len(glom_image_files)}_retrained.pkl"
-    output_file = output_dir / fname
-    logger.info(f"Saving to: {output_file}")
-    
-    # Save the whole model
-    segmentation_model.export(output_file)
-    logger.info("✅ Model saved successfully!")
-    
-    return str(output_file)
+
 
 if __name__ == "__main__":
-    try:
-        model_path = retrain_glomeruli_original()
-        print("\n🎉 GLOMERULI RETRAINING COMPLETED SUCCESSFULLY!")
-        print(f"📁 Model saved to: {model_path}")
-        print("🔍 Check the debug_*.png files for training visualizations")
-    except Exception as e:
-        logger.error(f"❌ Retraining failed: {e}")
-        raise
+    main()

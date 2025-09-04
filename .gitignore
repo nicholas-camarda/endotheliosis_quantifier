@@ -8,7 +8,6 @@ test_output/
 docs/
 logs/
 test
-tests/
 test_cache/
 earlier_models/
 output/

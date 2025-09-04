@@ -10,6 +10,8 @@ scattered across multiple folders:
 Provides unified training infrastructure for mitochondria and glomeruli models.
 """
 
+from eq.core.constants import DEFAULT_BATCH_SIZE, DEFAULT_EPOCHS, DEFAULT_LEARNING_RATE
+
 # Import training functionality
 from .train_mitochondria import (
     train_mitochondria_model,
@@ -17,11 +19,11 @@ from .train_mitochondria import (
 )
 
 from .train_glomeruli import (
-    retrain_glomeruli_original,
+    train_glomeruli_with_transfer_learning,
 )
 
 # Create wrapper functions with expected names
-def train_mitochondria(data_dir, model_dir, epochs=50, batch_size=16, **kwargs):
+def train_mitochondria(data_dir, model_dir, epochs=None, batch_size=None, **kwargs):
     """
     Train mitochondria model from data directory.
     
@@ -35,8 +37,11 @@ def train_mitochondria(data_dir, model_dir, epochs=50, batch_size=16, **kwargs):
     Returns:
         Trained model
     """
-    from pathlib import Path
     from eq.training.train_mitochondria import train_mitochondria_from_cache
+    
+    # Use constants defaults if not provided
+    epochs = epochs or DEFAULT_EPOCHS
+    batch_size = batch_size or DEFAULT_BATCH_SIZE
     
     # For now, assume data_dir contains cached pickle files
     return train_mitochondria_from_cache(
@@ -49,7 +54,7 @@ def train_mitochondria(data_dir, model_dir, epochs=50, batch_size=16, **kwargs):
     )
 
 
-def train_glomeruli(data_dir, model_dir, base_model=None, epochs=50, batch_size=16, **kwargs):
+def train_glomeruli(data_dir, model_dir, base_model=None, epochs=None, batch_size=None, **kwargs):
     """
     Train glomeruli model using transfer learning from mitochondria model.
     
@@ -64,11 +69,22 @@ def train_glomeruli(data_dir, model_dir, base_model=None, epochs=50, batch_size=
     Returns:
         Trained model
     """
-    from eq.training.train_glomeruli import retrain_glomeruli_original
+    from eq.training.train_glomeruli import train_glomeruli_with_transfer_learning
     
-    # For now, call the original function
-    # TODO: Refactor to accept parameters properly
-    return retrain_glomeruli_original()
+    # Use constants defaults if not provided
+    epochs = epochs or DEFAULT_EPOCHS
+    batch_size = batch_size or DEFAULT_BATCH_SIZE
+    
+    # Forward parameters to the concrete implementation
+    return train_glomeruli_with_transfer_learning(
+        data_dir=data_dir,
+        output_dir=model_dir,
+        model_name="glomeruli_model",
+        base_model_path=base_model,
+        batch_size=batch_size,
+        epochs=epochs,
+        **kwargs,
+    )
 
 
 # Training utilities (placeholder functions for now)
@@ -108,7 +124,7 @@ __all__ = [
     'train_glomeruli',
     'train_mitochondria_model',
     'train_mitochondria_from_cache',
-    'retrain_glomeruli_original',
+    'train_glomeruli_with_transfer_learning',
     
     # Training utilities
     'setup_training_environment',

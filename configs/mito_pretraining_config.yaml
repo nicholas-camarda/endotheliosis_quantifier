@@ -25,7 +25,7 @@ data:
   
   # Step 4: Patch generation for U-Net (already completed)
   patches:
-    size: 224  # U-Net input size - changed to match pretrained model
+    size: 256  # U-Net input size - modern standard
     overlap: 0.1  # 10% overlap between patches
     output_dir: "derived_data/mitochondria_data/training/image_patches"
     mask_output_dir: "derived_data/mitochondria_data/training/mask_patches"
@@ -43,7 +43,7 @@ data:
 model:
   architecture: "dynamic_unet"
   backbone: "resnet34"
-  input_size: [224, 224]
+  input_size: [256, 256]
   num_classes: 2  # background + mitochondria
   
   # Training parameters
@@ -54,7 +54,7 @@ model:
     weight_decay: 1e-4
     
   # Output configuration
-  output_dir: "models/segmentation/mitochondria"
+  output_dir: "models/segmentation/mitochondria"  # Using standardized path
   model_name: "mito_dynamic_unet_seg_model-e50_b16"
   checkpoint_path: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model-e50_b16.pkl"
 

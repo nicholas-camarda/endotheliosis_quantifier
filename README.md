@@ -15,12 +15,12 @@ Key points:
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/nicholas-camarda/endotheliosis_quantifier.git
 cd endotheliosis_quantifier
 
-# Create and activate conda environment
-conda env create -f environment.yml
-conda activate eq
+# Create and activate conda environment (use mamba)
+mamba env create -f environment.yml
+mamba activate eq
 
 # Install in development mode (enables CLI `eq`)
 pip install -e .[dev]
@@ -34,145 +34,117 @@ eq mode --show
 
 # Check hardware capabilities
 eq capabilities
+
+# Process raw data into ready-to-analyze format
+eq process-data --input-dir data/raw_images --output-dir derived_data
 ```
 
-## Step-by-Step Training Pipeline
+## Production Run: End‑to‑End (Data → Mito Train → Glom Transfer)
 
-### 1. Data Preparation
-
-```bash
-# Load and preprocess preeclampsia data
-eq data-load --data-dir data/preeclampsia_data/train \
-             --test-data-dir data/preeclampsia_data/test \
-             --cache-dir data/preeclampsia_data/cache
-
-# For mitochondria training, organize Lucchi dataset
-python -m eq.data_management.organize_lucchi_dataset \
-    --input-dir data/mitochondria_raw \
-    --output-dir data/mitochondria_data
-```
-
-### 2. Mitochondria Model Training (Stage 1)
+The commands below are the canonical, production‑mode workflow using FastAI v2 and our standardized directories. All outputs are PNG, masks are binary, and models/plots are written under `models/segmentation/`.
 
 ```bash
-# Train mitochondria segmentation model from scratch
-eq train-segmenter \
-    --base-model-path models/base_mitochondria_model.pkl \
-    --cache-dir data/mitochondria_data/cache \
-    --output-dir models/mitochondria_training \
-    --epochs 50 \
-    --batch-size 16
+# 0) Activate environment
+mamba activate eq
 
-# Or use the training module directly
+# 1) Data processing (raw → derived_data/ with 256×256 patches, binary PNG masks)
+#    Replace RAW_DIR with your project root containing images and (optionally) masks
+RAW_DIR=raw_data/preeclampsia_project
+eq process-data \
+  --input-dir "$RAW_DIR" \
+  --output-dir derived_data/preeclampsia
+
+# After this step you should have:
+# derived_data/preeclampsia/
+#   ├─ image_patches/
+#   └─ mask_patches/
+
+# 2) Train mitochondria segmentation model (from scratch)
+#    Saves parameterized filename and standard plots in models/segmentation/mitochondria
 python -m eq.training.train_mitochondria \
-    --data-dir data/mitochondria_data/cache \
-    --model-dir models/mitochondria_training \
-    --epochs 50 \
-    --batch-size 16
-```
+  --data-dir derived_data/mito \
+  --model-dir models/segmentation/mitochondria \
+  --epochs 50 \
+  --batch-size 16 \
+  --learning-rate 1e-3 \
+  --image-size 256
 
-### 3. Glomeruli Model Training (Stage 2 - Transfer Learning)
+# Expected artifacts (examples):
+# models/segmentation/mitochondria/
+#   mito_dynamic_unet_seg_model- pretrain_e50_b16_lr1e-03_sz256.pkl
+#   training_loss.png
+#   validation_predictions.png
 
-```bash
-# Train glomeruli model using mitochondria model as base
-eq train-segmenter \
-    --base-model-path models/mitochondria_training/mitochondria_model.pkl \
-    --cache-dir data/preeclampsia_data/cache \
-    --output-dir models/glomeruli_training \
-    --epochs 30 \
-    --batch-size 8
-
-# Or use the training module directly
+# 3) Train glomeruli model (transfer learning from mitochondria)
+#    If you have a specific mito checkpoint, set BASE below; otherwise glob the latest.
+BASE=$(ls models/segmentation/mitochondria/*.pkl | head -n1)
 python -m eq.training.train_glomeruli \
-    --data-dir data/preeclampsia_data/cache \
-    --model-dir models/glomeruli_training \
-    --base-model models/mitochondria_training/mitochondria_model.pkl \
-    --epochs 30 \
-    --batch-size 8
+  --data-dir derived_data/preeclampsia \
+  --model-dir models/segmentation/glomeruli \
+  --base-model "$BASE" \
+  --epochs 30 \
+  --batch-size 8 \
+  --learning-rate 1e-4 \
+  --image-size 256
+
+# Expected artifacts (examples):
+# models/segmentation/glomeruli/
+#   glomeruli_model- xfer_e30_b8_lr1e-04_sz256.pkl
+#   glomeruli_model_validation_predictions.png
+#   glomeruli_model_training_loss.png
 ```
 
-### 4. Model Evaluation
+Notes
+- Use `--config configs/mito_pretraining_config.yaml` or `configs/glomeruli_finetuning_config.yaml` to drive runs; CLI flags override YAML; both fall back to `eq.core.constants` defaults.
+- All experimental or ad‑hoc outputs should go to `test_output/` (not `models/segmentation/`).
 
-```bash
-# Evaluate mitochondria model performance
-python -m eq.evaluation.evaluate_mitochondria_model \
-    --model-path models/mitochondria_training/mitochondria_model.pkl \
-    --data-dir data/mitochondria_data/cache \
-    --output-dir evaluation/mitochondria_results
+### 🚧 Planned (Not Yet Implemented):
 
-# Evaluate glomeruli model performance
-python -m eq.evaluation.evaluate_glomeruli_model \
-    --model-path models/glomeruli_training/glomeruli_model.pkl \
-    --data-dir data/preeclampsia_data/cache \
-    --output-dir evaluation/glomeruli_results
+#### CLI Commands
+- `eq train-segmenter` - Unified training command
+- `eq data-load` - Legacy data loading (will be deprecated)
+- `eq production` - End-to-end production pipeline
+- `eq extract-features` - Feature extraction
+- `eq quantify` - Endotheliosis quantification
+
+#### Pipeline Components
+- Model evaluation and metrics
+- Inference pipeline
+- Production deployment
+- Feature extraction from trained models
+- Endotheliosis scoring and quantification
+
+### 🔄 FastAI v2 Migration Status
+
+#### Current Status:
+- ✅ **Data Processing**: Complete - `eq process-data` works with FastAI v2
+- ✅ **Data Pipeline**: Complete - DataBlock approach implemented  
+- ✅ **Training Modules**: Complete - CLI interfaces just added
+- ⏳ **Inference Pipeline**: Pending - Will be implemented after training validation
+- ⏳ **Evaluation Pipeline**: Pending - Will be implemented after training validation
+
+## Data Requirements
+
+### Input Data Format
+- **Images**: TIF, PNG, or JPEG files
+- **Masks**: Optional - PNG files with binary masks (0/255 values)
+- **Structure**: Any directory structure - `eq process-data` auto-detects images and masks
+
+### Expected Output from `eq process-data`
 ```
-
-### 5. Production Inference
-
-```bash
-# Run complete production pipeline
-eq production --data-dir data/preeclampsia_data/train \
-             --test-data-dir data/preeclampsia_data/test \
-             --segmentation-model models/glomeruli_training/glomeruli_model.pkl
-
-# Or run individual inference steps
-python -m eq.inference.run_mitochondria_prediction \
-    --model-path models/mitochondria_training/mitochondria_model.pkl \
-    --data-path data/mitochondria_data/test \
-    --output-dir predictions/mitochondria
-
-python -m eq.inference.run_glomeruli_prediction \
-    --model-path models/glomeruli_training/glomeruli_model.pkl \
-    --data-path data/preeclampsia_data/test \
-    --output-dir predictions/glomeruli
+derived_data/
+├── image_patches/          # 256x256 image patches
+├── mask_patches/           # 256x256 mask patches (if masks detected)
+├── cache/                  # Processed data cache
+└── metadata.json          # Processing statistics
 ```
-
-### 6. Quick Testing Mode
-
-```bash
-# Enable quick testing for faster development cycles
-QUICK_TEST=true eq train-segmenter \
-    --base-model-path models/base_mitochondria_model.pkl \
-    --cache-dir data/mitochondria_data/cache \
-    --output-dir models/mitochondria_training \
-    --epochs 5 \
-    --batch-size 4
-```
-
-## Training Data Requirements
-
-### Mitochondria Training Data
-- **Source**: [Lucchi et al. 2012 benchmark dataset](http://rhoana.rc.fas.harvard.edu/dataset/lucchi.zip)
-- **Format**: TIF files with ground truth masks
-- **Organization**: Use `eq.data_management.organize_lucchi_dataset` to structure data
-- **Expected Structure**:
-  ```
-  data/mitochondria_data/
-  ├── training/
-  │   ├── images/          # Training images (.tif)
-  │   └── masks/           # Ground truth masks (.tif)
-  └── testing/
-      ├── images/          # Test images (.tif)
-      └── masks/           # Ground truth masks (.tif)
-  ```
-
-### Glomeruli Training Data
-- **Source**: Preeclampsia H&E histology images with annotations
-- **Format**: TIF images with Label Studio JSON annotations
-- **Expected Structure**:
-  ```
-  data/preeclampsia_data/
-  ├── Lauren_PreEclampsia_Raw_TIF_Images/  # Raw TIF images
-  ├── annotations.json                      # Label Studio export
-  └── cache/                               # Processed data cache
-  ```
 
 ## Configuration
 
-The package uses YAML configuration files for all settings:
-
-- `configs/mito_pretraining_config.yaml` - Mitochondria model configuration
-- `configs/glomeruli_finetuning_config.yaml` - Glomeruli model configuration
+Configuration is handled through:
+- **Constants**: `eq.core.constants` - Default values for patch size, batch size, etc.
+- **Environment**: `eq mode` - Hardware-aware configuration
+- **CLI Arguments**: All training parameters configurable via command line
 
 ## Project Structure
 
@@ -200,33 +172,61 @@ src/eq/
 - **Performance Targets**: 
   - Mitochondria: >70% validation accuracy
   - Glomeruli: >70% validation accuracy (transfer learning from mitochondria)
-- **Key Entry Points**: CLI `eq` dispatches to `data-load`, `train-segmenter`, `production`, `mode`, and `capabilities`
+- **Key Entry Points**: CLI `eq` dispatches to `process-data`, `train-segmenter`, `production`, `mode`, and `capabilities`
 - **Hardware**: Mode-aware execution with MPS/CUDA detection and sensible batch sizes via `eq mode`
+
+### FastAI v2 Migration Status
+
+- ✅ **Data Processing**: Complete - `eq process-data` with auto mask detection and DataBlock approach
+- ✅ **Data Pipeline**: Complete - Unified `patchify_dataset` with proper binary mask handling
+- 🔄 **Training Modules**: In Progress - FastAI v2 APIs being updated (DataBlock, unet_learner with n_out)
+- ⏳ **Inference Pipeline**: Pending
+- ⏳ **Evaluation Pipeline**: Pending
 
 ## Troubleshooting
 
 ### Common Issues
 
-**Import Errors**: If you encounter import errors, ensure the `eq` environment is activated:
+**Environment Setup**: Always activate the correct environment:
 ```bash
 mamba activate eq
+pip install -e .  # Install in development mode
 ```
 
-**CUDA Out of Memory**: Reduce batch size or enable gradient checkpointing:
+**"Not yet implemented" Messages**: Many CLI commands exist but aren't implemented yet:
 ```bash
-eq train-segmenter --batch-size 4  # Reduce from default 16
+# These will show "not yet implemented" messages:
+eq train-segmenter    # Use direct module instead
+eq data-load         # Use eq process-data instead
+eq production        # Not implemented yet
+eq extract-features  # Not implemented yet
+eq quantify         # Not implemented yet
+
+# Use these working alternatives:
+eq process-data --input-dir data/raw_images --output-dir derived_data
+python -m eq.training.train_mitochondria --data-dir derived_data/cache --model-dir models/output
 ```
 
-**MPS Fallback Issues**: On Apple Silicon, ensure PyTorch MPS is available:
+**Training Data Issues**: Ensure you have the right data structure:
 ```bash
-eq mode --set development  # Uses CPU fallback
+# Check derived_data structure
+ls -la derived_data/
+cat derived_data/metadata.json
+
+# For mitochondria training, you need pickle files in cache/
+ls -la derived_data/cache/
+# Should have: train_images.pickle, train_masks.pickle, val_images.pickle, val_masks.pickle
 ```
 
-**Data Loading Errors**: Verify data structure matches expected format:
+**CUDA Out of Memory**: Reduce batch size:
 ```bash
-# Check data organization
-ls -la data/mitochondria_data/training/
-ls -la data/preeclampsia_data/Lauren_PreEclampsia_Raw_TIF_Images/
+python -m eq.training.train_mitochondria --batch-size 4  # Reduce from default 16
+```
+
+**Hardware Issues**: Check your hardware configuration:
+```bash
+eq mode --show
+eq capabilities
 ```
 
 ### Performance Optimization

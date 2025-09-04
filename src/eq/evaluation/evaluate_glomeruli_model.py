@@ -11,7 +11,7 @@ because it inherits those augmentations during inference. The direct model appro
 
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -57,7 +57,8 @@ class GlomeruliModelEvaluator:
         
         # Determine expected input size from model configuration
         # Most glomeruli models expect 224x224 (based on training code)
-        self.expected_size = 224
+        from eq.core.constants import DEFAULT_IMAGE_SIZE
+        self.expected_size = DEFAULT_IMAGE_SIZE
         
         self.logger.info(f"Model loaded with expected input size: {self.expected_size}x{self.expected_size}")
     
@@ -104,7 +105,7 @@ class GlomeruliModelEvaluator:
         
         return raw_output, pred_mask, pred_binary
     
-    def calculate_metrics(self, pred_binary: torch.Tensor, ground_truth: torch.Tensor) -> Dict[str, float]:
+    def calculate_metrics(self, pred_binary: torch.Tensor, ground_truth: torch.Tensor) -> Dict[str, Any]:
         """
         Calculate evaluation metrics using consolidated metric functions.
         
@@ -147,7 +148,7 @@ class GlomeruliModelEvaluator:
             'gt_pixels': ground_truth.sum().item()
         }
     
-    def evaluate_single_image(self, image_path: str, mask_path: str) -> Dict[str, float]:
+    def evaluate_single_image(self, image_path: str, mask_path: str) -> Dict[str, Any]:
         """
         Evaluate a single image-mask pair.
         
@@ -156,7 +157,7 @@ class GlomeruliModelEvaluator:
             mask_path: Path to ground truth mask
             
         Returns:
-            Dictionary of evaluation metrics
+            Dictionary of evaluation metrics and metadata
         """
         try:
             # Load image and mask
@@ -164,7 +165,10 @@ class GlomeruliModelEvaluator:
             mask = Image.open(mask_path).convert('L')
             
             # Resize mask to match expected size
-            mask_resized = mask.resize((self.expected_size, self.expected_size), Image.NEAREST)
+            mask_resized = mask.resize(
+                (self.expected_size, self.expected_size),
+                Image.Resampling.NEAREST,
+            )
             
             # Convert mask to tensor
             mask_tensor = torch.from_numpy(np.array(mask_resized)).float() / 255.0
@@ -175,11 +179,12 @@ class GlomeruliModelEvaluator:
             # Calculate metrics
             metrics = self.calculate_metrics(pred_binary.squeeze(), mask_tensor)
             
-            # Add image info
-            metrics['image_name'] = os.path.basename(image_path)
-            metrics['mask_name'] = os.path.basename(mask_path)
+            # Create result dict with both metrics and metadata
+            result = dict(metrics)  # Copy metrics
+            result['image_name'] = os.path.basename(image_path)
+            result['mask_name'] = os.path.basename(mask_path)
             
-            return metrics
+            return result
             
         except Exception as e:
             self.logger.error(f"Failed to evaluate {image_path}: {e}")
@@ -365,14 +370,14 @@ class GlomeruliModelEvaluator:
         Returns:
             List of (image_path, mask_path) tuples
         """
-        image_files = [f for f in os.listdir(image_dir) if f.endswith('.jpg')]
-        mask_files = [f for f in os.listdir(mask_dir) if f.endswith('_mask.jpg')]
+        image_files = [f for f in os.listdir(image_dir) if f.endswith('.png')]
+        mask_files = [f for f in os.listdir(mask_dir) if f.endswith('_mask.png')]
         
         # Create mapping from image to mask
         mask_map = {}
         for mask_file in mask_files:
-            # Extract base name (e.g., 'T29_Image0_1_7' from 'T29_Image0_1_7_mask.jpg')
-            base_name = mask_file.replace('_mask.jpg', '')
+            # Extract base name (e.g., 'T29_Image0_1_7' from 'T29_Image0_1_7_mask.png')
+            base_name = mask_file.replace('_mask.png', '')
             mask_map[base_name] = mask_file
         
         # Find images with masks
@@ -466,7 +471,7 @@ class GlomeruliModelEvaluator:
             axes[0].axis('off')
             
             # Ground truth mask
-            mask_resized = mask.resize((self.expected_size, self.expected_size), Image.NEAREST)
+            mask_resized = mask.resize((self.expected_size, self.expected_size), Image.Resampling.NEAREST)
             axes[1].imshow(mask_resized, cmap='gray')
             axes[1].set_title('Ground Truth Mask')
             axes[1].axis('off')
@@ -517,8 +522,14 @@ class GlomeruliModelEvaluator:
                 mask = Image.open(mask_paths[i]).convert('L')
                 
                 # Resize to expected size
-                image_resized = image.resize((self.expected_size, self.expected_size), Image.BILINEAR)
-                mask_resized = mask.resize((self.expected_size, self.expected_size), Image.NEAREST)
+                image_resized = image.resize(
+                    (self.expected_size, self.expected_size),
+                    Image.Resampling.BILINEAR,
+                )
+                mask_resized = mask.resize(
+                    (self.expected_size, self.expected_size),
+                    Image.Resampling.NEAREST,
+                )
                 
                 # Display original image
                 axes[i, 0].imshow(image_resized)

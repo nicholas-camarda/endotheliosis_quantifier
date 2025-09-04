@@ -31,12 +31,19 @@ def setup_logging(
         else:
             format_string = "%(asctime)s - %(levelname)s - %(message)s"
     
+    # Clear root logger handlers to prevent duplicates
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    
     # Create logger
     logger = logging.getLogger("eq")
     logger.setLevel(level)
     
     # Clear any existing handlers
     logger.handlers.clear()
+    
+    # Prevent propagation to root logger to avoid duplicates
+    logger.propagate = False
     
     # Create formatter
     formatter = logging.Formatter(format_string)
@@ -104,7 +111,7 @@ class ProgressLogger:
         self.description = description
         self.start_time = time.time()
         
-    def step(self, message: str = None):
+    def step(self, message: str = ""):
         """Log a progress step."""
         self.current_step += 1
         elapsed = time.time() - self.start_time
@@ -114,8 +121,8 @@ class ProgressLogger:
             self.logger.info(f"[{self.current_step}/{self.total_steps}] ({progress:.1f}%) {message}")
         else:
             self.logger.info(f"[{self.current_step}/{self.total_steps}] ({progress:.1f}%) {self.description}")
-    
-    def complete(self, message: str = None):
+
+    def complete(self, message: str = ""):
         """Log completion."""
         elapsed = time.time() - self.start_time
         if message:
@@ -145,7 +152,7 @@ def log_function_call(func):
     return wrapper
 
 
-def log_data_info(data, name: str, logger: logging.Logger = None):
+def log_data_info(data, name: str, logger: Optional[logging.Logger] = None):
     """Log information about data structures."""
     if logger is None:
         logger = get_logger()
@@ -158,7 +165,7 @@ def log_data_info(data, name: str, logger: logging.Logger = None):
         logger.info(f"📊 {name} type: {type(data).__name__}")
 
 
-def log_file_operation(operation: str, file_path: str, logger: logging.Logger = None):
+def log_file_operation(operation: str, file_path: str, logger: Optional[logging.Logger] = None):
     """Log file operations."""
     if logger is None:
         logger = get_logger()
@@ -166,7 +173,7 @@ def log_file_operation(operation: str, file_path: str, logger: logging.Logger = 
     logger.info(f"📁 {operation}: {file_path}")
 
 
-def log_model_info(model, name: str, logger: logging.Logger = None):
+def log_model_info(model, name: str, logger: Optional[logging.Logger] = None):
     """Log information about models."""
     if logger is None:
         logger = get_logger()

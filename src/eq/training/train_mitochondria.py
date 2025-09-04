@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-Simple Mitochondria Training with FastAI
+Train Mitochondria Segmentation Model - FastAI v2 Compatible
 
-This is a clean, straightforward implementation for training mitochondria models.
+This script trains a mitochondria segmentation model from scratch on EM data.
+This is the first stage of the two-stage training pipeline:
+1. Train mitochondria model from scratch (this script)
+2. Use mitochondria model as base for glomeruli transfer learning
+
+The trained mitochondria model serves as a pretrained base for transfer learning
+to glomeruli segmentation in the second stage.
 """
 
 import pickle
@@ -11,16 +17,28 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 from fastai.callback.all import *
 from fastai.vision.all import *
 
 from eq.models.fastai_segmenter import FastaiSegmenter
 from eq.utils.logger import get_logger
+from eq.core.constants import (
+    DEFAULT_IMAGE_SIZE, 
+    DEFAULT_MASK_THRESHOLD, 
+    DEFAULT_PREDICTION_THRESHOLD, 
+    DEFAULT_BATCH_SIZE, 
+    DEFAULT_EPOCHS, 
+    DEFAULT_LEARNING_RATE,
+    DEFAULT_MITOCHONDRIA_MODEL_DIR
+)
+from eq.data_management.datablock_loader import build_segmentation_dls
+from eq.data_management.standard_getters import get_y_mitochondria
+from fastai.losses import BCEWithLogitsLossFlat
 
 
-def get_y(x):
-    """Get mask path for image path."""
-    return str(x).replace('.jpg', '.png').replace('img_', 'mask_')
+# Use standardized getter function for compatibility
+get_y = get_y_mitochondria
 
 
 def train_mitochondria_model(
@@ -30,10 +48,10 @@ def train_mitochondria_model(
     val_masks: np.ndarray,
     output_dir: str,
     model_name: str,
-    batch_size: int = 16,
-    epochs: int = 50,
-    learning_rate: float = 1e-3,
-    image_size: int = 224
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    epochs: int = DEFAULT_EPOCHS,
+    learning_rate: float = DEFAULT_LEARNING_RATE,
+    image_size: int = DEFAULT_IMAGE_SIZE
 ) -> FastaiSegmenter:
     """
     Train a mitochondria segmentation model.
@@ -120,37 +138,17 @@ def train_mitochondria_model(
     
     logger.info(f"Saved {len(train_img_files)} training and {len(val_img_files)} validation samples")
     
-    # Create DataBlock
-    data_block = DataBlock(
-        blocks=(ImageBlock, MaskBlock(codes=['background', 'mitochondria'])),
-        get_items=lambda x: x,
-        get_y=get_y,
-        splitter=RandomSplitter(valid_pct=0.0, seed=42),  # We already have split
-        item_tfms=[Resize(image_size)],
-        batch_tfms=[Normalize.from_stats(*imagenet_stats)]
-    )
+    # Create DataBlock using the new v2 API
+    logger.info("Creating DataLoaders using FastAI v2 DataBlock...")
+    print("📊 Creating DataLoaders using FastAI v2 DataBlock...")
     
-    # Create DataLoaders with our predefined split
-    all_img_files = train_img_files + val_img_files
-    all_mask_files = train_mask_files + val_mask_files
-    
-    # Custom splitter that uses our predefined train/val split
-    def custom_splitter(items):
-        n_train = len(train_img_files)
-        return (list(range(n_train)), list(range(n_train, len(items))))
-    
-    # Override the splitter
-    data_block.splitter = custom_splitter
-    
-    # Create dataloaders
-    print("📊 Creating DataLoaders...")
-    logger.info("Creating DataLoaders...")
-    dls = data_block.dataloaders(all_img_files, bs=batch_size)
+    # Use the new canonical API
+    dls = build_segmentation_dls(temp_dir, bs=batch_size, num_workers=0)
     
     logger.info(f"Created dataloaders: {len(dls.train_ds)} train, {len(dls.valid_ds)} val")
     print(f"✅ DataLoaders created: {len(dls.train_ds)} train, {len(dls.valid_ds)} val samples")
     
-    # Create U-Net model
+    # Create U-Net model with v2 n_out parameter
     logger.info("Creating U-Net model...")
     print("🏗️  Creating U-Net model...")
     
@@ -159,10 +157,15 @@ def train_mitochondria_model(
     learn = unet_learner(
         dls, 
         resnet34, 
+        n_out=1,  # FastAI v2 requires n_out parameter for binary segmentation
         metrics=Dice,
         opt_func=Adam,
         pretrained=False,  # Start from scratch for mitochondria
     )
+    
+    # Set the correct loss function for binary segmentation
+    learn.loss_func = BCEWithLogitsLossFlat()  # type: ignore
+    
     print("✅ U-Net model created")
     logger.info("U-Net model created successfully")
     
@@ -314,6 +317,15 @@ def train_mitochondria_model(
         # Make predictions
         with learn.no_bar():
             preds = learn.predict(images[:4])  # Predict on first 4 images
+        # FastAI v2 predict returns (prediction, target, loss), we want just the prediction
+        if isinstance(preds, tuple):
+            preds = preds[0]
+        
+        # Ensure preds is a tensor and handle None case
+        if preds is None:
+            preds = torch.zeros((4, 1, images[0].shape[-2], images[0].shape[-1]))
+        elif not isinstance(preds, torch.Tensor):
+            preds = torch.tensor(preds)
         
         # Create a grid of images, masks, and predictions
         fig, axes = plt.subplots(4, 3, figsize=(12, 16))
@@ -343,8 +355,11 @@ def train_mitochondria_model(
             axes[i, 1].set_title(f'Ground Truth {i+1}')
             axes[i, 1].axis('off')
             
-            # Prediction
-            pred_mask = preds[i].argmax(dim=0) if preds[i].dim() > 2 else preds[i]
+            # Prediction - for binary segmentation, use sigmoid and threshold
+            if i < len(preds) and preds[i] is not None:
+                pred_mask = (preds[i].sigmoid() > DEFAULT_PREDICTION_THRESHOLD).float()
+            else:
+                pred_mask = torch.zeros_like(masks[i])
             axes[i, 2].imshow(pred_mask, cmap='gray')
             axes[i, 2].set_title(f'Prediction {i+1}')
             axes[i, 2].axis('off')
@@ -357,13 +372,17 @@ def train_mitochondria_model(
     except Exception as e:
         logger.warning(f"Could not save sample predictions plot: {e}")
     
-    # Save the model first (define model_path before using it)
-    if QUICK_TEST:
-        model_filename = f"{model_name}_TESTING_RUN.pkl"
-        logger.info("TESTING RUN: Model will be saved with TESTING_RUN suffix")
-    else:
-        model_filename = f"{model_name}.pkl"
-    
+    # Save the model first (define model_path before using it) with parameterized name
+    def _fmt_suffix(e, b, lr, sz, tag=""):
+        lr_str = (f"{lr:.0e}" if lr < 1e-2 else f"{lr:.3f}").replace("-0", "-")
+        parts = [f"e{e}", f"b{b}", f"lr{lr_str}", f"sz{sz}"]
+        if tag:
+            parts.insert(0, tag)
+        return "_".join(parts)
+
+    # Always use production-safe tag names in models/segmentation
+    run_tag = _fmt_suffix(epochs, batch_size, learning_rate, image_size, tag="pretrain")
+    model_filename = f"{model_name}-{run_tag}.pkl"
     model_path = output_path / model_filename
     learn.export(model_path)
     logger.info(f"Model saved to {model_path}")
@@ -397,7 +416,7 @@ def train_mitochondria_model(
                 f.write(f"Final Dice score: {final_metrics[2] if len(final_metrics) > 2 else 'N/A'}\n")
             
             f.write(f"\nModel saved to: {model_path}\n")
-            f.write(f"Training history saved to: {history_path}\n")
+            f.write(f"Training history saved to: {output_path / 'training_history.pkl'}\n")
             f.write(f"Diagnostic plots saved to: {output_path}\n")
         
         logger.info(f"Training summary saved to {metrics_summary}")
@@ -428,17 +447,32 @@ def train_mitochondria_model(
     import shutil
     shutil.rmtree(temp_dir)
     
-    return learn
+    # Create a FastaiSegmenter wrapper for the trained learner
+    from eq.models.fastai_segmenter import FastaiSegmenter, SegmentationConfig
+    
+    # Create a config object with the training parameters
+    config = SegmentationConfig(
+        image_size=image_size,
+        batch_size=batch_size,
+        learning_rate=final_lr,
+        epochs=epochs
+    )
+    
+    # Create segmenter and set the trained learner
+    segmenter = FastaiSegmenter(config)
+    segmenter.learn = learn  # Set the trained learner directly
+    
+    return segmenter
 
 
 def train_mitochondria_from_cache(
     cache_dir: str,
     output_dir: str,
     model_name: str,
-    batch_size: int = 16,
-    epochs: int = 50,
-    learning_rate: float = 1e-3,
-    image_size: int = 224
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    epochs: int = DEFAULT_EPOCHS,
+    learning_rate: float = DEFAULT_LEARNING_RATE,
+    image_size: int = DEFAULT_IMAGE_SIZE
 ) -> FastaiSegmenter:
     """
     Train mitochondria model from cached data.
@@ -484,3 +518,278 @@ def train_mitochondria_from_cache(
         learning_rate=learning_rate,
         image_size=image_size
     )
+
+
+def train_mitochondria_with_datablock(
+    data_dir: str,
+    output_dir: str,
+    model_name: str,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    epochs: int = DEFAULT_EPOCHS,
+    learning_rate: float = DEFAULT_LEARNING_RATE,
+    image_size: int = DEFAULT_IMAGE_SIZE
+):
+    """
+    Train mitochondria segmentation model using FastAI v2 DataBlock approach.
+    
+    Args:
+        data_dir: Directory containing image_patches/ and mask_patches/
+        output_dir: Directory to save model and results
+        model_name: Name for the model
+        batch_size: Training batch size
+        epochs: Number of training epochs
+        learning_rate: Learning rate
+        image_size: Input image size
+        
+    Returns:
+        Trained FastaiSegmenter instance
+    """
+    logger = get_logger("eq.mitochondria_training")
+    logger.info("Starting mitochondria model training with DataBlock...")
+    
+    # Create output directory
+    output_path = Path(output_dir) / model_name
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    logger.info(f"Loading data from: {data_dir}")
+    
+    # Build DataLoaders using DataBlock approach
+    dls = build_segmentation_dls(data_dir, bs=batch_size, num_workers=0)
+    
+    logger.info(f"Data loaded: {len(dls.train_ds)} train, {len(dls.valid_ds)} val samples")
+    
+    # Create learner
+    learn = unet_learner(dls, resnet34, n_out=2, metrics=DiceMulti())
+    
+    # Train the model with callbacks for visualization
+    logger.info(f"Training for {epochs} epochs...")
+    
+    # Add callbacks for training visualization
+    from fastai.callback.tracker import SaveModelCallback
+    
+    # Save best model during training
+    save_callback = SaveModelCallback(monitor='valid_loss', fname='best_model')
+    
+    # Train with callbacks
+    learn.fit_one_cycle(epochs, lr_max=learning_rate, cbs=[save_callback])
+    
+    # Generate training visualizations
+    logger.info("Generating training visualizations...")
+    
+    # Plot training history
+    try:
+        learn.recorder.plot_loss()
+        plt.savefig(output_path / "training_loss.png", dpi=150, bbox_inches='tight')
+        plt.close()
+        logger.info(f"Training loss plot saved to: {output_path / 'training_loss.png'}")
+    except Exception as e:
+        logger.warning(f"Could not save loss plot: {e}")
+    
+    # Plot learning rate schedule
+    try:
+        learn.recorder.plot_lr()
+        plt.savefig(output_path / "learning_rate_schedule.png", dpi=150, bbox_inches='tight')
+        plt.close()
+        logger.info(f"Learning rate plot saved to: {output_path / 'learning_rate_schedule.png'}")
+    except Exception as e:
+        logger.warning(f"Could not save LR plot: {e}")
+    
+    # Plot metrics
+    try:
+        learn.recorder.plot_metrics()
+        plt.savefig(output_path / "training_metrics.png", dpi=150, bbox_inches='tight')
+        plt.close()
+        logger.info(f"Training metrics plot saved to: {output_path / 'training_metrics.png'}")
+    except Exception as e:
+        logger.warning(f"Could not save metrics plot: {e}")
+    
+    # Show some predictions on validation set
+    try:
+        # Get a few validation samples
+        val_dl = learn.dls.valid
+        batch = next(iter(val_dl))
+        images, masks = batch
+        
+        # Make predictions
+        with learn.no_bar():
+            preds = learn.get_preds(dl=val_dl.new(shuffle=False, drop_last=False))
+        
+        # Plot first few predictions
+        fig, axes = plt.subplots(3, 4, figsize=(16, 12))
+        for i in range(min(3, len(images))):
+            # Original image
+            axes[i, 0].imshow(images[i].permute(1, 2, 0).cpu().numpy())
+            axes[i, 0].set_title(f'Image {i+1}')
+            axes[i, 0].axis('off')
+            
+            # Ground truth mask
+            axes[i, 1].imshow(masks[i].cpu().numpy(), cmap='gray')
+            axes[i, 1].set_title(f'Ground Truth {i+1}')
+            axes[i, 1].axis('off')
+            
+            # Prediction
+            pred_mask = preds[0][i].argmax(dim=0).cpu().numpy()
+            axes[i, 2].imshow(pred_mask, cmap='gray')
+            axes[i, 2].set_title(f'Prediction {i+1}')
+            axes[i, 2].axis('off')
+            
+            # Overlay
+            overlay = images[i].permute(1, 2, 0).cpu().numpy().copy()
+            pred_overlay = pred_mask > 0
+            overlay[pred_overlay] = [1, 0, 0]  # Red overlay for predictions
+            axes[i, 3].imshow(overlay)
+            axes[i, 3].set_title(f'Overlay {i+1}')
+            axes[i, 3].axis('off')
+        
+        plt.tight_layout()
+        plt.savefig(output_path / "validation_predictions.png", dpi=150, bbox_inches='tight')
+        plt.close()
+        logger.info(f"Validation predictions saved to: {output_path / 'validation_predictions.png'}")
+    except Exception as e:
+        logger.warning(f"Could not save validation predictions: {e}")
+    
+    # Print training summary
+    logger.info("=" * 60)
+    logger.info("TRAINING SUMMARY")
+    logger.info("=" * 60)
+    
+    # Safely access recorder data using FastAI v2 attributes
+    if hasattr(learn, 'recorder') and learn.recorder:
+        if hasattr(learn.recorder, 'log') and learn.recorder.log:
+            logger.info(f"Training log entries: {len(learn.recorder.log)}")
+        
+        if hasattr(learn.recorder, 'values') and learn.recorder.values:
+            final_values = learn.recorder.values[-1] if learn.recorder.values else []
+            if len(final_values) >= 1:
+                logger.info(f"Final training loss: {final_values[0]:.6f}")
+            if len(final_values) >= 2:
+                logger.info(f"Final validation loss: {final_values[1]:.6f}")
+        
+        if hasattr(learn.recorder, 'losses') and learn.recorder.losses:
+            logger.info(f"Training losses recorded: {len(learn.recorder.losses)}")
+            if learn.recorder.losses:
+                logger.info(f"Final training loss: {learn.recorder.losses[-1]:.6f}")
+        
+        if hasattr(learn.recorder, 'metric_names') and learn.recorder.metric_names:
+            logger.info(f"Metric names: {learn.recorder.metric_names}")
+    else:
+        logger.info("Training completed - recorder data not available")
+    
+    logger.info("=" * 60)
+    
+    # Save the model (parameterized name)
+    def _fmt_suffix2(e, b, lr, sz, tag=""):
+        lr_str = (f"{lr:.0e}" if lr < 1e-2 else f"{lr:.3f}").replace("-0", "-")
+        parts = [f"e{e}", f"b{b}", f"lr{lr_str}", f"sz{sz}"]
+        if tag:
+            parts.insert(0, tag)
+        return "_".join(parts)
+    run_tag2 = _fmt_suffix2(epochs, batch_size, learning_rate, image_size, tag="pretrain")
+    model_path = output_path / f"{model_name}-{run_tag2}.pkl"
+    learn.export(model_path)
+    logger.info(f"Model saved to: {model_path}")
+    
+    # Save training history as JSON
+    try:
+        import json
+        training_history = {
+            'epochs': epochs,
+            'batch_size': batch_size,
+            'learning_rate': learning_rate
+        }
+        
+        # Safely add recorder data if available using FastAI v2 attributes
+        if hasattr(learn, 'recorder') and learn.recorder:
+            if hasattr(learn.recorder, 'log') and learn.recorder.log:
+                training_history['log'] = [float(x) if isinstance(x, (int, float)) else str(x) for x in learn.recorder.log]
+            
+            if hasattr(learn.recorder, 'values') and learn.recorder.values:
+                training_history['values'] = [[float(v) if isinstance(v, (int, float)) else str(v) for v in row] for row in learn.recorder.values]
+            
+            if hasattr(learn.recorder, 'losses') and learn.recorder.losses:
+                training_history['losses'] = [float(x) for x in learn.recorder.losses]
+            
+            if hasattr(learn.recorder, 'metric_names') and learn.recorder.metric_names:
+                training_history['metric_names'] = list(learn.recorder.metric_names)
+        
+        with open(output_path / "training_history.json", 'w') as f:
+            json.dump(training_history, f, indent=2)
+        logger.info(f"Training history saved to: {output_path / 'training_history.json'}")
+    except Exception as e:
+        logger.warning(f"Could not save training history: {e}")
+    
+    # Return the learner for now (can be wrapped later if needed)
+    return learn
+
+
+def main():
+    """CLI interface for mitochondria training."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Train mitochondria segmentation model')
+    parser.add_argument('--config', help='Optional YAML config file to override defaults')
+    parser.add_argument('--data-dir', required=True, help='Directory containing image_patches/ and mask_patches/')
+    parser.add_argument('--model-dir', default=DEFAULT_MITOCHONDRIA_MODEL_DIR, help='Directory to save trained model')
+    parser.add_argument('--model-name', default='mitochondria_model', help='Base name for saved model files')
+    parser.add_argument('--epochs', type=int, default=DEFAULT_EPOCHS, help='Number of training epochs')
+    parser.add_argument('--batch-size', type=int, default=DEFAULT_BATCH_SIZE, help='Training batch size')
+    parser.add_argument('--learning-rate', type=float, default=DEFAULT_LEARNING_RATE, help='Learning rate')
+    parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Input image size')
+    
+    args = parser.parse_args()
+
+    # Optional: load YAML config and overlay onto args
+    if args.config:
+        try:
+            import yaml  # type: ignore
+            with open(args.config, 'r') as f:
+                cfg_yaml = yaml.safe_load(f) or {}
+            # training hyperparams
+            model_cfg = cfg_yaml.get('model', {}) if isinstance(cfg_yaml.get('model'), dict) else {}
+            training_cfg = model_cfg.get('training', {}) if isinstance(model_cfg.get('training'), dict) else {}
+            if 'epochs' in training_cfg and not parser.get_default('epochs') == args.epochs:
+                args.epochs = int(training_cfg['epochs'])
+            if 'batch_size' in training_cfg and not parser.get_default('batch_size') == args.batch_size:
+                args.batch_size = int(training_cfg['batch_size'])
+            if 'learning_rate' in training_cfg and not parser.get_default('learning_rate') == args.learning_rate:
+                args.learning_rate = float(training_cfg['learning_rate'])
+            # output model dir from checkpoint_path
+            if 'checkpoint_path' in cfg_yaml.get('model', {}):
+                from pathlib import Path as _P
+                ckpt = _P(cfg_yaml['model']['checkpoint_path'])
+                args.model_dir = str(ckpt.parent)
+                # Only take name from YAML if CLI didn't override
+                if parser.get_default('model_name') == args.model_name:
+                    args.model_name = ckpt.stem
+        except Exception as _e:  # pragma: no cover
+            print(f"⚠️  Failed to load config {args.config}: {_e}")
+    
+    try:
+        logger = get_logger("eq.mitochondria_training")
+        logger.info("🚀 Starting mitochondria model training...")
+        logger.info(f"📁 Data directory: {args.data_dir}")
+        logger.info(f"📁 Model directory: {args.model_dir}")
+        logger.info(f"⚙️  Epochs: {args.epochs}, Batch size: {args.batch_size}")
+        
+        # Train the model using DataBlock approach
+        model = train_mitochondria_with_datablock(
+            data_dir=args.data_dir,
+            output_dir=args.model_dir,
+            model_name=args.model_name,
+            batch_size=args.batch_size,
+            epochs=args.epochs,
+            learning_rate=args.learning_rate,
+            image_size=args.image_size
+        )
+        
+        logger.info("🎉 Mitochondria training completed successfully!")
+        print(f"✅ Model saved to: {args.model_dir}/{args.model_name}")
+        
+    except Exception as e:
+        logger.error(f"❌ Training failed: {e}")
+        print(f"❌ Training failed: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    main()

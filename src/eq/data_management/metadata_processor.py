@@ -9,9 +9,10 @@ and converts them to a standardized, project-agnostic structure.
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union, cast
 
 import pandas as pd
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -129,9 +130,9 @@ class MetadataProcessor:
         long_df = long_df.dropna(subset=['score'])
         
         # Ensure proper data types using modern pandas - handle each column carefully
-        long_df['glomerulus_id'] = pd.to_numeric(long_df['glomerulus_id'], errors='coerce').astype('Int64')
-        long_df['score'] = pd.to_numeric(long_df['score'], errors='coerce').astype('float64')
-        long_df['subject_id'] = long_df['subject_id'].astype('string')
+        long_df['glomerulus_id'] = pd.to_numeric(long_df['glomerulus_id'], errors='coerce').astype('Int64')  # type: ignore[attr-defined]
+        long_df['score'] = pd.to_numeric(long_df['score'], errors='coerce').astype('float64')  # type: ignore[attr-defined]
+        long_df['subject_id'] = long_df['subject_id'].astype('string')  # type: ignore[attr-defined]
         
         # Remove any remaining NaN values
         long_df = long_df.dropna()
@@ -155,15 +156,16 @@ class MetadataProcessor:
         if df is None:
             raise ValueError("No data available. Run process_glomeruli_scoring_matrix first.")
         
-        # Modern pandas aggregation syntax
-        summary = df.groupby('subject_id', as_index=False).agg({
+        # Modern pandas aggregation syntax (ensure DataFrame return)
+        grouped = df.groupby('subject_id', as_index=False).agg({
             'score': ['count', 'mean', 'std', 'min', 'max', 'median']
         }).round(3)
+        summary_df: pd.DataFrame = cast(pd.DataFrame, grouped)
         
         # Flatten column names using modern pandas
-        summary.columns = ['subject_id', 'num_glomeruli', 'mean_score', 'std_score', 'min_score', 'max_score', 'median_score']
+        summary_df.columns = ['subject_id', 'num_glomeruli', 'mean_score', 'std_score', 'min_score', 'max_score', 'median_score']
         
-        return summary
+        return summary_df
     
     def validate_data_quality(self, df: Optional[pd.DataFrame] = None, raw_data_dir: Optional[str] = None) -> Dict:
         """
@@ -183,14 +185,29 @@ class MetadataProcessor:
             raise ValueError("No data available. Run process_glomeruli_scoring_matrix first.")
         
         # Metadata quality validation
+        # Ensure numeric types explicitly to satisfy static typing
+        score_series: pd.Series = pd.to_numeric(df['score'], errors='coerce')  # type: ignore[assignment]
+        score_np: np.ndarray = score_series.to_numpy(dtype=float, copy=False)
+        min_score = float(np.nanmin(score_np)) if score_np.size else 0.0
+        max_score = float(np.nanmax(score_np)) if score_np.size else 0.0
+        unique_scores_list = [float(x) for x in sorted(np.unique(score_np[~np.isnan(score_np)]).tolist())]
+        subjects_desc = df.groupby('subject_id').size().describe()
+        subjects_stats = {str(k): float(v) for k, v in subjects_desc.to_dict().items()}
+        glom_series: pd.Series = pd.to_numeric(df['glomerulus_id'], errors='coerce')  # type: ignore[assignment]
+        glom_np: np.ndarray = glom_series.to_numpy(dtype=float, copy=False)
+        s_max = float(np.nanmax(glom_np)) if glom_np.size else 0.0
+        max_glom_int = int(s_max) if np.isfinite(s_max) and s_max > 0 else 0
+        subj_n = int(df['subject_id'].nunique())
+        completeness = float(len(df) / (subj_n * max_glom_int)) if max_glom_int > 0 else 0.0
+
         metadata_validation = {
             'total_subjects': int(df['subject_id'].nunique()),
             'total_glomeruli': int(len(df)),
-            'score_range': [float(df['score'].min()), float(df['score'].max())],
-            'unique_scores': [float(x) for x in sorted(df['score'].unique())],
+            'score_range': [min_score, max_score],
+            'unique_scores': unique_scores_list,
             'missing_scores': int(df['score'].isna().sum()),
-            'subjects_with_data': {k: float(v) for k, v in df.groupby('subject_id').size().describe().to_dict().items()},
-            'data_completeness': float(len(df) / (df['subject_id'].nunique() * df['glomerulus_id'].max())) if df['glomerulus_id'].max() > 0 else 0.0
+            'subjects_with_data': subjects_stats,
+            'data_completeness': completeness
         }
         
         validation_results = {
@@ -239,13 +256,13 @@ class MetadataProcessor:
             subject_id = subject_dir.name
             
             # Find images in this subject directory
-            images = list(subject_dir.glob("*.jpg")) + list(subject_dir.glob("*.tif"))
+            images = list(subject_dir.glob("*.png")) + list(subject_dir.glob("*.tif"))
             
             # Find corresponding masks in the masks directory
             mask_subject_dir = masks_dir / subject_id
             masks = []
             if mask_subject_dir.exists():
-                masks = list(mask_subject_dir.glob("*.jpg")) + list(mask_subject_dir.glob("*.tif"))
+                masks = list(mask_subject_dir.glob("*.png")) + list(mask_subject_dir.glob("*.tif"))
             
             if images:
                 file_validation['subjects_with_images'] += 1
@@ -398,7 +415,7 @@ def process_metadata_file(
 if __name__ == "__main__":
     # Example usage
     import logging
-    logging.basicConfig(level=logging.INFO)
+    # logging configured centrally via eq.utils.logger.setup_logging
     
     # Process the current metadata file
     input_file = "raw_data/preeclampsia_project/subject_metadata.xlsx"

@@ -1,0 +1,23 @@
+{
+  "search.exclude": {
+    "**/.history/**": true,
+    "**/.ruff_cache/**": true,
+    "**/.pytest_cache/**": true,
+    "**/.tox/**": true,
+    "**/.nox/**": true,
+    "**/.git/**": true,
+    "**/.venv/**": true,
+    "**/.env/**": true
+  },
+  "python.analysis.exclude": [
+    "**/.history/**",
+    "**/.ruff_cache/**",
+    "**/.pytest_cache/**",
+    "**/.tox/**",
+    "**/.nox/**",
+    "**/.git/**",
+    "**/.venv/**",
+    "**/.env/**"
+  }
+}
+# Add directories or file patterns to ignore during indexing (e.g. foo/ or *.csv)

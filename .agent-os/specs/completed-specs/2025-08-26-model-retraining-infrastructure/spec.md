@@ -351,3 +351,4 @@ src/eq/
 2. Reorganized training infrastructure with clear separation from pipeline scripts
 3. Updated `train_glomeruli.py` script that uses new mitochondria model as base
 4. Tested integration of new models with existing inference pipeline
+

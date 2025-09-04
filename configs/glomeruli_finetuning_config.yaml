@@ -7,7 +7,7 @@ description: "Fine-tune mitochondria-pretrained U-Net on glomeruli segmentation 
 
 # Transfer Learning Configuration
 pretrained_model:
-  path: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model-e50_b16.pkl"
+  path: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model-e50_b16.pkl"  # Using standardized path
   description: "Mitochondria-pretrained U-Net model"
   freeze_encoder: false  # Allow full fine-tuning
 
@@ -66,7 +66,7 @@ model:
       monitor: "val_dice"
       
   # Output model path
-  checkpoint_path: "models/segmentation/glomeruli_xfer_learn/glom_dynamic_unet_seg_model-e50_b16.pkl"
+  checkpoint_path: "models/segmentation/glomeruli/glom_dynamic_unet_seg_model-e50_b16.pkl"  # Using standardized path
 
 # Label Studio Integration
 label_studio:

@@ -1,28 +1,44 @@
 name: eq
 channels:
   - conda-forge
+  - pytorch
+  - nvidia
   - defaults
 dependencies:
-  - python=3.9
+  - python=3.10
   - pip
-  - numpy=1.23.5
-  - scipy
-  - scikit-learn
-  - matplotlib
-  - pandas
-  - pillow
-  - opencv
-  - lightgbm
-  - xgboost
+
+  # Core scientific computing - proven stable versions
+  - numpy=1.24.3
+  - scipy=1.10.1
+  - scikit-learn=1.3.0
+  - matplotlib=3.7.2
+  - pandas=2.0.3
+  
+  # Image processing - stable versions
+  - pillow=9.5.0
+  - opencv=4.8.0
+  - tifffile=2023.7.10
+  
+  # ML libraries - stable versions
+  - lightgbm=4.0.0
+  - xgboost=1.7.6
+  
+  # Development tools
   - ipykernel
   - jupyter
   - setuptools<81
+  
+  # Stable PyTorch stack with CUDA 11.5 (WSL2 compatible)
+  - pytorch=2.1.0
+  - torchvision=0.16.0
+  - pytorch-cuda=11.5
+  
+  # Stable FastAI v2 and other pip packages
   - pip:
-      # fastai/PyTorch stack for cross-platform support (MPS/CUDA)
-      - fastai>=2.7.0
-      - torch
-      - torchvision
-      - torchaudio
-      - albumentations
-      - scikit-optimize
-      - pytest
+      - "numpy<2.0"  # Force NumPy 1.x compatibility
+      - alive-progress==3.3.0
+      - fastai==2.7.13
+      - albumentations==1.3.1
+      - scikit-optimize==0.9.0
+      - pytest==7.4.0

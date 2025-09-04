@@ -13,20 +13,14 @@ Provides unified image processing, patchification, and file conversion tools.
 
 # Import processing functionality
 from .convert_files import convert_tif_to_jpg  # File conversion (from io/convert_files_to_jpg.py)
-from .image_mask_preprocessing import (  # Image patchification (from patches/patchify_images.py)
-    patchify_image_and_mask_dirs,
-    patchify_image_dir,
-)
+from .image_mask_preprocessing import patchify_dataset  # Unified image patchification
 from .preprocessing import (  # Core preprocessing functions
     resize_image_standard,
     resize_image_large,
     preprocess_image_for_model,
     normalize_image_array,
 )
-from .create_mitochondria_patches import (  # Mitochondria-specific processing
-    create_patches_from_image,
-    create_mitochondria_patches,
-)
+# Note: create_mitochondria_patches.py removed - functionality replaced by patchify_dataset
 
 # TODO: Add feature extraction functionality from features/ (non-data-loading parts)
 
@@ -41,12 +35,9 @@ __all__ = [
     'normalize_image_array',
     
     # Image patchification
-    'patchify_image_dir',
-    'patchify_image_and_mask_dirs',
+    'patchify_dataset',
     
-    # Mitochondria patch creation
-    'create_patches_from_image',
-    'create_mitochondria_patches',
+    # Note: Mitochondria patch creation functions removed - use patchify_dataset instead
 ]
 
 # Version info

@@ -16,3 +16,4 @@ This is the technical specification for the spec detailed in @.agent-os/specs/20
 ## External Dependencies
 
 No new external dependencies required - will use existing FastAI v2, PyTorch, and project dependencies already defined in environment.yml.
+
