@@ -1,3 +1,0 @@
-# Spec Summary (Lite)
-
-Develop and test the endotheliosis quantifier pipeline as a new user would experience it, ensuring each component (data ingestion, model training, inference, and evaluation) works independently with good reusable and scalable code practices. The goal is to create a robust, testable pipeline that can be run end-to-end by new users while maintaining modularity for development and debugging. Users should be able to install the package, run data preprocessing, train models independently, perform inference, evaluate performance, and execute the complete production pipeline with comprehensive testing coverage for each component.

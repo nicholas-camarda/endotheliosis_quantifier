@@ -70,4 +70,4 @@ docs/_build/
 
 # Exclude all hidden folders except .agent-os
 .*/
-!.agent-os/
+!.agent-os/.agent-os/
