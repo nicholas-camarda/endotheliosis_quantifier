@@ -12,16 +12,6 @@ Provides unified training infrastructure for mitochondria and glomeruli models.
 
 from eq.core.constants import DEFAULT_BATCH_SIZE, DEFAULT_EPOCHS, DEFAULT_LEARNING_RATE
 
-# Import training functionality
-from .train_mitochondria import (
-    train_mitochondria_model,
-    train_mitochondria_from_cache,
-)
-
-from .train_glomeruli import (
-    train_glomeruli_with_transfer_learning,
-)
-
 # Create wrapper functions with expected names
 def train_mitochondria(data_dir, model_dir, epochs=None, batch_size=None, **kwargs):
     """
@@ -37,15 +27,16 @@ def train_mitochondria(data_dir, model_dir, epochs=None, batch_size=None, **kwar
     Returns:
         Trained model
     """
-    from eq.training.train_mitochondria import train_mitochondria_from_cache
+    # Lazy import to avoid importing submodules at package import time
+    from eq.training.train_mitochondria import train_mitochondria_with_datablock
     
     # Use constants defaults if not provided
     epochs = epochs or DEFAULT_EPOCHS
     batch_size = batch_size or DEFAULT_BATCH_SIZE
     
     # For now, assume data_dir contains cached pickle files
-    return train_mitochondria_from_cache(
-        cache_dir=data_dir,
+    return train_mitochondria_with_datablock(
+        data_dir=data_dir,
         output_dir=model_dir,
         model_name="mitochondria_model",
         epochs=epochs,
@@ -69,6 +60,7 @@ def train_glomeruli(data_dir, model_dir, base_model=None, epochs=None, batch_siz
     Returns:
         Trained model
     """
+    # Lazy import to avoid importing submodules at package import time
     from eq.training.train_glomeruli import train_glomeruli_with_transfer_learning
     
     # Use constants defaults if not provided
@@ -119,13 +111,9 @@ def save_training_results(results, output_dir):
 
 # Public API
 __all__ = [
-    # Training scripts
+    # Public wrappers (lazy import inside functions)
     'train_mitochondria',
     'train_glomeruli',
-    'train_mitochondria_model',
-    'train_mitochondria_from_cache',
-    'train_glomeruli_with_transfer_learning',
-    
     # Training utilities
     'setup_training_environment',
     'validate_training_data',

@@ -17,10 +17,10 @@ CONSOLIDATED ARCHITECTURE:
 
 # Data loading functions (consolidated into datablock_loader)
 from .datablock_loader import (
-    default_get_y as get_glom_y,
     build_segmentation_datablock,
     build_segmentation_dls,
 )
+from .standard_getters import get_y as get_glom_y
 
 # Model loading functions (consolidated from model_loader.py and model_loading.py)
 from .model_loading import (

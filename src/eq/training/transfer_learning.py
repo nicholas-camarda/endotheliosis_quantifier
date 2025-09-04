@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, Union
 import torch
 from fastai.vision.all import *
-from fastai.losses import BCEWithLogitsLossFlat
+# BCEWithLogitsLossFlat import removed - using FastAI v2 automatic loss selection
 
 from eq.data_management.standard_getters import get_y_universal
 from eq.utils.logger import get_logger
@@ -62,15 +62,15 @@ def load_model_for_transfer_learning(
     
     logger.info(f"Created target data loaders: {len(target_dls.train_ds)} train, {len(target_dls.valid_ds)} val")
     
-    # Create new learner with same architecture
-    # Pass loss_func at construction time to satisfy the type checker
+    # Create new learner with same architecture as mitochondria model (FastAI v2 approach)
     learn = unet_learner(
         target_dls,
         resnet34,
-        n_out=1,
-        metrics=DiceMulti(),
-        loss_func=BCEWithLogitsLossFlat(),
+        n_out=2,  # 2 classes: background (0) + glomeruli (1) - matches mitochondria model
+        metrics=Dice,  # Standard Dice metric works with multiclass!
     )
+    # FastAI automatically sets CrossEntropyLossFlat for n_out=2, don't override
+    print(f"Transfer learning using loss function: {learn.loss_func}")
     
     # Load the pretrained weights
     try:
@@ -151,6 +151,10 @@ def transfer_learn_glomeruli(
     """
     logger.info("Starting transfer learning from mitochondria to glomeruli")
     
+    # Create transfer learning output directory
+    output_path = Path(output_dir) / "transfer"
+    output_path.mkdir(parents=True, exist_ok=True)
+    
     # Load pretrained model for transfer learning
     learn = load_model_for_transfer_learning(
         base_model_path, 
@@ -173,23 +177,22 @@ def transfer_learn_glomeruli(
     # Save training plots similar to mito
     try:
         learn.recorder.plot_loss()
-        plt.savefig(Path(output_dir) / f"{model_name}_training_loss.png")
+        plt.savefig(output_path / f"{model_name}_training_loss.png")
         plt.close()
     except Exception as _e:
         logger.warning(f"Could not save training loss plot: {_e}")
 
     try:
         learn.show_results(max_n=8, figsize=(8, 8))
-        plt.savefig(Path(output_dir) / f"{model_name}_validation_predictions.png")
+        plt.savefig(output_path / f"{model_name}_validation_predictions.png")
         plt.close()
     except Exception as _e:
         logger.warning(f"Could not save validation predictions plot: {_e}")
 
     # Save the model (include params in name)
     model_tag = _format_run_suffix(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate, image_size=learn.dls.one_batch()[0].shape[-1], tag="xfer")
-    output_path = Path(output_dir) / f"{model_name}-{model_tag}.pkl"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    learn.export(output_path)
-    logger.info(f"Model saved to: {output_path}")
+    model_path = output_path / f"{model_name}-{model_tag}.pkl"
+    learn.export(model_path)
+    logger.info(f"Model saved to: {model_path}")
     
     return learn

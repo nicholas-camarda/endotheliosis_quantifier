@@ -29,7 +29,7 @@ from eq.utils.config_manager import ConfigManager
 from eq.data_management.datablock_loader import build_segmentation_dls
 from eq.data_management.standard_getters import get_y_glomeruli, get_y_universal
 from eq.training.transfer_learning import transfer_learn_glomeruli
-from fastai.losses import BCEWithLogitsLossFlat
+# BCEWithLogitsLossFlat import removed - using FastAI v2 automatic loss selection
 from eq.core.constants import (
     DEFAULT_IMAGE_SIZE, DEFAULT_MASK_THRESHOLD, DEFAULT_PREDICTION_THRESHOLD, 
     DEFAULT_BATCH_SIZE, DEFAULT_EPOCHS, DEFAULT_LEARNING_RATE,
@@ -37,7 +37,7 @@ from eq.core.constants import (
     DEFAULT_MAX_WARP, DEFAULT_MAX_LIGHTING, DEFAULT_RANDOM_ERASING_P,
     DEFAULT_RANDOM_ERASING_SL, DEFAULT_RANDOM_ERASING_SH, 
     DEFAULT_RANDOM_ERASING_MIN_ASPECT, DEFAULT_RANDOM_ERASING_MAX_COUNT,
-    DEFAULT_GLOMERULI_MODEL_DIR
+    DEFAULT_GLOMERULI_MODEL_DIR, DEFAULT_MITOCHONDRIA_MODEL_DIR
 )
 
 logger = get_logger("eq.retrain_glomeruli_original")
@@ -178,19 +178,49 @@ def train_glomeruli_with_datablock(
     logger = get_logger("eq.glomeruli_training")
     logger.info("Starting glomeruli model training with DataBlock and transfer learning...")
     
-    # Create output directory
-    output_path = Path(output_dir) / model_name
+    # Create output directory - organize by training approach (transfer vs scratch) and model name
+    approach = "transfer" if base_model_path and Path(base_model_path).exists() else "scratch"
+    output_path = Path(output_dir) / approach / model_name
     output_path.mkdir(parents=True, exist_ok=True)
     
     logger.info(f"Loading data from: {data_dir}")
     
     # Build DataLoaders using DataBlock approach
     dls = build_segmentation_dls(data_dir, bs=batch_size, num_workers=0)
+
+    # Minimal split manifest for audit (write to model output folder)
+    try:
+        import json
+        from datetime import datetime as _dt
+        splits_dir = output_path
+        splits_dir.mkdir(parents=True, exist_ok=True)
+        split_manifest = {
+            "stage": "glomeruli",
+            "generated_at": _dt.now().isoformat(),
+            "train_images": [str(p) for p in getattr(dls.train_ds, 'items', [])],
+            "valid_images": [str(p) for p in getattr(dls.valid_ds, 'items', [])],
+            "counts": {
+                "train": int(len(getattr(dls.train_ds, 'items', []))),
+                "valid": int(len(getattr(dls.valid_ds, 'items', [])))
+            }
+        }
+        with open(splits_dir / "splits.json", 'w') as f:
+            json.dump(split_manifest, f, indent=2)
+        logger.info(f"Wrote split manifest to {splits_dir / 'splits.json'}")
+    except Exception as _e:
+        logger.warning(f"Could not write split manifest: {_e}")
     
     logger.info(f"Data loaded: {len(dls.train_ds)} train, {len(dls.valid_ds)} val samples")
     
-    # Create learner
-    learn = unet_learner(dls, resnet34, n_out=2, metrics=DiceMulti())
+    # Create learner: binary glomeruli segmentation (FastAI v2 approach)
+    learn = unet_learner(
+        dls,
+        resnet34,
+        n_out=2,  # 2 classes: background (0) + glomeruli (1)
+        metrics=Dice,  # Standard Dice metric works with multiclass!
+    )
+    # FastAI automatically sets CrossEntropyLossFlat for n_out=2, don't override
+    print(f"Using default loss function: {learn.loss_func}")
     
     # Load pretrained model if provided
     if base_model_path and Path(base_model_path).exists():
@@ -223,7 +253,7 @@ def train_glomeruli_with_datablock(
         logger.warning(f"Could not save validation predictions plot: {_e}")
 
     # Save the model (include params in name)
-    model_tag = _format_run_suffix(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate, image_size=image_size, tag="scratch")
+    model_tag = _format_run_suffix(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate, image_size=image_size, tag=approach)
     model_path = output_path / f"{model_name}-{model_tag}.pkl"
     learn.export(model_path)
     logger.info(f"Model saved to: {model_path}")
@@ -232,9 +262,64 @@ def train_glomeruli_with_datablock(
     return learn
 
 
-def _removed_legacy_transfer():
-    """Placeholder to mark removal of legacy duplicate function."""
-    return None
+# Legacy transfer learning functions removed - using modern FastAI v2 approach
+
+def find_best_mitochondria_model() -> Optional[str]:
+    """
+    Auto-detect the best available mitochondria model for transfer learning.
+    
+    Returns:
+        str: Path to best mitochondria model, or None if not found
+    """
+    logger = get_logger("eq.glomeruli_training")
+    
+    # Common mitochondria model locations
+    search_paths = [
+        "models/segmentation/mitochondria",
+        DEFAULT_MITOCHONDRIA_MODEL_DIR,
+        "models/mitochondria"
+    ]
+    
+    best_model = None
+    best_score = -1
+    
+    for search_path in search_paths:
+        model_dir = Path(search_path)
+        if not model_dir.exists():
+            continue
+            
+        # Find all .pkl files in the directory tree
+        pkl_files = list(model_dir.glob("**/*.pkl"))
+        
+        for pkl_file in pkl_files:
+            # Prefer models with "pretrain" in the name (from mitochondria training)
+            score = 0
+            if "pretrain" in pkl_file.name:
+                score += 10
+            if "mitochondria" in pkl_file.name.lower():
+                score += 5
+            
+            # Prefer newer files (higher epochs, recent timestamp)
+            if "_e" in pkl_file.name:
+                try:
+                    # Extract epoch count from filename (e.g., "e10" -> 10)
+                    epoch_match = re.search(r'_e(\d+)', pkl_file.name)
+                    if epoch_match:
+                        epochs = int(epoch_match.group(1))
+                        score += epochs  # More epochs = better model
+                except:
+                    pass
+            
+            if score > best_score:
+                best_score = score
+                best_model = str(pkl_file)
+    
+    if best_model:
+        logger.info(f"🔍 Auto-detected mitochondria model: {best_model}")
+        return best_model
+    else:
+        logger.info("🔍 No mitochondria model found for transfer learning")
+        return None
 
 def main():
     """CLI interface for glomeruli training."""
@@ -245,7 +330,8 @@ def main():
     parser.add_argument('--data-dir', required=True, help='Directory containing derived_data (from eq process-data)')
     parser.add_argument('--model-dir', default=DEFAULT_GLOMERULI_MODEL_DIR, help='Directory to save trained model')
     parser.add_argument('--model-name', default='glomeruli_model', help='Base name for saved model files')
-    parser.add_argument('--base-model', help='Path to base model for transfer learning')
+    parser.add_argument('--base-model', help='Path to base model for transfer learning (auto-detected by default)')
+    parser.add_argument('--from-scratch', action='store_true', help='Force training from scratch (bypass transfer learning)')
     parser.add_argument('--epochs', type=int, default=DEFAULT_EPOCHS, help='Number of training epochs')
     parser.add_argument('--batch-size', type=int, default=DEFAULT_BATCH_SIZE, help='Training batch size')
     parser.add_argument('--learning-rate', type=float, default=DEFAULT_LEARNING_RATE, help='Learning rate')
@@ -298,7 +384,21 @@ def main():
         logger.info(f"🧾 Model name: {args.model_name}")
         logger.info(f"⚙️  Epochs: {args.epochs}, Batch size: {args.batch_size}")
         
-        if args.base_model:
+        # AUTO-DETECT MITOCHONDRIA MODEL FOR TRANSFER LEARNING (PRIMARY APPROACH)
+        if args.from_scratch:
+            logger.info("🔧 FROM SCRATCH (Forced): User requested training from scratch")
+            args.base_model = None
+        elif not args.base_model:
+            # Try to auto-detect the best mitochondria model
+            auto_detected_model = find_best_mitochondria_model()
+            if auto_detected_model:
+                args.base_model = auto_detected_model
+                logger.info("🎯 TRANSFER LEARNING (Primary): Auto-detected mitochondria model")
+                logger.info(f"🔄 Using base model: {args.base_model}")
+            else:
+                logger.info("🔧 FROM SCRATCH (Fallback): No mitochondria model found")
+        else:
+            logger.info("🔄 TRANSFER LEARNING (Manual): Using provided base model")
             logger.info(f"🔄 Using base model: {args.base_model}")
         
         # Train the model using transfer learning if base model provided, otherwise from scratch

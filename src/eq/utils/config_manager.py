@@ -24,11 +24,11 @@ class GlobalConfig:
     
     # Paths
     # Raw inputs live here (unchanged originals)
-    data_path: str = "raw_data"
+    data_path: str = "data/raw_data"
     # All generated artifacts go here (processed data, patches, predictions)
-    output_path: str = "derived_data"
+    output_path: str = "data/derived_data"
     # Optional cache for intermediate pickles/npy files
-    cache_path: str = "derived_data/cache"
+    cache_path: str = "data/derived_data/cache"
     model_path: str = "models"
     
     # Logging
@@ -120,9 +120,9 @@ class ConfigManager:
         """Load global configuration."""
         # Check for environment variables first
         config = GlobalConfig(
-            data_path=os.getenv("EQ_DATA_PATH", "raw_data"),
-            output_path=os.getenv("EQ_OUTPUT_PATH", "derived_data"),
-            cache_path=os.getenv("EQ_CACHE_PATH", "derived_data/cache"),
+            data_path=os.getenv("EQ_DATA_PATH", "data/raw_data"),
+            output_path=os.getenv("EQ_OUTPUT_PATH", "data/derived_data"),
+            cache_path=os.getenv("EQ_CACHE_PATH", "data/derived_data/cache"),
             model_path=os.getenv("EQ_MODEL_PATH", "models"),
             log_level=os.getenv("EQ_LOG_LEVEL", "INFO"),
             default_mode=os.getenv("EQ_DEFAULT_MODE", "auto")

@@ -12,6 +12,19 @@ from PIL import Image
 from eq.core.constants import DEFAULT_MASK_THRESHOLD, DEFAULT_PATCH_SIZE
 
 
+def _should_process_file(image_path: Path) -> bool:
+    """Avoid duplicate processing when both JPG and PNG exist for same stem.
+
+    Preference: If a .png exists for the same stem, skip the .jpg/.jpeg.
+    Always allow .png. Allow .tif/.tiff.
+    """
+    suffix = image_path.suffix.lower()
+    if suffix in {'.jpg', '.jpeg'}:
+        png_peer = image_path.with_suffix('.png')
+        if png_peer.exists():
+            return False
+    return True
+
 def _convert_jpeg_to_png(input_path, output_path):
     """Convert JPEG file to PNG to avoid compression artifacts."""
     try:
@@ -139,6 +152,8 @@ def _process_directory_recursive(square_size, input_dir, output_dir):
                 os.mkdir(output_subdir)
             total_patches += _process_directory_recursive(square_size, input_path, output_subdir)
         elif filename.lower().endswith(('.png', '.tif', '.tiff', '.jpg', '.jpeg')):
+            if not _should_process_file(Path(input_path)):
+                continue
             base_stem = os.path.splitext(filename)[0]
             total_patches += _patchify_single_image(square_size, input_path, output_dir, base_stem)
     
@@ -170,33 +185,8 @@ def patchify_dataset(
     masks_count = 0
     subjects_count = 0
 
-    # Preprocessing: Convert all JPEG files to PNG to avoid compression artifacts
-    print("🔄 Converting JPEG files to PNG to avoid compression artifacts...")
-    jpeg_converted = 0
-    
-    # Find all JPEG files recursively
-    for jpeg_file in input_path.rglob("*.jpg"):
-        png_file = jpeg_file.with_suffix('.png')
-        if not png_file.exists():
-            if _convert_jpeg_to_png(jpeg_file, png_file):
-                jpeg_converted += 1
-                print(f"  ✅ Converted: {jpeg_file.name} -> {png_file.name}")
-            else:
-                print(f"  ❌ Failed to convert: {jpeg_file.name}")
-    
-    for jpeg_file in input_path.rglob("*.jpeg"):
-        png_file = jpeg_file.with_suffix('.png')
-        if not png_file.exists():
-            if _convert_jpeg_to_png(jpeg_file, png_file):
-                jpeg_converted += 1
-                print(f"  ✅ Converted: {jpeg_file.name} -> {png_file.name}")
-            else:
-                print(f"  ❌ Failed to convert: {jpeg_file.name}")
-    
-    if jpeg_converted > 0:
-        print(f"📊 Converted {jpeg_converted} JPEG files to PNG")
-    else:
-        print("📊 No JPEG files found to convert")
+    # Note: We do NOT modify files under input_root (raw data remains untouched).
+    # JPEGs and mislabeled files will be handled during patching reads; outputs are written under output_root only.
 
     # Detect nested structure - try multiple common naming conventions
     possible_image_dirs = ["images", "image_patches", "img", "imgs", "data"]
@@ -245,6 +235,8 @@ def patchify_dataset(
                     # Process each image file in the subject directory
                     for image_file in subject_dir.glob("*"):
                         if not image_file.is_file() or not image_file.suffix.lower() in ['.png', '.tif', '.tiff', '.jpg', '.jpeg']:
+                            continue
+                        if not _should_process_file(image_file):
                             continue
                         
                         base_stem = image_file.stem
@@ -345,6 +337,8 @@ def patchify_dataset(
             # Now process the extracted individual images
             for image_file in extraction_dir.glob("*"):
                 if not image_file.is_file() or not image_file.suffix.lower() in ['.png', '.tif', '.tiff', '.jpg', '.jpeg']:
+                    continue
+                if not _should_process_file(image_file):
                     continue
                 
                 base_stem = image_file.stem

@@ -319,7 +319,7 @@ class MetadataProcessor:
         
         return {'file_system_validation': file_validation}
     
-    def export_for_ml_pipeline(self, output_dir: Union[str, Path]) -> Dict[str, Path]:
+    def export_for_ml_pipeline(self, output_dir: Union[str, Path], raw_data_dir: Optional[Union[str, Path]] = None) -> Dict[str, Path]:
         """
         Export metadata in formats suitable for ML pipelines.
         
@@ -348,8 +348,8 @@ class MetadataProcessor:
         summary.to_csv(summary_path, index=False)
         exported_files['subject_summary'] = summary_path
         
-        # Export validation report
-        validation = self.validate_data_quality(raw_data_dir="raw_data/preeclampsia_project/data/images")
+        # Export validation report (optional filesystem validation if raw_data_dir provided)
+        validation = self.validate_data_quality(raw_data_dir=str(raw_data_dir)) if raw_data_dir else self.validate_data_quality()
         validation_path = output_dir / "validation_report.json"
         with open(validation_path, 'w') as f:
             json.dump(validation, f, indent=2)
@@ -413,18 +413,19 @@ def process_metadata_file(
 
 
 if __name__ == "__main__":
-    # Example usage
-    import logging
-    # logging configured centrally via eq.utils.logger.setup_logging
-    
-    # Process the current metadata file
-    input_file = "raw_data/preeclampsia_project/subject_metadata.xlsx"
-    output_dir = "derived_data/glomeruli_data/metadata"
-    
-    if Path(input_file).exists():
-        exported_files = process_metadata_file(input_file, output_dir)
-        print("Exported files:")
-        for file_type, path in exported_files.items():
-            print(f"  {file_type}: {path}")
+    # Optional example usage driven by environment variables to avoid hardcoded paths
+    import os
+    input_file = os.getenv("EQ_METADATA_INPUT_FILE")
+    output_dir = os.getenv("EQ_METADATA_OUTPUT_DIR")
+    raw_dir = os.getenv("EQ_METADATA_RAW_IMAGES_DIR")
+
+    if input_file and output_dir:
+        if Path(input_file).exists():
+            exported_files = process_metadata_file(input_file, output_dir)
+            print("Exported files:")
+            for file_type, path in exported_files.items():
+                print(f"  {file_type}: {path}")
+        else:
+            print(f"Input file not found: {input_file}")
     else:
-        print(f"Input file not found: {input_file}")
+        print("Set EQ_METADATA_INPUT_FILE and EQ_METADATA_OUTPUT_DIR to run this example.")

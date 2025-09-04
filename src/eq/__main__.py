@@ -19,6 +19,8 @@ from eq.core.constants import DEFAULT_MASK_THRESHOLD, DEFAULT_IMAGE_SIZE
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from eq.pipeline.run_production_pipeline import run_pipeline
+from eq.data_management.metadata_processor import process_metadata_file
+from eq.utils.image_mask_vis import visualize_mask, visualize_image_mask_pair, visualize_batch_masks
 
 # Optional conda environment activation (opt-in via EQ_AUTO_CONDA=1)
 try:
@@ -470,6 +472,104 @@ def quantify_command(args):
     #     model_path=args.model_path
     # )
     logger.info("✅ Quantification complete!")
+    
+@log_function_call
+def metadata_process_command(args):
+    """Process metadata files (e.g., glomeruli scoring matrix) via CLI."""
+    logger = get_logger("eq.metadata_process")
+    logger.info("🔄 Processing metadata file...")
+
+    try:
+        exported = process_metadata_file(
+            input_file=args.input_file,
+            output_dir=args.output_dir,
+            file_type=args.file_type,
+        )
+        print("✅ Metadata processed. Exported files:")
+        for k, v in exported.items():
+            print(f"  - {k}: {v}")
+    except Exception as e:
+        logger.error(f"❌ Metadata processing failed: {e}")
+        print(f"❌ Metadata processing failed: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+# === Derived data audit (images/masks) ===
+def audit_derived_command(args):
+    """Audit derived_data directory for 1:1 pairs, size match, and binary masks.
+
+    Writes a JSON report under <data_dir>/cache/audit_masks.json
+    """
+    logger = get_logger("eq.audit_derived")
+    data_dir = Path(args.data_dir)
+    img_dir = data_dir / 'image_patches'
+    msk_dir = data_dir / 'mask_patches'
+    cache_dir = data_dir / 'cache'
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    if not img_dir.exists() or not msk_dir.exists():
+        print(f"❌ Expected subdirs not found: {img_dir} and {msk_dir}")
+        sys.exit(1)
+
+    from PIL import Image
+    import numpy as _np
+    import json as _json
+
+    images = sorted([p for p in img_dir.glob('*.png')])
+    total_images = len(images)
+
+    missing_masks = []
+    size_mismatch = []
+    non_binary_masks = []
+
+    def _mask_path(p: Path) -> Path:
+        return msk_dir / f"{p.stem}_mask{p.suffix}"
+
+    for p in images:
+        mp = _mask_path(p)
+        if not mp.exists():
+            # Fallback common renames
+            alt = Path(str(p).replace('.jpeg', '.png').replace('.jpg', '.png').replace('img_', 'mask_'))
+            if alt.exists():
+                mp = alt
+            else:
+                missing_masks.append({"image": str(p), "expected_mask": str(mp)})
+                continue
+        try:
+            im = Image.open(p)
+            mm = Image.open(mp)
+            if im.size != mm.size:
+                size_mismatch.append({"image": str(p), "mask": str(mp), "image_size": im.size, "mask_size": mm.size})
+            arr = _np.array(mm)
+            uniq = set(_np.unique(arr).tolist())
+            if not (uniq.issubset({0,1}) or uniq.issubset({0,255})):
+                non_binary_masks.append({"mask": str(mp), "unique_values": sorted(list(uniq))[:20]})
+        except Exception as e:
+            non_binary_masks.append({"mask": str(mp), "error": str(e)})
+
+    report = {
+        "data_dir": str(data_dir),
+        "summary": {
+            "total_images": total_images,
+            "missing_masks": len(missing_masks),
+            "size_mismatch": len(size_mismatch),
+            "non_binary_masks": len(non_binary_masks)
+        },
+        "examples": {
+            "missing_masks": missing_masks[:20],
+            "size_mismatch": size_mismatch[:20],
+            "non_binary_masks": non_binary_masks[:20]
+        }
+    }
+
+    out_path = cache_dir / 'audit_masks.json'
+    with open(out_path, 'w') as f:
+        _json.dump(report, f, indent=2)
+
+    print(f"✅ Audit complete. Report: {out_path}")
+    print(_json.dumps(report["summary"], indent=2))
 
 
 @log_function_call
@@ -485,6 +585,47 @@ def capabilities_command(args):
         return
     report = get_capability_report()
     print(report)
+
+
+@log_function_call
+def visualize_command(args):
+    """Visualize masks and images for debugging."""
+    logger = get_logger("eq.visualize")
+    
+    try:
+        if args.batch:
+            # Batch visualization
+            output_path = visualize_batch_masks(
+                args.batch,
+                output_path=args.output,
+                max_masks=args.max_masks,
+                title=args.title
+            )
+        elif args.image and args.mask:
+            # Image-mask pair visualization
+            output_path = visualize_image_mask_pair(
+                args.image,
+                args.mask,
+                output_path=args.output,
+                title=args.title
+            )
+        elif args.mask:
+            # Single mask visualization
+            output_path = visualize_mask(
+                args.mask,
+                output_path=args.output,
+                title=args.title
+            )
+        else:
+            print("❌ Please specify --mask, or both --image and --mask, or --batch")
+            return
+        
+        print(f"✅ Visualization saved to: {output_path}")
+        
+    except Exception as e:
+        logger.error(f"Visualization failed: {e}")
+        print(f"❌ Error: {e}")
+        raise
 
 
 @log_function_call
@@ -705,10 +846,10 @@ Examples:
     data_parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Image size for processing')
     data_parser.set_defaults(func=data_load_command)
 
-    # Data processing command (NEW - direct processing to derived_data)
-    process_parser = subparsers.add_parser('process-data', help='Process raw data into derived_data with auto-detection')
+    # Data processing command (NEW - direct processing to data/derived_data)
+    process_parser = subparsers.add_parser('process-data', help='Process raw data into data/derived_data with auto-detection')
     process_parser.add_argument('--input-dir', required=True, help='Input directory with raw images (supports nested images/ and masks/ subdirs)')
-    process_parser.add_argument('--output-dir', default='derived_data', help='Output directory (default: derived_data)')
+    process_parser.add_argument('--output-dir', default='data/derived_data', help='Output directory (default: data/derived_data)')
     from eq.core.constants import DEFAULT_PATCH_SIZE, EXPECTED_PATCHES_PER_IMAGE
     process_parser.add_argument('--patch-size', type=int, default=DEFAULT_PATCH_SIZE, help=f'Patch size for processing (default: {DEFAULT_PATCH_SIZE}, expected ~{EXPECTED_PATCHES_PER_IMAGE} patches per image)')
     from eq.core.constants import DEFAULT_PATCH_OVERLAP
@@ -758,6 +899,13 @@ Examples:
     quant_parser.add_argument('--model-path', required=True, help='Path to trained model')
     quant_parser.set_defaults(func=quantify_command)
 
+    # Metadata processing command
+    metadata_parser = subparsers.add_parser('metadata-process', help='Process metadata (e.g., glomeruli scoring matrix)')
+    metadata_parser.add_argument('--input-file', required=True, help='Path to input metadata file (e.g., .xlsx)')
+    metadata_parser.add_argument('--output-dir', required=True, help='Directory to write standardized outputs')
+    metadata_parser.add_argument('--file-type', default='auto', choices=['auto','glomeruli_matrix','csv','json'], help='Type of metadata file (default: auto)')
+    metadata_parser.set_defaults(func=metadata_process_command)
+
     # Capabilities command
     capabilities_parser = subparsers.add_parser(
         'capabilities',
@@ -788,6 +936,21 @@ Examples:
     production_parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
     production_parser.add_argument('--segmentation-model', help='Segmentation model to use (glomeruli, mitochondria, etc.)')
     production_parser.set_defaults(func=pipeline_command)
+
+    # Derived data audit command
+    audit_parser = subparsers.add_parser('audit-derived', help='Audit derived_data image/mask pairs for binary masks and mapping')
+    audit_parser.add_argument('--data-dir', required=True, help='Path to a derived_data project folder (with image_patches/ and mask_patches/)')
+    audit_parser.set_defaults(func=audit_derived_command)
+    
+    # Visualization command
+    viz_parser = subparsers.add_parser('visualize', help='Visualize masks and images for debugging')
+    viz_parser.add_argument('--mask', help='Path to mask file to visualize')
+    viz_parser.add_argument('--image', help='Path to image file (for image-mask pair visualization)')
+    viz_parser.add_argument('--output', help='Output path for visualization')
+    viz_parser.add_argument('--title', help='Title for the visualization')
+    viz_parser.add_argument('--batch', nargs='+', help='Multiple mask paths for batch visualization')
+    viz_parser.add_argument('--max-masks', type=int, default=16, help='Maximum masks for batch visualization')
+    viz_parser.set_defaults(func=visualize_command)
     
     args = parser.parse_args()
     
@@ -795,6 +958,16 @@ Examples:
         parser.print_help()
         sys.exit(1)
     
+    # Ensure important folders exist up front
+    try:
+        Path('data/raw_data').mkdir(parents=True, exist_ok=True)
+        Path('data/derived_data').mkdir(parents=True, exist_ok=True)
+        Path('models/segmentation/mitochondria').mkdir(parents=True, exist_ok=True)
+        Path('models/segmentation/glomeruli').mkdir(parents=True, exist_ok=True)
+        Path('test_output').mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
     # Initialize mode manager for the session based on global --mode
     try:
         session_mode = EnvironmentMode(args.mode) if getattr(args, 'mode', None) else EnvironmentMode.AUTO
