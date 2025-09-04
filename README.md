@@ -90,22 +90,39 @@ python -m eq.training.train_mitochondria \
 #       ├── validation_predictions.png
 #       └── training_history.json
 
-# 4) Train glomeruli model using transfer learning from mitochondria
+# 4) Train glomeruli model (choose one approach)
+
+# Option A: Transfer learning from mitochondria (recommended)
 BASE=$(ls models/segmentation/mitochondria/*.pkl | head -n1) # set this to your best model trained in step (3)
 python -m eq.training.train_glomeruli \
   --data-dir data/derived_data/preeclampsia \
   --model-dir models/segmentation/glomeruli \
   --base-model "$BASE" \
   --epochs 30 \
-  --batch-size 8 \
+  --batch-size 16 \
   --learning-rate 1e-4 \
+  --image-size 256
+
+# Option B: Train from scratch (no transfer learning)
+python -m eq.training.train_glomeruli \
+  --data-dir data/derived_data/preeclampsia \
+  --model-dir models/segmentation/glomeruli \
+  --epochs 50 \
+  --batch-size 16 \
+  --learning-rate 1e-3 \
   --image-size 256
 
 # Expected artifacts (examples):
 # models/segmentation/glomeruli/
-#   └── transfer/
+#   ├── transfer/                    # Transfer learning approach
+#   │   └── glomeruli_model/
+#   │       ├── glomeruli_model-transfer-epochs_30-batch_8-lr_0.0001-size_256.pkl
+#   │       ├── training_loss.png
+#   │       ├── validation_predictions.png
+#   │       └── training_history.json
+#   └── scratch/                     # From scratch approach
 #       └── glomeruli_model/
-#           ├── glomeruli_model-transfer-epochs_30-batch_8-lr_0.0001-size_256.pkl
+#           ├── glomeruli_model-scratch-epochs_50-batch_16-lr_0.001-size_256.pkl
 #           ├── training_loss.png
 #           ├── validation_predictions.png
 #           └── training_history.json
