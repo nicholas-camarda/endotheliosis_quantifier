@@ -213,6 +213,9 @@ def data_load_command(args):
     logger.info("🎉 Data loading pipeline completed successfully!")
 
 
+# Note: process_annotations_command removed - use PNG exports from Label Studio instead
+
+
 def process_data_command(args):
     """Process raw data into derived_data."""
     logger = get_logger("eq.process_data")

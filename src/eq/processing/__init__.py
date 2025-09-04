@@ -20,6 +20,7 @@ from .preprocessing import (  # Core preprocessing functions
     preprocess_image_for_model,
     normalize_image_array,
 )
+# Note: annotation_processor removed - use PNG exports from Label Studio instead
 # Note: create_mitochondria_patches.py removed - functionality replaced by patchify_dataset
 
 # TODO: Add feature extraction functionality from features/ (non-data-loading parts)
@@ -36,6 +37,8 @@ __all__ = [
     
     # Image patchification
     'patchify_dataset',
+    
+    # Note: Label Studio annotation processing removed - use PNG exports instead
     
     # Note: Mitochondria patch creation functions removed - use patchify_dataset instead
 ]

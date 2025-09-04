@@ -42,3 +42,4 @@ dependencies:
       - albumentations==1.3.1
       - scikit-optimize==0.9.0
       - pytest==7.4.0
+      - openpyxl==3.1.5

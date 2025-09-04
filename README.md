@@ -22,37 +22,143 @@ mamba activate eq
 
 # Install in development mode (enables CLI `eq`)
 pip install -e .[dev]
-```
 
-## Quick Start
-
-```bash
-# Show hardware mode and suggestions
-eq mode --show
-
-# Check hardware capabilities
-eq capabilities
-
-# Process raw data into ready-to-analyze format
-eq process-data --input-dir data/raw_images/[project] --output-dir data/derived_data/[project]
-```
-
-## Production Run: End‑to‑End (Data → Mito Train → Glom Transfer)
-
-The following commands demonstrate the complete pipeline from raw data to trained models:
-
-```bash
-# 0) Activate environment
-mamba activate eq
-
-# Create standard dirs up front
+# Create standard directories
 mkdir -p data/raw_data data/derived_data models/segmentation/{mitochondria,glomeruli} test_output
 
-# Lucchi download and unzip into data/raw_data (matches your extraction path)
+# Download Lucchi mitochondria dataset
 cd data/raw_data
 wget -O ./lucchi.zip http://rhoana.rc.fas.harvard.edu/dataset/lucchi.zip
 unzip -o ./lucchi.zip
+cd ../..
+```
 
+---
+## Training Workflow
+
+### Organize Imaging Datas
+
+#### Expected Raw Imaging Data Structure
+
+After installation, your `data/raw_data/` directory should be organized as follows:
+
+```
+data/raw_data/
+├── mnt/coxfs01/vcg_connectomics/mitochondria/Lucchi/    # Mitochondria dataset (from Lucchi et al. 2012)
+│   ├── img/                                          # EM images
+│   └── label/                                           # Mitochondria annotations
+└── your_project_name/                                   # Your glomeruli data
+    ├── images/                                          # H&E stained mouse glomeruli images
+    ├── masks/                                           # Glomeruli annotations (optional)
+    └── annotations/                                     # Label Studio JSON export (optional)
+        └── annotations.json
+```
+
+#### Data Requirements
+
+- **Mitochondria Data**: Electron microscopy images with mitochondria annotations (Lucchi dataset)
+- **Glomeruli Data**: H&E stained kidney histology images with glomeruli binary annotations
+- **Subject Metadata**: Excel file with glomeruli scoring matrix (`subject_metadata.xlsx`)
+  - **Why a matrix?**: Multiple images were taken per mouse, and each image was scored individually
+  - **Format**: Glomeruli numbers (rows) × Individual images (columns)
+  - **Score values**: 0 (normal), 0.5 (mild), 1 (moderate), 2 (severe)
+
+**Example structure:**
+| Glomerulus # | T19-1 | T19-2 | T30-1 | T30-2 | T30-3 |
+|--------------|-------|-------|-------|-------|-------|
+| 1            | 0.5   | 1     | 0     | 0.5   | 0     |
+| 2            | 0     | 1     | 0.5   | 0     | 0     |
+| 3            | 0     | 0.5   | 1     | 0     | 0     |
+| 4            | 0.5   | 0.5   | 0     | 0     | 0     |
+
+**Column naming**: `T{subject_number}-{image_number}` (e.g., T19-1 = Subject 19, Image 1)
+- **Supported Formats**: TIF, PNG, JPEG for images; PNG for masks
+- **Mask Values**: Binary masks with 0 (background) and 255 (foreground) values
+
+#### Creating Masks from Label Studio Annotations
+
+**Export masks directly as PNG images from Label Studio:**
+
+##### Step 1: Set up Label Studio (if you don't have it)
+
+```bash
+# Open a new terminal and create Label Studio environment
+conda create -n label-studio python=3.9
+conda activate label-studio
+
+# Install Label Studio
+pip install label-studio
+
+# Start Label Studio
+label-studio start
+```
+
+**Follow the [Label Studio Quick Start Guide](https://labelstud.io/guide/quick_start) to:**
+1. Create a Label Studio account
+2. Set up your first project
+3. Configure segmentation tasks for glomeruli annotation (use a template for semantic segmentation --> masks)
+4. Import your H&E images
+5. Draw segmentation masks on your glomeruli
+
+##### Step 2: Export masks as PNG images
+
+**In Label Studio:**
+1. Go to your project
+2. Click **"Export"** button
+3. Select **"Brush labels to PNG"** format
+4. Click **"Export"** to download the masks
+
+**This will create:**
+- One PNG file per image with your segmentation masks
+- Binary masks (0=background, 255=glomerulus)
+- Same filename as original images with `_mask` suffix
+
+##### Step 3: Organize your data structure
+
+**Place the exported PNG masks in your project directory:**
+```
+data/raw_data/your_project/
+├── images/                    # Original H&E images
+│   ├── T19/
+│   │   └── T19_Image0.jpg
+│   └── T30/
+│       └── T30_Image0.jpg
+├── masks/                     # Exported PNG masks from Label Studio
+│   ├── T19/
+│   │   └── T19_Image0_mask.png
+│   └── T30/
+│       └── T30_Image0_mask.png
+└── subject_metadata.xlsx      # Endotheliosis severity scores (0-3)
+```
+
+**Note:** The PNG export from Label Studio creates binary masks automatically, so no additional processing is needed.
+
+---
+
+### Check Hardware Capabilities
+
+Now that you have your annotations converted to masks, you're ready to start the training pipeline. First, let's check your system capabilities and set the appropriate mode:
+
+```bash
+# Ensure you have activated environment
+mamba activate eq
+
+# Check hardware capabilities and get recommendations
+eq capabilities
+
+# Show current mode and suggestions
+eq mode --show
+```
+
+---
+
+### Image Processing and Segmentation Pipeline
+
+This repository provides tools to train segmentation models from scratch. The complete pipeline trains mitochondria models first, then uses transfer learning for glomeruli segmentation.
+
+**Note**: Pre-trained models will be available in future releases for inference-only use cases.
+
+```bash
 # 1) Data processing - convert large images to 256×256 patches, first for mito then for your gloms
 RAW_LUCCHI_DIR=data/raw_data/mnt/coxfs01/vcg_connectomics/mitochondria/Lucchi
 eq process-data \
@@ -128,46 +234,12 @@ python -m eq.training.train_glomeruli \
 #           └── training_history.json
 ```
 
-### Notes
+#### Notes
 - Use `--config configs/mito_pretraining_config.yaml` or `configs/glomeruli_finetuning_config.yaml` to drive runs; CLI flags override YAML; both fall back to `eq.core.constants` defaults.
 
+---
 
-### Planned Features
-- Feature extraction from segmented regions
-- Endotheliosis severity scoring
-- Model evaluation and metrics
-- Inference pipeline
-
-### 🔄 FastAI v2 Migration Status
-
-#### Current Status:
-- ✅ **Data Processing**: Complete - `eq process-data` works with FastAI v2
-- ✅ **Data Pipeline**: Complete - DataBlock approach implemented with best practices
-- ✅ **Training Modules**: Complete - Optimized binary segmentation with FastAI v2 best practices
-- ✅ **Transfer Learning**: Complete - Mitochondria → glomeruli transfer learning working
-- ⏳ **Inference Pipeline**: Pending - Will be implemented after training validation
-- ⏳ **Evaluation Pipeline**: Pending - Will be implemented after training validation
-
-#### Recent Optimizations (2025-09-04):
-- ✅ **Transform Pipeline**: Implemented FastAI v2 best practices with optimal augmentation organization
-- ✅ **Normalization**: Added ImageNet normalization for optimal transfer learning performance
-- ✅ **Binary Segmentation**: Optimized `n_out=2` approach with proper loss function handling
-- ✅ **Lighting Augmentation**: Enabled for improved medical imaging robustness
-- ✅ **Directory Structure**: Organized output structure with model-specific subfolders
-- ✅ **Error Handling**: Improved data integrity validation and error reporting
-- ✅ **Training Infrastructure**: Complete training pipeline with proper file organization
-
-## Data Requirements
-
-### Input Data Format
-- **Images**: TIF, PNG, or JPEG files (glomeruli histology images)
-- **Masks**: Optional - PNG files with binary masks (0/255 values) for glomeruli segmentation
-- **Structure**: Any directory structure - `eq process-data` auto-detects images and masks
-- **Data Types**: 
-  - **Mitochondria**: Electron microscopy data (Lucchi et al. 2012 dataset)
-  - **Glomeruli**: Kidney histology images (H&E stained sections)
-
-### Data Processing
+### Data Processing Details
 
 The `eq process-data` command converts large histology images into smaller patches suitable for deep learning:
 
@@ -187,29 +259,43 @@ The `eq process-data` command converts large histology images into smaller patch
 - Large images don't fit in GPU memory
 - More patches provide more training samples
 
-### Expected Output from `eq process-data`
-```
-data/derived_data/
-├── mito/                   # Mitochondria data (from Lucchi dataset)
-│   ├── image_patches/      # 256x256 image patches
-│   ├── mask_patches/       # 256x256 mask patches
-│   ├── cache/              # Processed data cache
-│   └── metadata.json       # Processing statistics
-└── preeclampsia/           # Glomeruli data (your project data)
-    ├── image_patches/      # 256x256 image patches
-    ├── mask_patches/       # 256x256 mask patches (if masks detected)
-    ├── cache/              # Processed data cache
-    └── metadata.json       # Processing statistics
-```
+### 🔄 FastAI v2 Implementation Status
 
-## Configuration
+**Current Status**:
+- ✅ **Data Processing**: Complete - `eq process-data` works with FastAI v2
+- ✅ **Data Pipeline**: Complete - DataBlock approach implemented with best practices
+- ✅ **Training Modules**: Complete - Optimized binary segmentation with FastAI v2 best practices
+- ✅ **Transfer Learning**: Complete - Mitochondria → glomeruli transfer learning working
+- ⏳ **Inference Pipeline**: Pending - Will be implemented after training validation
+- ⏳ **Evaluation Pipeline**: Pending - Will be implemented after training validation
+
+**Recent Optimizations (2025-09-04)**:
+- ✅ **Transform Pipeline**: Implemented FastAI v2 best practices with optimal augmentation organization
+- ✅ **Normalization**: Added ImageNet normalization for optimal transfer learning performance
+- ✅ **Binary Segmentation**: Optimized `n_out=2` approach with proper loss function handling
+- ✅ **Lighting Augmentation**: Enabled for improved medical imaging robustness
+- ✅ **Directory Structure**: Organized output structure with model-specific subfolders
+- ✅ **Error Handling**: Improved data integrity validation and error reporting
+- ✅ **Training Infrastructure**: Complete training pipeline with proper file organization
+
+### Planned Features
+- Feature extraction from segmented regions
+- Endotheliosis severity scoring
+- Model evaluation and metrics
+- Inference pipeline
+
+---
+
+## Technical Details
+
+### Configuration
 
 Configuration is handled through:
 - **Constants**: `eq.core.constants` - Default values for patch size, batch size, etc.
 - **Environment**: `eq mode` - Hardware-aware configuration
 - **CLI Arguments**: All training parameters configurable via command line
 
-## Project Structure
+### Project Structure
 
 ```
 src/eq/
@@ -230,7 +316,7 @@ src/eq/
 - `data_management/datablock_loader.py`: Data loading and preprocessing
 - `core/constants.py`: Configuration parameters
 
-## Architecture
+### Architecture
 
 **Data Flow**: Raw images → Patchification → Segmentation → Feature extraction → Quantification
 
@@ -239,6 +325,8 @@ src/eq/
 2. **Stage 2**: Transfer learned features to glomeruli segmentation in light microscopy
 
 For detailed technical documentation, see  the [technical documentation](TECHNICAL_LAB_NOTEBOOK.md).
+
+---
 
 ## Troubleshooting
 
@@ -272,6 +360,8 @@ python -m eq.training.train_mitochondria --batch-size 4
 eq mode --show
 eq capabilities
 ```
+
+---
 
 ## Contributing
 
