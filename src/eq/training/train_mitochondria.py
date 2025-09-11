@@ -22,6 +22,10 @@ from fastai.callback.all import *
 from fastai.vision.all import *
 
 from eq.utils.logger import get_logger
+from eq.utils.run_io import (
+    save_splits, attach_best_model_callback, save_plots, 
+    save_training_history, save_run_metadata, export_final_model
+)
 from eq.core.constants import (
     DEFAULT_IMAGE_SIZE, 
     DEFAULT_MASK_THRESHOLD, 
@@ -29,11 +33,24 @@ from eq.core.constants import (
     DEFAULT_BATCH_SIZE, 
     DEFAULT_EPOCHS, 
     DEFAULT_LEARNING_RATE,
-    DEFAULT_MITOCHONDRIA_MODEL_DIR
+    DEFAULT_MITOCHONDRIA_MODEL_DIR,
+    DEFAULT_POSITIVE_FOCUS_P,
+    DEFAULT_MIN_POS_PIXELS,
+    DEFAULT_POS_CROP_ATTEMPTS,
 )
-from eq.data_management.datablock_loader import build_segmentation_dls
-from eq.data_management.standard_getters import get_y_mitochondria
+from eq.data_management.datablock_loader import build_segmentation_dls, build_segmentation_dls_dynamic_patching
+from eq.data_management.standard_getters import get_y
 from fastai.losses import CrossEntropyLossFlat
+
+
+def _format_run_suffix(epochs, batch_size, learning_rate, image_size, tag=""):
+    """Format run parameters into a descriptive suffix (directory-safe)."""
+    # Use scientific notation for learning rate to avoid decimal points
+    lr_str = f"{learning_rate:.0e}".replace("-0", "-")
+    parts = [f"e{epochs}", f"b{batch_size}", f"lr{lr_str}", f"sz{image_size}"]
+    if tag:
+        parts.insert(0, tag)
+    return "_".join(parts)
 
 
 
@@ -45,7 +62,12 @@ def train_mitochondria_with_datablock(
     batch_size: int = DEFAULT_BATCH_SIZE,
     epochs: int = DEFAULT_EPOCHS,
     learning_rate: float = DEFAULT_LEARNING_RATE,
-    image_size: int = DEFAULT_IMAGE_SIZE
+    image_size: int = DEFAULT_IMAGE_SIZE,
+    config_path: Optional[str] = None,
+    use_dynamic_patching: bool = True,
+    positive_focus_p: float = DEFAULT_POSITIVE_FOCUS_P,
+    min_pos_pixels: int = DEFAULT_MIN_POS_PIXELS,
+    pos_crop_attempts: int = DEFAULT_POS_CROP_ATTEMPTS,
 ):
     """
     Train mitochondria segmentation model using FastAI v2 DataBlock approach.
@@ -63,52 +85,57 @@ def train_mitochondria_with_datablock(
         Tuple of (Trained FastAI learner instance, model_path)
     """
     logger = get_logger("eq.mitochondria_training")
-    logger.info("Starting mitochondria model training with DataBlock...")
+    logger.info("🔬 Starting mitochondria model training with DataBlock...")
     
-    # Create output directory - create subfolder named after the model
-    output_path = Path(output_dir) / model_name
+    # Create output directory with descriptive model name
+    model_tag = _format_run_suffix(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate, image_size=image_size, tag="pretrain")
+    model_folder_name = f"{model_name}-{model_tag}"
+    output_path = Path(output_dir) / model_folder_name
     output_path.mkdir(parents=True, exist_ok=True)
     
-    logger.info(f"Loading data from: {data_dir}")
+    logger.info(f"📁 Output directory: {output_path}")
+    logger.info(f"📊 Training parameters: epochs={epochs}, batch_size={batch_size}, lr={learning_rate}, image_size={image_size}")
+    logger.info(f"🔄 Dynamic patching: {use_dynamic_patching}")
+    if use_dynamic_patching:
+        logger.info(f"🎯 Positive-aware cropping: p={positive_focus_p}, min_pos={min_pos_pixels}, attempts={pos_crop_attempts}")
+    logger.info(f"📂 Loading data from: {data_dir}")
     
     # Build DataLoaders using DataBlock approach
-    dls = build_segmentation_dls(data_dir, bs=batch_size, num_workers=0)
+    if use_dynamic_patching:
+        logger.info("🔧 Building DataLoaders with dynamic patching...")
+        dls, _ = build_segmentation_dls_dynamic_patching(
+            data_dir,
+            bs=batch_size,
+            num_workers=0,
+            crop_size=image_size,
+            positive_focus_p=positive_focus_p,
+            min_pos_pixels=min_pos_pixels,
+            pos_crop_attempts=pos_crop_attempts,
+        )
+    else:
+        logger.info("🔧 Building DataLoaders with traditional patchification...")
+        dls, _ = build_segmentation_dls(data_dir, bs=batch_size, num_workers=0)
 
     # Mask validation handled centrally in datablock loader
 
-    # Use standardized getter function for compatibility
-    get_y = get_y_mitochondria
-
-    # Minimal split manifest for audit (write to model output folder)
-    try:
-        import json
-        from datetime import datetime as _dt
-        splits_dir = output_path
-        splits_dir.mkdir(parents=True, exist_ok=True)
-        split_manifest = {
-            "stage": "mitochondria",
-            "generated_at": _dt.now().isoformat(),
-            "train_images": [str(p) for p in getattr(dls.train_ds, 'items', [])],
-            "valid_images": [str(p) for p in getattr(dls.valid_ds, 'items', [])],
-            "counts": {
-                "train": int(len(getattr(dls.train_ds, 'items', []))),
-                "valid": int(len(getattr(dls.valid_ds, 'items', [])))
-            }
-        }
-        with open(splits_dir / "splits.json", 'w') as f:
-            json.dump(split_manifest, f, indent=2)
-        logger.info(f"Wrote split manifest to {splits_dir / 'splits.json'}")
-    except Exception as _e:
-        logger.warning(f"Could not write split manifest: {_e}")
+    # Save data splits manifest
+    save_splits(output_path, model_folder_name, {
+        "stage": "mitochondria",
+        "train_items": getattr(dls.train_ds, 'items', []),
+        "valid_items": getattr(dls.valid_ds, 'items', [])
+    })
     
-    logger.info(f"Data loaded: {len(dls.train_ds)} train, {len(dls.valid_ds)} val samples")
+    logger.info(f"✅ Data loaded: {len(dls.train_ds)} train, {len(dls.valid_ds)} val samples")
     
-    # Create learner (binary segmentation with n_out=1 and proper [0,1] normalization)
+    # Create learner (binary segmentation with n_out=2 and proper [0,1] normalization)
+    logger.info("🏗️  Creating UNet learner with ResNet34 encoder...")
     learn = unet_learner(
         dls,
         resnet34,
         n_out=2,  # 2 classes: background (0) + mitochondria (1)
         metrics=Dice,  # Standard Dice metric works with multiclass!
+        path=output_path,  # Save artifacts directly under the model output directory
+        model_dir='.'  # Ensure callbacks/save go inside output_path
     )
     
     # FastAI automatically sets CrossEntropyLossFlat for n_out=2, don't override
@@ -118,138 +145,17 @@ def train_mitochondria_with_datablock(
     logger.info(f"Training for {epochs} epochs...")
     
     # Add callbacks for training visualization
-    from fastai.callback.tracker import SaveModelCallback
-    
-    # Save best model during training (in the output directory with descriptive name)
-    save_callback = SaveModelCallback(monitor='valid_loss', fname=f'{model_name}_best_model', with_opt=False)
+    logger.info("📋 Attaching training callbacks...")
+    save_callback = attach_best_model_callback(model_folder_name)
     
     # Train with callbacks
+    logger.info(f"🚀 Starting training for {epochs} epochs with learning rate {learning_rate}...")
     learn.fit_one_cycle(epochs, lr_max=learning_rate, cbs=[save_callback])
+    logger.info("✅ Training completed!")
     
     # Generate training visualizations
-    logger.info("Generating training visualizations...")
-    
-    # Plot training history
-    try:
-        learn.recorder.plot_loss()
-        plt.savefig(output_path / "training_loss.png", dpi=150, bbox_inches='tight')
-        plt.close()
-        logger.info(f"Training loss plot saved to: {output_path / 'training_loss.png'}")
-    except Exception as e:
-        logger.warning(f"Could not save loss plot: {e}")
-    
-    # Plot learning rate schedule (FastAI v2 compatible)
-    try:
-        if hasattr(learn.recorder, 'lrs') and learn.recorder.lrs:
-            plt.figure(figsize=(10, 6))
-            plt.plot(learn.recorder.lrs)
-            plt.title('Learning Rate Schedule')
-            plt.xlabel('Batch')
-            plt.ylabel('Learning Rate')
-            plt.grid(True)
-            plt.savefig(output_path / "learning_rate_schedule.png", dpi=150, bbox_inches='tight')
-            plt.close()
-            logger.info(f"Learning rate plot saved to: {output_path / 'learning_rate_schedule.png'}")
-        else:
-            logger.info("Learning rate data not available for plotting")
-    except Exception as e:
-        logger.warning(f"Could not save LR plot: {e}")
-    
-    # Plot metrics (FastAI v2 compatible)
-    try:
-        if hasattr(learn.recorder, 'values') and learn.recorder.values:
-            plt.figure(figsize=(12, 8))
-            
-            # Extract metrics data
-            values = learn.recorder.values
-            epoch_range = range(1, len(values) + 1)
-            
-            # Plot loss
-            plt.subplot(2, 2, 1)
-            train_losses = [v[0] for v in values]
-            val_losses = [v[1] for v in values] if len(values[0]) > 1 else []
-            plt.plot(epoch_range, train_losses, label='Training Loss', color='blue')
-            if val_losses:
-                plt.plot(epoch_range, val_losses, label='Validation Loss', color='red')
-            plt.title('Training and Validation Loss')
-            plt.xlabel('Epoch')
-            plt.ylabel('Loss')
-            plt.legend()
-            plt.grid(True)
-            
-            # Plot metrics if available
-            if len(values[0]) > 2:
-                plt.subplot(2, 2, 2)
-                metrics = [v[2] for v in values]
-                plt.plot(epoch_range, metrics, label='Dice Score', color='green')
-                plt.title('Dice Score')
-                plt.xlabel('Epoch')
-                plt.ylabel('Score')
-                plt.legend()
-                plt.grid(True)
-            
-            plt.tight_layout()
-            plt.savefig(output_path / "training_metrics.png", dpi=150, bbox_inches='tight')
-            plt.close()
-            logger.info(f"Training metrics plot saved to: {output_path / 'training_metrics.png'}")
-        else:
-            logger.info("Metrics data not available for plotting")
-    except Exception as e:
-        logger.warning(f"Could not save metrics plot: {e}")
-    
-    # Show some predictions on validation set
-    try:
-        # Get a few validation samples
-        val_dl = learn.dls.valid
-        batch = next(iter(val_dl))
-        images, masks = batch
-        
-        # Make predictions
-        with learn.no_bar():
-            preds = learn.get_preds(dl=val_dl.new(shuffle=False, drop_last=False))
-        
-        # Plot first few predictions
-        fig, axes = plt.subplots(3, 4, figsize=(16, 12))
-        
-        # ImageNet normalization stats for denormalization
-        from fastai.vision.all import imagenet_stats
-        imagenet_mean = np.array(imagenet_stats[0])
-        imagenet_std = np.array(imagenet_stats[1])
-        
-        for i in range(min(3, len(images))):
-            # Original image - denormalize from ImageNet normalization
-            img_denorm = images[i].permute(1, 2, 0).cpu().numpy()
-            img_denorm = img_denorm * imagenet_std + imagenet_mean
-            img_denorm = np.clip(img_denorm, 0, 1)  # Ensure valid range for matplotlib
-            axes[i, 0].imshow(img_denorm)
-            axes[i, 0].set_title(f'Image {i+1}')
-            axes[i, 0].axis('off')
-            
-            # Ground truth mask
-            axes[i, 1].imshow(masks[i].cpu().numpy(), cmap='gray')
-            axes[i, 1].set_title(f'Ground Truth {i+1}')
-            axes[i, 1].axis('off')
-            
-            # Prediction
-            pred_mask = preds[0][i].argmax(dim=0).cpu().numpy()
-            axes[i, 2].imshow(pred_mask, cmap='gray')
-            axes[i, 2].set_title(f'Prediction {i+1}')
-            axes[i, 2].axis('off')
-            
-            # Overlay - use denormalized image
-            overlay = img_denorm.copy()
-            pred_overlay = pred_mask > 0
-            overlay[pred_overlay] = [1, 0, 0]  # Red overlay for predictions
-            axes[i, 3].imshow(overlay)
-            axes[i, 3].set_title(f'Overlay {i+1}')
-            axes[i, 3].axis('off')
-        
-        plt.tight_layout()
-        plt.savefig(output_path / "validation_predictions.png", dpi=150, bbox_inches='tight')
-        plt.close()
-        logger.info(f"Validation predictions saved to: {output_path / 'validation_predictions.png'}")
-    except Exception as e:
-        logger.warning(f"Could not save validation predictions: {e}")
+    logger.info("📊 Generating training visualizations...")
+    save_plots(learn, output_path, model_folder_name)
     
     # Print training summary
     logger.info("=" * 60)
@@ -280,46 +186,20 @@ def train_mitochondria_with_datablock(
     
     logger.info("=" * 60)
     
-    # Save the model (parameterized name)
-    def _fmt_suffix2(e, b, lr, sz, tag=""):
-        lr_str = (f"{lr:.0e}" if lr < 1e-2 else f"{lr:.3f}").replace("-0", "-")
-        parts = [f"e{e}", f"b{b}", f"lr{lr_str}", f"sz{sz}"]
-        if tag:
-            parts.insert(0, tag)
-        return "_".join(parts)
-    run_tag2 = _fmt_suffix2(epochs, batch_size, learning_rate, image_size, tag="pretrain")
-    model_path = output_path / f"{model_name}-{run_tag2}.pkl"
-    learn.export(model_path)
-    logger.info(f"Model saved to: {model_path}")
+    # Save the model and training history
+    model_path = export_final_model(learn, output_path, model_folder_name)
     
-    # Save training history as JSON
-    try:
-        import json
-        training_history = {
-            'epochs': epochs,
-            'batch_size': batch_size,
-            'learning_rate': learning_rate
-        }
-        
-        # Safely add recorder data if available using FastAI v2 attributes
-        if hasattr(learn, 'recorder') and learn.recorder:
-            if hasattr(learn.recorder, 'log') and learn.recorder.log:
-                training_history['log'] = [float(x) if isinstance(x, (int, float)) else str(x) for x in learn.recorder.log]
-            
-            if hasattr(learn.recorder, 'values') and learn.recorder.values:
-                training_history['values'] = [[float(v) if isinstance(v, (int, float)) else str(v) for v in row] for row in learn.recorder.values]
-            
-            if hasattr(learn.recorder, 'losses') and learn.recorder.losses:
-                training_history['losses'] = [float(x) for x in learn.recorder.losses]
-            
-            if hasattr(learn.recorder, 'metric_names') and learn.recorder.metric_names:
-                training_history['metric_names'] = list(learn.recorder.metric_names)
-        
-        with open(output_path / "training_history.json", 'w') as f:
-            json.dump(training_history, f, indent=2)
-        logger.info(f"Training history saved to: {output_path / 'training_history.json'}")
-    except Exception as e:
-        logger.warning(f"Could not save training history: {e}")
+    # Save training history
+    save_training_history(learn, output_path, model_folder_name, {
+        'epochs': epochs,
+        'batch_size': batch_size,
+        'learning_rate': learning_rate,
+        'image_size': image_size,
+        'training_approach': 'from_scratch'
+    })
+    
+    # Save run metadata
+    save_run_metadata(output_path, model_folder_name, config_path)
     
     # Return the learner for now (can be wrapped later if needed)
     return learn, model_path
@@ -338,10 +218,13 @@ def main():
     parser.add_argument('--batch-size', type=int, default=DEFAULT_BATCH_SIZE, help='Training batch size')
     parser.add_argument('--learning-rate', type=float, default=DEFAULT_LEARNING_RATE, help='Learning rate')
     parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Input image size')
+    parser.add_argument('--use-dynamic-patching', action='store_true', default=True, help='Use dynamic patching (default: True)')
+    parser.add_argument('--no-dynamic-patching', dest='use_dynamic_patching', action='store_false', help='Disable dynamic patching')
     
     args = parser.parse_args()
 
     # Optional: load YAML config and overlay onto args
+    config_path = None
     if args.config:
         try:
             import yaml  # type: ignore
@@ -364,15 +247,21 @@ def main():
                 # Only take name from YAML if CLI didn't override
                 if parser.get_default('model_name') == args.model_name:
                     args.model_name = ckpt.stem
+            config_path = args.config
         except Exception as _e:  # pragma: no cover
             print(f"⚠️  Failed to load config {args.config}: {_e}")
     
     try:
-        logger = get_logger("eq.mitochondria_training")
+        from eq.utils.logger import setup_logging
+        logger = setup_logging(verbose=True)
         logger.info("🚀 Starting mitochondria model training...")
         logger.info(f"📁 Data directory: {args.data_dir}")
         logger.info(f"📁 Model directory: {args.model_dir}")
+        logger.info(f"🧾 Model name: {args.model_name}")
         logger.info(f"⚙️  Epochs: {args.epochs}, Batch size: {args.batch_size}")
+        logger.info(f"🎯 Learning rate: {args.learning_rate}")
+        logger.info(f"📐 Image size: {args.image_size}")
+        logger.info(f"🔄 Dynamic patching: {args.use_dynamic_patching}")
         
         # Train the model using DataBlock approach
         model, model_path = train_mitochondria_with_datablock(
@@ -382,7 +271,9 @@ def main():
             batch_size=args.batch_size,
             epochs=args.epochs,
             learning_rate=args.learning_rate,
-            image_size=args.image_size
+            image_size=args.image_size,
+            config_path=config_path,
+            use_dynamic_patching=args.use_dynamic_patching,
         )
         
         logger.info("🎉 Mitochondria training completed successfully!")

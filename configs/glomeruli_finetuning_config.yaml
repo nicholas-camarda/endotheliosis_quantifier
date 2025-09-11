@@ -56,9 +56,9 @@ model:
   
   # Fine-tuning parameters
   training:
-    epochs: 50
+    epochs: 30  # Optimized for transfer learning efficiency
     batch_size: 16
-    learning_rate: 1e-4  # Lower LR for fine-tuning
+    learning_rate: 5e-4  # Increased for faster domain adaptation
     weight_decay: 1e-4
     scheduler: "cosine_annealing"
     early_stopping:

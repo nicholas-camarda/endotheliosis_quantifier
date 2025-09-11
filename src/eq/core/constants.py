@@ -71,6 +71,13 @@ DEFAULT_RANDOM_ERASING_SH = 0.3
 DEFAULT_RANDOM_ERASING_MIN_ASPECT = 0.3
 DEFAULT_RANDOM_ERASING_MAX_COUNT = 3
 
+# === Positive-Aware Cropping (Dynamic Patching) ===
+# Defaults used when dynamically cropping patches from full images
+DEFAULT_POSITIVE_FOCUS_P = 0.6        # Probability to bias crops toward positives
+DEFAULT_MIN_POS_PIXELS = 64           # Minimum positive pixels required in a focused crop
+DEFAULT_POS_CROP_ATTEMPTS = 10        # Attempts to find a sufficiently positive crop
+DEFAULT_POSITIVE_CROP_JITTER = 8      # Pixel jitter around positive centers
+
 # File extensions
 IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.tif', '.tiff']
 MASK_EXTENSIONS = ['.png', '.jpg', '.tif', '.tiff']

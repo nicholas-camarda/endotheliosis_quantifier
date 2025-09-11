@@ -25,9 +25,10 @@
     "tests",
     "configs"
   ],
-  "pythonVersion": "3.9",
+  "pythonVersion": "3.10",
   "typeCheckingMode": "basic",
   "useLibraryCodeForTypes": true,
   "reportMissingImports": true,
-  "reportMissingTypeStubs": false
+  "reportMissingTypeStubs": false,
+  "reportWildcardImportFromLibrary": "none"
 }

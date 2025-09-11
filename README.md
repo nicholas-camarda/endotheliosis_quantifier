@@ -1,13 +1,15 @@
 # Endotheliosis Quantifier (EQ)
 
-A deep learning pipeline for automated quantification of endotheliosis severity in mouse glomeruli histology images. The system uses a two-stage approach: first training a mitochondria segmentation model on a public electron microscopy data to learn substructure and line features, then transferring this knowledge to segment glomeruli in light microscopy images for endotheliosis quantification.
+A deep learning pipeline for automated quantification of endotheliosis severity in (mouse) glomeruli histology images. The system uses a two-stage approach: first training a mitochondria segmentation model on a public electron microscopy data to learn substructure and line features, then transferring this knowledge to segment glomeruli in light microscopy images for endotheliosis quantification.
 
 **Key Features:**
 - **Two-stage training**: Mitochondria pretraining → glomeruli transfer learning
-- **ROI identification**: Automated segmentation of mouse glomeruli regions
+- **Dynamic Image Patching**: Modern approach with full image augmentation and on-the-fly cropping (default for all methods, no need to resize inputs)
+- **ROI identification**: Automated segmentation of glomeruli regions
+
+**Planned:**
 - **Regression modeling**: Predicts endotheliosis severity scores (0-3 scale)
 - **Quantitative analysis**: Objective assessment of endotheliosis in preclinical models
-- **FastAI v2 optimized**: Binary segmentation with proper augmentation and normalization
 
 ## Installation
 
@@ -27,6 +29,7 @@ pip install -e .[dev]
 mkdir -p data/raw_data data/derived_data models/segmentation/{mitochondria,glomeruli} test_output
 
 # Download Lucchi mitochondria dataset
+# For more information about the dataset, see: https://www.epfl.ch/labs/cvlab/data/data-em/
 cd data/raw_data
 wget -O ./lucchi.zip http://rhoana.rc.fas.harvard.edu/dataset/lucchi.zip
 unzip -o ./lucchi.zip
@@ -37,22 +40,6 @@ cd ../..
 ## Training Workflow
 
 ### Organize Imaging Datas
-
-#### Expected Raw Imaging Data Structure
-
-After installation, your `data/raw_data/` directory should be organized as follows:
-
-```
-data/raw_data/
-├── mnt/coxfs01/vcg_connectomics/mitochondria/Lucchi/    # Mitochondria dataset (from Lucchi et al. 2012)
-│   ├── img/                                          # EM images
-│   └── label/                                           # Mitochondria annotations
-└── your_project_name/                                   # Your glomeruli data
-    ├── images/                                          # H&E stained mouse glomeruli images
-    ├── masks/                                           # Glomeruli annotations (optional)
-    └── annotations/                                     # Label Studio JSON export (optional)
-        └── annotations.json
-```
 
 #### Data Requirements
 
@@ -71,7 +58,15 @@ data/raw_data/
 | 3            | 0     | 0.5   | 1     | 0     | 0     |
 | 4            | 0.5   | 0.5   | 0     | 0     | 0     |
 
-**Column naming**: `T{subject_number}-{image_number}` (e.g., T19-1 = Subject 19, Image 1)
+**Naming Convention**: `{SUBJECT_ID}-{IMAGE_NUMBER}`
+- **Subject ID**: Any identifier (e.g., `T19`, `Mouse_A`, `Patient_001`, `Control_1`, etc.)
+- **Image Number**: `1`, `2`, `3`, etc. (sequential images from the same subject)
+- **Examples**: 
+  - `T19-1` = Subject T19, Image 1 (first image from subject T19)
+  - `T19-2` = Subject T19, Image 2 (second image from subject T19)
+  - `Mouse_A-1` = Subject Mouse_A, Image 1 (first image from subject Mouse_A)
+  - `Patient_001-1` = Subject Patient_001, Image 1 (first image from subject Patient_001)
+  - `Control_1-2` = Subject Control_1, Image 2 (second image from subject Control_1)
 - **Supported Formats**: TIF, PNG, JPEG for images; PNG for masks
 - **Mask Values**: Binary masks with 0 (background) and 255 (foreground) values
 
@@ -133,6 +128,22 @@ data/raw_data/your_project/
 
 **Note:** The PNG export from Label Studio creates binary masks automatically, so no additional processing is needed.
 
+#### Expected Raw Imaging Data Structure
+
+After installation, your `data/raw_data/` directory should be organized as follows:
+
+```
+data/raw_data/
+├── mnt/coxfs01/vcg_connectomics/mitochondria/Lucchi/    # Mitochondria dataset (from Lucchi et al. 2012)
+│   ├── img/                                          # EM images
+│   └── label/                                           # Mitochondria annotations
+└── your_project_name/                                   # Your glomeruli data
+    ├── images/                                          # H&E stained mouse glomeruli images
+    ├── masks/                                           # Glomeruli annotations (optional)
+    └── annotations/                                     # Label Studio JSON export (optional)
+        └── annotations.json
+```
+
 ---
 
 ### Check Hardware Capabilities
@@ -158,88 +169,247 @@ This repository provides tools to train segmentation models from scratch. The co
 
 **Note**: Pre-trained models will be available in future releases for inference-only use cases.
 
+#### Validate Naming Conventions
+
 ```bash
-# 1) Data processing - convert large images to 256×256 patches, first for mito then for your gloms
-RAW_LUCCHI_DIR=data/raw_data/mnt/coxfs01/vcg_connectomics/mitochondria/Lucchi
-eq process-data \
-  --input-dir "$RAW_LUCCHI_DIR" \
+# Check if your image files follow the correct naming convention
+eq validate-naming --data-dir data/raw_data/your_project
+
+# Use --strict flag to exit with error code if invalid files are found
+eq validate-naming --data-dir data/raw_data/your_project --strict
+```
+
+This command will:
+- ✅ Validate all image filenames against the expected naming convention
+- ❌ Report invalid filenames with specific error messages
+- ⚠️  Warn about mixed naming conventions (new vs legacy format)
+- 📊 Provide summary statistics of valid/invalid files
+
+
+#### Data Processing with Dynamic Patching
+
+The system uses **dynamic patching** - a modern approach that processes full images on-the-fly during training. This provides better augmentation diversity and preserves full image context.
+
+**For Glomeruli Data (H&E images):**
+```bash
+# Use full images directly - no preprocessing required!
+# The system will apply augmentations to full images, then extract random 256×256 crops during training
+
+# Your data structure should be:
+# data/raw_data/your_project/
+#   ├── images/                    # Full H&E images (any size)
+#   │   ├── T19/                   # Subject T19
+#   │   │   ├── T19-1.jpg          # First image from subject T19
+#   │   │   ├── T19-2.jpg          # Second image from subject T19
+#   │   │   └── T19-3.jpg          # Third image from subject T19
+#   │   ├── Mouse_A/               # Subject Mouse_A
+#   │   │   ├── Mouse_A-1.jpg      # First image from subject Mouse_A
+#   │   │   └── Mouse_A-2.jpg      # Second image from subject Mouse_A
+#   │   └── Patient_001/           # Subject Patient_001
+#   │       └── Patient_001-1.jpg  # First image from subject Patient_001
+#   └── masks/                     # Full masks (same size as images)
+#       ├── T19/                   # Subject T19 masks
+#       │   ├── T19-1_mask.png     # Mask for T19-1.jpg
+#       │   ├── T19-2_mask.png     # Mask for T19-2.jpg
+#       │   └── T19-3_mask.png     # Mask for T19-3.jpg
+#       ├── Mouse_A/               # Subject Mouse_A masks
+#       │   ├── Mouse_A-1_mask.png # Mask for Mouse_A-1.jpg
+#       │   └── Mouse_A-2_mask.png # Mask for Mouse_A-2.jpg
+#       └── Patient_001/           # Subject Patient_001 masks
+#           └── Patient_001-1_mask.png # Mask for Patient_001-1.jpg
+```
+
+**Benefits of Dynamic Patching:**
+- **Better Augmentation**: Augmentations applied to full images before cropping provide more diverse training samples
+- **Context Preservation**: Full image context is available during augmentation
+
+```bash
+# 2) Train mitochondria segmentation model
+# Note: Mitochondria data needs two-step preprocessing due to large TIF files
+
+# Step 2a: Extract large images from TIF files (no patchifying)
+RAW_MITO_DIR=data/raw_data/mnt/coxfs01/vcg_connectomics/mitochondria/Lucchi
+eq extract-images \
+  --input-dir "$RAW_MITO_DIR" \
   --output-dir data/derived_data/mito
 
-RAW_DIR=data/raw_data/preeclampsia_project # replace this with your project name
-eq process-data \
-  --input-dir "$RAW_DIR" \
-  --output-dir data/derived_data/preeclampsia
-
-# After this step you should have:
-# data/derived_data/preeclampsia/
-#   ├─ image_patches/
-#   └─ mask_patches/
-
-# 2) Validate derived data integrity (recommended before training)
-#    Checks 1:1 image/mask mapping, size consistency, and binary mask values
-eq audit-derived --data-dir data/derived_data/mito
-
-# 3) Train mitochondria segmentation model
+# Step 2b: Train with dynamic patching using extracted large images
 python -m eq.training.train_mitochondria \
   --data-dir data/derived_data/mito \
   --model-dir models/segmentation/mitochondria \
   --epochs 50 \
   --batch-size 16 \
   --learning-rate 1e-3 \
-  --image-size 256
+  --image-size 256 \
+  --use-dynamic-patching
 
-# Expected artifacts (examples):
+# Expected output example:
 # models/segmentation/mitochondria/
 #   └── mitochondria_model/
-#       ├── mitochondria_model-epochs_50-batch_16-lr_0.001-size_256.pkl
+#       ├── mitochondria_model-pretrain_e50_b16_lr1e-3_sz256.pkl
 #       ├── training_loss.png
 #       ├── validation_predictions.png
-#       └── training_history.json
+#       └── training_history.tsv
 
-# 4) Train glomeruli model (choose one approach)
+# 3) Train glomeruli model using dynamic patching (recommended approach)
 
-# Option A: Transfer learning from mitochondria (recommended)
-BASE=$(ls models/segmentation/mitochondria/*.pkl | head -n1) # set this to your best model trained in step (3)
+# Option A: Two-stage transfer learning from mitochondria (recommended)
+# The system will auto-detect the best mitochondria model automatically
+# Crop size 512 to reflect the fact that glomeruli are larger, then resize down to 256 for backbone compatibility
 python -m eq.training.train_glomeruli \
-  --data-dir data/derived_data/preeclampsia \
-  --model-dir models/segmentation/glomeruli \
-  --base-model "$BASE" \
-  --epochs 30 \
-  --batch-size 16 \
-  --learning-rate 1e-4 \
-  --image-size 256
-
-# Option B: Train from scratch (no transfer learning)
-python -m eq.training.train_glomeruli \
-  --data-dir data/derived_data/preeclampsia \
+  --data-dir data/raw_data/preeclampsia_project \
   --model-dir models/segmentation/glomeruli \
   --epochs 50 \
   --batch-size 16 \
   --learning-rate 1e-3 \
-  --image-size 256
+  --loss bcedice \
+  --image-size 256 \
+  --crop-size 512 \
+  --use-dynamic-patching
 
-# Expected artifacts (examples):
+
+# Option B: Train from scratch (no transfer learning)
+python -m eq.training.train_glomeruli \
+  --data-dir data/raw_data/preeclampsia_project \
+  --model-dir models/segmentation/glomeruli \
+  --epochs 50 \
+  --batch-size 16 \
+  --learning-rate 1e-3 \
+  --loss dice \
+  --image-size 256 \
+  --crop-size 512 \
+  --use-dynamic-patching \
+  --from-scratch
+
+
+# Expected output example:
 # models/segmentation/glomeruli/
 #   ├── transfer/                    # Transfer learning approach
-#   │   └── glomeruli_model/
-#   │       ├── glomeruli_model-transfer-epochs_30-batch_8-lr_0.0001-size_256.pkl
-#   │       ├── training_loss.png
-#   │       ├── validation_predictions.png
-#   │       └── training_history.json
+#   │   └── glomeruli_model-transfer_loss-dice_s1lr1e-03_s2lr_lrfind_e50_b16_lr1e-3_sz256/
+#   │       ├── glomeruli_model-transfer_loss-dice_s1lr1e-03_s2lr_lrfind_e50_b16_lr1e-3_sz256.pkl
+#   │       ├── glomeruli_model-transfer_loss-dice_s1lr1e-03_s2lr_lrfind_e50_b16_lr1e-3_sz256_lr_finder.png   # if lr_find used
+#   │       ├── glomeruli_model-transfer_loss-dice_s1lr1e-03_s2lr_lrfind_e50_b16_lr1e-3_sz256_metrics.png
+#   │       ├── glomeruli_model-transfer_loss-dice_s1lr1e-03_s2lr_lrfind_e50_b16_lr1e-3_sz256_validation_predictions.png
+#   │       ├── glomeruli_model-transfer_loss-dice_s1lr1e-03_s2lr_lrfind_e50_b16_lr1e-3_sz256_training_history.tsv
+#   │       ├── glomeruli_model-transfer_loss-dice_s1lr1e-03_s2lr_lrfind_e50_b16_lr1e-3_sz256_best_model.pth
+#   │       └── fine_tune_lr.txt   # actual stage-2 LR used
 #   └── scratch/                     # From scratch approach
-#       └── glomeruli_model/
-#           ├── glomeruli_model-scratch-epochs_50-batch_16-lr_0.001-size_256.pkl
-#           ├── training_loss.png
-#           ├── validation_predictions.png
-#           └── training_history.json
+#       └── glomeruli_model-scratch_e50_b16_lr1e-3_sz256/
+#           ├── glomeruli_model-scratch_e50_b16_lr1e-3_sz256.pkl
+#           ├── glomeruli_model-scratch_e50_b16_lr1e-3_sz256_metrics.png
+#           ├── glomeruli_model-scratch_e50_b16_lr1e-3_sz256_validation_predictions.png
+#           └── glomeruli_model-scratch_e50_b16_lr1e-3_sz256_training_history.tsv
 ```
 
-#### Notes
+> **📝 Traditional Patchification Alternative**: If you prefer to use traditional patchification (converting large images to 256×256 patches upfront), you can still use the `eq process-data` command to preprocess your data, then train with `--data-dir data/derived_data/your_project` instead of `--data-dir data/raw_data/your_project`. This approach creates `image_patches/` and `mask_patches/` directories with pre-cropped 256×256 patches, but dynamic patching is recommended for better augmentation diversity and is now the default for all training methods.
+
+#### Generated Output Files
+
+After training completes, you'll find several useful files in your model directory:
+
+**Training Loss Plot (`training_loss.png`):**
+- Shows training and validation loss curves over epochs
+- Helps identify overfitting (validation loss increasing while training loss decreases)
+- Should show both curves decreasing and converging
+
+**Example Mitochondria Training Loss:**
+![Mitochondria Training Loss](models/segmentation/mitochondria/mitochondria_model-pretrain_e50_b16_lr1e-3_sz256/mitochondria_model-pretrain_e50_b16_lr1e-3_sz256_training_loss.png)
+
+**Glomeruli Training Loss: Transfer vs Scratch (side-by-side):**
+
+<div style="display: flex; gap: 35px;">
+  <div style="flex: 1; text-align: center;">
+    <div><strong>Transfer Learning</strong></div>
+    <img src="models/segmentation/glomeruli/transfer/glomeruli_model-transfer_loss-bcedice_e50_b16_lr1e-3_sz256/glomeruli_model-transfer_loss-bcedice_e50_b16_lr1e-3_sz256_training_loss.png" alt="Glomeruli Transfer Learning Training Loss" />
+  </div>
+  <div style="flex: 1; text-align: center;">
+    <div><strong>From Scratch</strong></div>
+    <img src="models/segmentation/glomeruli/scratch/glomeruli_model-scratch_e50_b16_lr1e-3_sz256/glomeruli_model-scratch_e50_b16_lr1e-3_sz256_training_loss.png" alt="Glomeruli From Scratch Training Loss" />
+  </div>
+  
+</div>
+
+**Validation Predictions (`validation_predictions.png`):**
+- 3×4 grid showing original images, ground truth masks, and model predictions
+- Visual assessment of segmentation quality
+- Helps identify common failure modes (e.g., missing small structures, false positives)
+
+**Example Mitochondria Validation Predictions:**
+![Mitochondria Validation Predictions](models/segmentation/mitochondria/mitochondria_model-pretrain_e50_b16_lr1e-3_sz256/mitochondria_model-pretrain_e50_b16_lr1e-3_sz256_validation_predictions.png)
+
+**Glomeruli Validation Predictions: Transfer vs Scratch (side-by-side):**
+
+<div style="display: flex; gap: 35px;">
+  <div style="flex: 1; text-align: center;">
+    <div><strong>Transfer Learning</strong></div>
+    <img src="models/segmentation/glomeruli/transfer/glomeruli_model-transfer_loss-dice_e50_b16_lr1e-3_sz256/glomeruli_model-transfer_loss-dice_e50_b16_lr1e-3_sz256_validation_predictions.png" alt="Glomeruli Transfer Learning Validation Predictions" />
+  </div>
+  <div style="flex: 1; text-align: center;">
+    <div><strong>From Scratch</strong></div>
+    <img src="models/segmentation/glomeruli/scratch/glomeruli_model-scratch_e50_b16_lr1e-3_sz256/glomeruli_model-scratch_e50_b16_lr1e-3_sz256_validation_predictions.png" alt="Glomeruli From Scratch Validation Predictions" />
+  </div>
+</div>
+
+**Training History (`training_history.tsv`):**
+- Complete training metrics in TSV format
+- Includes training configuration, loss values, metrics, and timing for each epoch
+- Records dynamic patching sizes: `crop_size` and `output_size`
+
+**Model File (`*.pkl`):**
+- The trained model ready for inference
+- Contains both the model weights and preprocessing configuration
+- Can be loaded directly for prediction on new images
+
+#### Class Imbalance Handling
+
+The glomeruli segmentation task faces significant class imbalance - most image patches contain only background tissue, with glomeruli present in a small fraction of patches. To address this:
+
+**Positive-Aware Cropping**: The training pipeline uses intelligent cropping that:
+- **Biases 60% of crops** toward regions containing positive pixels (glomeruli)
+- **Ensures minimum positive content** (64+ positive pixels) in focused crops
+- **Maintains spatial coherence** of positive examples during training
+- **Automatically adapts** to the content of each individual image
+
+**Benefits**:
+- **Improved sensitivity** for detecting small glomerular structures
+- **Reduced false negatives** in segmentation predictions  
+- **Better generalization** on imbalanced test data
+- **Natural data augmentation** - creates more diverse training examples
+- **Automatic handling** - no manual tuning required
+
+Positive-aware cropping is enabled by default with dynamic patching (`--use-dynamic-patching`) and provides superior class balance compared to weighted loss approaches.
+
+#### Config Notes
 - Use `--config configs/mito_pretraining_config.yaml` or `configs/glomeruli_finetuning_config.yaml` to drive runs; CLI flags override YAML; both fall back to `eq.core.constants` defaults.
 
 ---
 
 ### Data Processing Details
+
+#### Dynamic Patching (Default for Glomeruli Training)
+
+The dynamic patching approach processes full images on-the-fly during training and is the default for glomeruli training (both transfer learning and from scratch):
+
+**Input**: Full histology images (any size)  
+**Output**: 256×256 pixel crops extracted during training
+
+**Process**:
+1. Loads full images and masks directly from `images/` and `masks/` directories
+2. Applies augmentations (resize, flip, rotate) to full image-mask pairs
+3. Extracts synchronized random 256×256 crops from augmented images
+4. Converts to tensors and applies additional batch augmentations
+5. No preprocessing required - works directly with raw data
+
+**Benefits of Dynamic Patching**:
+- **Better Augmentation Diversity**: Augmentations applied to full images before cropping
+- **No Preprocessing**: Skip the patchification step entirely
+- **Context Preservation**: Full image context available during augmentation
+- **Memory Efficient**: Only processes crops needed for each batch
+- **Flexible**: Works with images of any size
+- **Synchronized Processing**: Image and mask pairs are always processed together
+- **Optimal for Glomeruli**: Best approach for glomeruli training with H&E images
+
+#### Traditional Patchification (Alternative)
 
 The `eq process-data` command converts large histology images into smaller patches suitable for deep learning:
 
@@ -254,22 +424,55 @@ The `eq process-data` command converts large histology images into smaller patch
 5. Validates image-to-mask correspondence
 6. Saves processed data for training
 
-**Why patches?**
-- Deep learning models require fixed-size inputs
-- Large images don't fit in GPU memory
-- More patches provide more training samples
+**When to use traditional patchification:**
+- Working with very large images that don't fit in memory
+- Need to preprocess data for multiple experiments
+- Legacy compatibility with existing workflows
+
+**Data Processing Workflow:**
+
+**For Mitochondria Data (Large TIF files):**
+1. **Raw Data**: Large TIF files (e.g., mitochondria data)
+2. **Step 1**: `eq extract-images` - Extract large images from TIF files (no patchifying)
+3. **Step 2**: Train with dynamic patching using extracted large images
+4. **Result**: Better model performance with full image context during augmentation
+
+**Directory Structure After Processing:**
+```
+data/derived_data/mito/
+├── images/                    # Large extracted images (for dynamic patching)
+├── masks/                     # Large extracted masks (for dynamic patching)
+├── image_patches/             # Traditional patches (for legacy training)
+└── mask_patches/              # Traditional patches (for legacy training)
+```
+
+**Smart Data Loading:**
+- **Dynamic Patching**: Uses `images/` and `masks/` directories
+- **Traditional Training**: Uses `image_patches/` and `mask_patches/` directories
+- **Automatic Selection**: The system automatically chooses the right data based on training mode
+
+**For Glomeruli Data (H&E images):**
+1. **Raw Data**: H&E images in `images/` and `masks/` directories
+2. **Training**: Use raw data directly with dynamic patching
+3. **Result**: No preprocessing needed - maximum augmentation diversity
 
 ### 🔄 FastAI v2 Implementation Status
 
 **Current Status**:
-- ✅ **Data Processing**: Complete - `eq process-data` works with FastAI v2
+- ✅ **Data Processing**: Complete - `eq process-data` and `eq extract-images` work with FastAI v2
 - ✅ **Data Pipeline**: Complete - DataBlock approach implemented with best practices
 - ✅ **Training Modules**: Complete - Optimized binary segmentation with FastAI v2 best practices
 - ✅ **Transfer Learning**: Complete - Mitochondria → glomeruli transfer learning working
-- ⏳ **Inference Pipeline**: Pending - Will be implemented after training validation
+- ✅ **Dynamic Patching**: Complete - Full image augmentation with on-the-fly cropping (default for all methods)
+- ✅ **Smart Data Loading**: Complete - Automatic selection between large images and patches
 - ⏳ **Evaluation Pipeline**: Pending - Will be implemented after training validation
+- ⏳ **Inference Pipeline**: Pending - Will be implemented after training validation
 
-**Recent Optimizations (2025-09-04)**:
+**Recent Optimizations (2025-09-07)**:
+- ✅ **Dynamic Patching**: Implemented full image processing with synchronized augmentation and cropping (default for all training methods)
+- ✅ **Image Extraction**: New `eq extract-images` command for extracting large images from TIF files
+- ✅ **Smart Data Loading**: Automatic selection between large images (dynamic patching) and patches (traditional training)
+- ✅ **Verbose Logging**: Consistent detailed logging across all training methods
 - ✅ **Transform Pipeline**: Implemented FastAI v2 best practices with optimal augmentation organization
 - ✅ **Normalization**: Added ImageNet normalization for optimal transfer learning performance
 - ✅ **Binary Segmentation**: Optimized `n_out=2` approach with proper loss function handling
@@ -277,6 +480,11 @@ The `eq process-data` command converts large histology images into smaller patch
 - ✅ **Directory Structure**: Organized output structure with model-specific subfolders
 - ✅ **Error Handling**: Improved data integrity validation and error reporting
 - ✅ **Training Infrastructure**: Complete training pipeline with proper file organization
+- ✅ **Type Safety**: Robust transform handling for both single items and image-mask pairs
+ - ✅ **Dynamic Patching Sizes**: Separate `--crop-size` (spatial crop) and `--image-size` (final resize)
+ - ✅ **Loss Selection**: `--loss {dice|bcedice|tversky}` with loss name included in model folder (e.g., `_loss-dice`)
+ - ✅ **Coverage Metrics**: Logs both "any-positive" and ">= min_pos_pixels" validation crop coverage
+ - ✅ **Run Logs**: Logs dynamic patch sizes at dataloader creation
 
 ### Planned Features
 - Feature extraction from segmented regions

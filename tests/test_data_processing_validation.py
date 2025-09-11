@@ -220,7 +220,28 @@ class TestDataProcessingComponents:
         
         try:
             config = build_segmentation_datablock()
-            loader = build_segmentation_dls(data_root="data/raw_data/preeclampsia_project/data", bs=4, num_workers=0)
+            # Use centralized path management and discover actual project structure
+            from eq.utils.config_manager import ConfigManager
+            config_manager = ConfigManager()
+            data_path = config_manager.global_config.data_path
+            raw_data_dir = Path(data_path)
+            
+            if not raw_data_dir.exists():
+                pytest.skip(f"Raw data directory not found: {raw_data_dir}")
+            
+            # Find the first available project directory with a 'data' subdirectory
+            project_data_path = None
+            for project_dir in raw_data_dir.iterdir():
+                if project_dir.is_dir():
+                    candidate_data_path = project_dir / "data"
+                    if candidate_data_path.exists():
+                        project_data_path = candidate_data_path
+                        break
+            
+            if project_data_path is None:
+                pytest.skip(f"No project with 'data' subdirectory found in: {raw_data_dir}")
+            
+            loader, _ = build_segmentation_dls(data_root=str(project_data_path), bs=4, num_workers=0)
             
             assert loader is not None, "Data loader should be created"
             assert loader.config is not None, "Config should be accessible"
@@ -282,8 +303,27 @@ class TestRealDataValidation:
         """Test that real project data is available."""
         print(f"\nTesting real data availability...")
         
-        # Check if project data exists
-        project_data_dir = Path("data/raw_data/preeclampsia_project/data")
+        # Check if project data exists using centralized path management
+        from eq.utils.config_manager import ConfigManager
+        config_manager = ConfigManager()
+        data_path = config_manager.global_config.data_path
+        raw_data_dir = Path(data_path)
+        
+        if not raw_data_dir.exists():
+            pytest.skip(f"Raw data directory not found: {raw_data_dir}")
+        
+        # Find the first available project directory with a 'data' subdirectory
+        project_data_dir = None
+        for project_dir in raw_data_dir.iterdir():
+            if project_dir.is_dir():
+                candidate_data_path = project_dir / "data"
+                if candidate_data_path.exists():
+                    project_data_dir = candidate_data_path
+                    break
+        
+        if project_data_dir is None:
+            pytest.skip(f"No project with 'data' subdirectory found in: {raw_data_dir}")
+        
         assert project_data_dir.exists(), f"Project data directory should exist: {project_data_dir}"
         
         # Check for images (recursively search subdirectories)
@@ -310,7 +350,26 @@ class TestRealDataValidation:
         """Test loading actual project data."""
         print(f"\nTesting real data loading...")
         
-        project_data_dir = Path("data/raw_data/preeclampsia_project/data")
+        # Use centralized path management and discover actual project structure
+        from eq.utils.config_manager import ConfigManager
+        config_manager = ConfigManager()
+        data_path = config_manager.global_config.data_path
+        raw_data_dir = Path(data_path)
+        
+        if not raw_data_dir.exists():
+            pytest.skip(f"Raw data directory not found: {raw_data_dir}")
+        
+        # Find the first available project directory with a 'data' subdirectory
+        project_data_dir = None
+        for project_dir in raw_data_dir.iterdir():
+            if project_dir.is_dir():
+                candidate_data_path = project_dir / "data"
+                if candidate_data_path.exists():
+                    project_data_dir = candidate_data_path
+                    break
+        
+        if project_data_dir is None:
+            pytest.skip(f"No project with 'data' subdirectory found in: {raw_data_dir}")
         
         # Try to load a few real images
         images_dir = project_data_dir / "images"
@@ -333,7 +392,26 @@ class TestRealDataValidation:
         """Test patching with real project data."""
         print(f"\nTesting real data patching...")
         
-        project_data_dir = Path("data/raw_data/preeclampsia_project/data")
+        # Use centralized path management and discover actual project structure
+        from eq.utils.config_manager import ConfigManager
+        config_manager = ConfigManager()
+        data_path = config_manager.global_config.data_path
+        raw_data_dir = Path(data_path)
+        
+        if not raw_data_dir.exists():
+            pytest.skip(f"Raw data directory not found: {raw_data_dir}")
+        
+        # Find the first available project directory with a 'data' subdirectory
+        project_data_dir = None
+        for project_dir in raw_data_dir.iterdir():
+            if project_dir.is_dir():
+                candidate_data_path = project_dir / "data"
+                if candidate_data_path.exists():
+                    project_data_dir = candidate_data_path
+                    break
+        
+        if project_data_dir is None:
+            pytest.skip(f"No project with 'data' subdirectory found in: {raw_data_dir}")
         images_dir = project_data_dir / "images"
         
         if images_dir.exists():

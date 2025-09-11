@@ -41,13 +41,6 @@ def get_y_func(x: Any) -> str:
     return str(x).replace('.jpg', '_mask.png')
 
 
-def get_glom_y(o: Any) -> Any:
-    """Get glomeruli mask for a given image file - used in glomeruli training."""
-    # Import the actual implementation from datablock_loader
-    from eq.data_management.datablock_loader import default_get_y
-    return default_get_y(o)
-
-
 def _patch_main_module() -> None:
     """Patch the __main__ module with required functions."""
     import __main__
@@ -56,13 +49,11 @@ def _patch_main_module() -> None:
     setattr(__main__, 'get_y', get_y)
     setattr(__main__, 'get_items_func', get_items_func)
     setattr(__main__, 'get_y_func', get_y_func)
-    setattr(__main__, 'get_glom_y', get_glom_y)
     
     # Also add to globals for safety
     globals()['get_y'] = get_y
     globals()['get_items_func'] = get_items_func
     globals()['get_y_func'] = get_y_func
-    globals()['get_glom_y'] = get_glom_y
 
 
 def setup_model_loading_environment() -> None:

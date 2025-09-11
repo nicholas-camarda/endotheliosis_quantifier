@@ -1,103 +1,169 @@
 #!/usr/bin/env python3
 """
-Standard Getter Functions for FastAI v2
+Standard Getter Functions for FastAI v2.
 
-This module provides standardized getter functions that can be used across
-all training modules to ensure compatibility during model loading and transfer learning.
+Roles:
+- get_y_full: resolve mask path for a full image in `images/` (used by dynamic patching).
+- get_y_patch: resolve mask path for a pre-generated patch in `image_patches/` (used by static patching).
+
+Both functions return a Path to the corresponding mask or raise FileNotFoundError if not found.
 """
 
 from pathlib import Path
-import numpy as np
-from fastai.vision.all import PILMask
-from eq.core.constants import DEFAULT_MASK_THRESHOLD
+from typing import List
+
 from eq.utils.logger import get_logger
 
 
+def get_y_full(x):
+    """
+    Resolve full-sized mask for a given image under data_root/images/ → data_root/masks/.
+
+    Directory assumptions:
+      - Image under `<data_root>/images/...`.
+      - Mask under `<data_root>/masks/...` (or `<data_root>/mask_patches/...` as a flexible fallback).
+
+    Naming patterns tried (preserving subdirectories when present):
+      - `<stem>_mask<ext>`
+      - `mask_<stem><ext>`
+      - Fallback: glob any file containing both `<stem>` and `mask`.
+
+    Returns a Path or raises FileNotFoundError if no mask is found.
+    """
+    log = get_logger("eq.standard_getters")
+    img_path = Path(x)
+
+    # Find dataset root by locating the 'images' directory and stepping up one level
+    p = img_path
+    data_root = None
+    for _ in range(5):
+        if p.name == 'images':
+            data_root = p.parent
+            break
+        p = p.parent
+    if data_root is None:
+        # Fallback to two levels up (Txx -> images -> root) for typical layout
+        data_root = img_path.parent.parent.parent
+    masks_root = data_root / "masks"
+    alt_masks_root = data_root / "mask_patches"
+
+    cand_dirs: List[Path] = [masks_root, alt_masks_root]
+    # Attempt to mirror substructure under images/
+    try:
+        rel = img_path.parent.relative_to(data_root / "images")
+        cand_dirs += [masks_root / rel, alt_masks_root / rel]
+    except Exception:
+        pass
+
+    stem = img_path.stem
+    names = [f"{stem}_mask", f"mask_{stem}", stem.replace("img_", "mask_")]
+
+    # Build extension candidates
+    ext_candidates = [".png", img_path.suffix.lower(), ".jpg", ".jpeg", ".tif", ".tiff"]
+    seen = set()
+    exts = []
+    for e in ext_candidates:
+        if e and e not in seen:
+            exts.append(e)
+            seen.add(e)
+
+    tried = []
+    for d in cand_dirs:
+        for nm in names:
+            for ext in exts:
+                p = d / f"{nm}{ext}"
+                tried.append(p)
+                if p.exists():
+                    return p
+
+    # Fallback glob search
+    for d in cand_dirs:
+        if d.exists():
+            hits = list(d.glob(f"*{stem}*mask*"))
+            if hits:
+                return hits[0]
+
+    raise FileNotFoundError(
+        f"❌ No mask found for {img_path.name}. Looked under 'masks/' and 'mask_patches/' with common patterns."
+    )
+
+
+def get_y_patch(x):
+    """
+    Resolve the mask for a pre-generated patch in `image_patches/`.
+
+    Directory assumptions:
+      - Image under `<data_root>/image_patches/...`.
+      - Mask under `<data_root>/mask_patches/...` (with `<rel>` preserved) or `<data_root>/masks/...` as a flexible fallback.
+
+    Naming patterns tried:
+      - `mask_patches/<rel>/<stem>_mask<image_ext>`
+      - `mask_patches/<rel>/<stem>_mask.png` (when the image is JPEG)
+      - Additional common raster extensions and analogous paths under `masks/`.
+
+    Returns a Path or raises FileNotFoundError if no mask is found.
+    """
+    log = get_logger("eq.standard_getters")
+    img_path = Path(x)
+    # Find dataset root by locating the 'image_patches' directory
+    p = img_path
+    data_root = None
+    for _ in range(6):
+        if p.name == 'image_patches':
+            data_root = p.parent
+            break
+        p = p.parent
+    if data_root is None:
+        data_root = img_path.parent.parent.parent
+    img_root = data_root / "image_patches"
+    mask_root = data_root / "mask_patches"
+    masks_alt = data_root / "masks"
+
+    # Determine relative path under image_patches if possible
+    try:
+        rel = img_path.parent.relative_to(img_root)
+    except Exception:
+        rel = Path("")
+
+    stem = img_path.stem
+    # Candidate extensions prioritizing original suffix and png for JPEGs
+    img_ext = img_path.suffix.lower()
+    ext_candidates = [img_ext]
+    if img_ext in [".jpg", ".jpeg"]:
+        ext_candidates.append(".png")
+    # Always consider common mask raster formats
+    ext_candidates += [".png", ".jpg", ".jpeg", ".tif", ".tiff"]
+
+    seen = set()
+    exts = []
+    for e in ext_candidates:
+        if e and e not in seen:
+            exts.append(e)
+            seen.add(e)
+
+    # Build candidate dirs with substructure
+    cand_dirs: List[Path] = [mask_root, masks_alt]
+    if str(rel) != "." and str(rel) != "":
+        cand_dirs = [mask_root / rel, masks_alt / rel] + cand_dirs
+
+    for d in cand_dirs:
+        for ext in exts:
+            p = d / f"{stem}_mask{ext}"
+            if p.exists():
+                return p
+
+    # Fallback: search for any file that contains stem and 'mask'
+    for d in cand_dirs:
+        if d.exists():
+            hits = list(d.glob(f"*{stem}*mask*"))
+            if hits:
+                return hits[0]
+
+    raise FileNotFoundError(
+        f"❌ No patch mask found for {img_path.name}. Looked under 'mask_patches/' (and 'masks/') with common patterns."
+    )
+
+
+# Backward-compatible alias: default getter resolves full masks for dynamic patching
 def get_y(x):
-    """
-    Universal get_y function that works for all segmentation tasks.
-    
-    Handles multiple mask location patterns:
-    1. Derived data structure: image_patches/ -> mask_patches/
-    2. Standard structure: img_*.jpg -> mask_*.png
-    
-    Args:
-        x: Image file path (Path object)
-        
-    Returns:
-        PILMask: Corresponding mask as float32 for FastAI v2 compatibility
-    """
-    logger = get_logger("eq.mask_loading")
-    
-    # Strategy 1: Try derived data structure (mask_patches directory)
-    mask_path = x.parent.parent / "mask_patches" / f"{x.stem}_mask{x.suffix}"
-    
-    if mask_path.exists():
-        msk = np.array(PILMask.create(mask_path))
-        original_max = msk.max()
-        original_unique = np.unique(msk)
-        
-        # Handle both binary (0/1) and grayscale (0-255) masks
-        # Convert to float32 for FastAI v2 augmentation compatibility
-        if msk.max() <= 1:
-            # Already binary, convert to float32
-            msk = msk.astype(np.float32)
-            logger.debug(f"Binary mask {mask_path.name}: max={original_max}, unique={original_unique} -> converted to float32")
-        else:
-            # Grayscale mask, apply threshold and convert to float32
-            msk = (msk > DEFAULT_MASK_THRESHOLD).astype(np.float32)
-            positive_pixels = (msk > 0).sum()
-            logger.debug(f"Grayscale mask {mask_path.name}: max={original_max}, unique={len(original_unique)} values -> thresholded at {DEFAULT_MASK_THRESHOLD}, {positive_pixels} positive pixels, converted to float32")
-        
-        final_positive = (msk > 0).sum()
-        if final_positive == 0:
-            logger.debug(f"All-zero mask after processing: {mask_path.name}")
-        else:
-            logger.debug(f"Mask {mask_path.name}: {final_positive} positive pixels")
-        
-        return PILMask.create(msk)
-    
-    # Strategy 2: Try standard path replacement (img_ -> mask_, .jpg -> .png)
-    standard_mask_path = str(x).replace('.jpg', '.png').replace('.jpeg', '.png').replace('img_', 'mask_')
-    if Path(standard_mask_path).exists():
-        msk = np.array(PILMask.create(standard_mask_path))
-        original_max = msk.max()
-        original_unique = np.unique(msk)
-        
-        # Handle both binary (0/1) and grayscale (0-255) masks  
-        # Convert to float32 for FastAI v2 augmentation compatibility
-        if msk.max() <= 1:
-            # Already binary, convert to float32
-            msk = msk.astype(np.float32)
-            logger.debug(f"Binary mask {Path(standard_mask_path).name}: max={original_max}, unique={original_unique} -> converted to float32")
-        else:
-            # Grayscale mask, apply threshold and convert to float32
-            msk = (msk > DEFAULT_MASK_THRESHOLD).astype(np.float32)
-            positive_pixels = (msk > 0).sum()
-            logger.debug(f"Grayscale mask {Path(standard_mask_path).name}: max={original_max}, unique={len(original_unique)} values -> thresholded at {DEFAULT_MASK_THRESHOLD}, {positive_pixels} positive pixels, converted to float32")
-        
-        final_positive = (msk > 0).sum()
-        if final_positive == 0:
-            logger.warning(f"⚠️  All-zero mask after processing: {Path(standard_mask_path).name}")
-        else:
-            logger.debug(f"✅ Mask {Path(standard_mask_path).name}: {final_positive} positive pixels")
-        
-        return PILMask.create(msk)
-    
-    # Strategy 3: No mask found - this should not happen if get_items filters correctly
-    # This indicates a data integrity issue that needs to be fixed
-    raise FileNotFoundError(f"❌ CRITICAL: No mask found for {x.name} - this should not happen if get_items filtering is working correctly. Check data integrity.")
-
-
-# Legacy function aliases for backward compatibility
-def get_y_universal(x):
-    """Legacy alias for get_y function."""
-    return get_y(x)
-
-def get_y_mitochondria(x):
-    """Legacy alias for get_y function.""" 
-    return get_y(x)
-
-def get_y_glomeruli(x):
-    """Legacy alias for get_y function."""
-    return get_y(x)
+    return get_y_full(x)

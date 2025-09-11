@@ -9,12 +9,195 @@ and converts them to a standardized, project-agnostic structure.
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, Union, cast
+from typing import Any, Dict, Optional, Union, cast, Tuple, List
 
 import pandas as pd
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+def extract_subject_info(filename: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Extract subject ID and image number from filename.
+    
+    Supports multiple naming conventions:
+    - New format: T19-1.jpg -> (T19, 1)
+    - Old format: T19_Image0.jpg -> (T19, 0)
+    - Flexible format: Mouse_A-2.png -> (Mouse_A, 2)
+    
+    Args:
+        filename: Image filename (e.g., "T19-1.jpg", "Mouse_A-2.png")
+        
+    Returns:
+        Tuple of (subject_id, image_number) or (None, None) if parsing fails
+    """
+    # Remove file extension
+    stem = Path(filename).stem
+    
+    # Try new format: SUBJECT-IMAGE_NUMBER
+    if '-' in stem:
+        parts = stem.split('-')
+        if len(parts) >= 2:
+            # Find the last part that looks like a number
+            image_number = None
+            subject_id = None
+            
+            for i in range(len(parts) - 1, -1, -1):
+                try:
+                    # Try to parse as integer
+                    int(parts[i])
+                    image_number = parts[i]
+                    subject_id = '-'.join(parts[:i]) if i > 0 else parts[0]
+                    break
+                except ValueError:
+                    continue
+            
+            if subject_id and image_number:
+                return subject_id, image_number
+    
+    # Try old format: SUBJECT_ImageIMAGE_NUMBER
+    if '_Image' in stem:
+        parts = stem.split('_Image')
+        if len(parts) == 2:
+            subject_id = parts[0]
+            image_number = parts[1]
+            return subject_id, image_number
+    
+    # If no pattern matches, return None
+    return None, None
+
+
+def validate_subject_naming(filenames: List[str], data_dir: Path) -> Dict[str, Any]:
+    """
+    Validate subject naming conventions and provide detailed error messages.
+    
+    This function "yells at the user" by providing clear, actionable error messages
+    when invalid naming conventions are detected.
+    
+    Args:
+        filenames: List of image filenames to validate
+        data_dir: Data directory path for context
+        
+    Returns:
+        Dictionary with validation results and error messages
+    """
+    validation_results = {
+        'valid_files': [],
+        'invalid_files': [],
+        'errors': [],
+        'warnings': [],
+        'naming_conventions_detected': set(),
+        'subject_ids_found': set()
+    }
+    
+    logger = logging.getLogger(__name__)
+    
+    for filename in filenames:
+        subject_id, image_number = extract_subject_info(filename)
+        
+        if subject_id is None or image_number is None:
+            # Invalid naming convention
+            validation_results['invalid_files'].append(filename)
+            error_msg = (
+                f"❌ INVALID FILENAME: '{filename}'\n"
+                f"   Expected format: 'SUBJECT_ID-IMAGE_NUMBER.ext' (e.g., 'T19-1.jpg', 'Mouse_A-2.png')\n"
+                f"   Or legacy format: 'SUBJECT_ID_ImageIMAGE_NUMBER.ext' (e.g., 'T19_Image0.jpg')\n"
+                f"   Current filename does not match either pattern!"
+            )
+            validation_results['errors'].append(error_msg)
+            logger.error(error_msg)
+            continue
+        
+        # Validate subject ID format
+        if not subject_id or len(subject_id.strip()) == 0:
+            validation_results['invalid_files'].append(filename)
+            error_msg = f"❌ EMPTY SUBJECT ID in '{filename}' - subject ID cannot be empty!"
+            validation_results['errors'].append(error_msg)
+            logger.error(error_msg)
+            continue
+        
+        # Validate image number format
+        try:
+            image_num = int(image_number)
+            if image_num < 0:
+                validation_results['invalid_files'].append(filename)
+                error_msg = f"❌ NEGATIVE IMAGE NUMBER in '{filename}' - image number must be >= 0!"
+                validation_results['errors'].append(error_msg)
+                logger.error(error_msg)
+                continue
+        except ValueError:
+            validation_results['invalid_files'].append(filename)
+            error_msg = f"❌ INVALID IMAGE NUMBER in '{filename}' - '{image_number}' is not a valid number!"
+            validation_results['errors'].append(error_msg)
+            logger.error(error_msg)
+            continue
+        
+        # Check for problematic characters in subject ID
+        problematic_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
+        found_problematic = [char for char in problematic_chars if char in subject_id]
+        if found_problematic:
+            validation_results['invalid_files'].append(filename)
+            error_msg = (
+                f"❌ INVALID CHARACTERS in subject ID '{subject_id}' in '{filename}'\n"
+                f"   Found problematic characters: {found_problematic}\n"
+                f"   Subject IDs should only contain letters, numbers, underscores, and hyphens!"
+            )
+            validation_results['errors'].append(error_msg)
+            logger.error(error_msg)
+            continue
+        
+        # Valid file
+        validation_results['valid_files'].append(filename)
+        validation_results['subject_ids_found'].add(subject_id)
+        
+        # Detect naming convention
+        if '-' in filename:
+            validation_results['naming_conventions_detected'].add('new_format')
+        elif '_Image' in filename:
+            validation_results['naming_conventions_detected'].add('legacy_format')
+    
+    # Generate summary warnings
+    if len(validation_results['naming_conventions_detected']) > 1:
+        warning_msg = (
+            f"⚠️  MIXED NAMING CONVENTIONS DETECTED!\n"
+            f"   Found both new format (SUBJECT-IMAGE) and legacy format (SUBJECT_ImageIMAGE)\n"
+            f"   Consider standardizing to new format: SUBJECT_ID-IMAGE_NUMBER.ext"
+        )
+        validation_results['warnings'].append(warning_msg)
+        logger.warning(warning_msg)
+    
+    if len(validation_results['subject_ids_found']) > 20:
+        warning_msg = (
+            f"⚠️  MANY SUBJECTS DETECTED: {len(validation_results['subject_ids_found'])} unique subjects\n"
+            f"   This might indicate a data organization issue. Consider grouping related subjects."
+        )
+        validation_results['warnings'].append(warning_msg)
+        logger.warning(warning_msg)
+    
+    # Generate summary
+    total_files = len(filenames)
+    valid_count = len(validation_results['valid_files'])
+    invalid_count = len(validation_results['invalid_files'])
+    
+    if invalid_count > 0:
+        summary_msg = (
+            f"🚨 NAMING VALIDATION FAILED!\n"
+            f"   Valid files: {valid_count}/{total_files}\n"
+            f"   Invalid files: {invalid_count}/{total_files}\n"
+            f"   Please fix the invalid filenames before proceeding!"
+        )
+        logger.error(summary_msg)
+    else:
+        summary_msg = (
+            f"✅ NAMING VALIDATION PASSED!\n"
+            f"   All {valid_count} files have valid naming conventions\n"
+            f"   Detected naming convention: {', '.join(validation_results['naming_conventions_detected'])}\n"
+            f"   Found {len(validation_results['subject_ids_found'])} unique subjects"
+        )
+        logger.info(summary_msg)
+    
+    return validation_results
 
 
 class MetadataProcessor:
@@ -236,8 +419,8 @@ class MetadataProcessor:
         if not masks_dir.exists():
             return {'file_system_validation': {'error': 'Masks directory not found'}}
         
-        # Get all subject directories from images
-        image_subject_dirs = [d for d in images_dir.iterdir() if d.is_dir() and d.name.startswith('T')]
+        # Get all subject directories from images (any directory name is allowed)
+        image_subject_dirs = [d for d in images_dir.iterdir() if d.is_dir()]
         
         file_validation = {
             'total_subjects_found': len(image_subject_dirs),
@@ -251,6 +434,30 @@ class MetadataProcessor:
             'scores_without_images': 0,
             'validation_errors': []
         }
+        
+        # Collect all image filenames for naming validation
+        all_image_files = []
+        for subject_dir in image_subject_dirs:
+            images = list(subject_dir.glob("*.png")) + list(subject_dir.glob("*.tif")) + list(subject_dir.glob("*.jpg")) + list(subject_dir.glob("*.jpeg"))
+            all_image_files.extend([img.name for img in images])
+        
+        # Validate subject naming conventions
+        if all_image_files:
+            logger.info(f"🔍 Validating naming conventions for {len(all_image_files)} image files...")
+            naming_validation = validate_subject_naming(all_image_files, images_dir)
+            
+            # Add naming validation results to file validation
+            file_validation['naming_validation'] = naming_validation
+            
+            # If there are invalid files, add them to validation errors
+            if naming_validation['invalid_files']:
+                file_validation['validation_errors'].extend(naming_validation['errors'])
+                logger.error(f"🚨 Found {len(naming_validation['invalid_files'])} files with invalid naming conventions!")
+            
+            # Add warnings
+            if naming_validation['warnings']:
+                for warning in naming_validation['warnings']:
+                    logger.warning(warning)
         
         for subject_dir in image_subject_dirs:
             subject_id = subject_dir.name
@@ -288,22 +495,42 @@ class MetadataProcessor:
                     file_validation['validation_errors'].append(f"No mask for {image}")
                 
                 # Check if this image has corresponding scores in metadata
-                # Extract subject and image number from image name
-                # T19_Image0 -> T19, Image0
-                if '_Image' in image_stem:
-                    subject_part = image_stem.split('_Image')[0]  # T19
-                    image_part = image_stem.split('_Image')[1]    # 0
-                    
+                # Extract subject and image number from image name using flexible parsing
+                subject_id, image_number = extract_subject_info(image.name)
+                
+                if subject_id and image_number:
                     # Look for scores for this subject in metadata
-                    subject_scores = df[df['subject_id'].str.startswith(subject_part + '-')]
+                    # Try both new format (T19-1) and old format (T19_Image0)
+                    subject_scores = df[df['subject_id'].str.startswith(subject_id + '-')]
+                    if subject_scores.empty:
+                        # Try old format as fallback
+                        old_format_id = f"{subject_id}_Image{image_number}"
+                        subject_scores = df[df['subject_id'] == old_format_id]
+                    
                     if subject_scores.empty:
                         file_validation['images_without_scores'] += 1
-                        file_validation['validation_errors'].append(f"No scores for {image}")
+                        file_validation['validation_errors'].append(f"No scores for {image} (subject: {subject_id}, image: {image_number})")
+                else:
+                    file_validation['images_without_scores'] += 1
+                    file_validation['validation_errors'].append(f"Could not parse subject info from {image}")
             
             # Check for masks without images
             for mask in masks:
-                mask_stem = mask.stem.replace('_mask', '')  # e.g., "T19_Image0"
-                expected_image = subject_dir / f"{mask_stem}{mask.suffix}"
+                # Extract subject info from mask name (remove _mask suffix first)
+                mask_name_without_suffix = mask.stem.replace('_mask', '')
+                subject_id, image_number = extract_subject_info(f"{mask_name_without_suffix}{mask.suffix}")
+                
+                if subject_id and image_number:
+                    # Try new format first: T19-1_mask.png -> T19-1.jpg
+                    expected_image_new = subject_dir / f"{subject_id}-{image_number}{mask.suffix}"
+                    # Try old format as fallback: T19_Image0_mask.png -> T19_Image0.jpg
+                    expected_image_old = subject_dir / f"{subject_id}_Image{image_number}{mask.suffix}"
+                    
+                    expected_image = expected_image_new if expected_image_new.exists() else expected_image_old
+                else:
+                    # Fallback to old logic
+                    mask_stem = mask.stem.replace('_mask', '')  # e.g., "T19_Image0"
+                    expected_image = subject_dir / f"{mask_stem}{mask.suffix}"
                 
                 if not expected_image.exists():
                     file_validation['masks_without_images'] += 1

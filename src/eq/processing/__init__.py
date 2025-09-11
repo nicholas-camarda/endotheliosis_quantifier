@@ -13,7 +13,7 @@ Provides unified image processing, patchification, and file conversion tools.
 
 # Import processing functionality
 from .convert_files import convert_tif_to_jpg  # File conversion (from io/convert_files_to_jpg.py)
-from .image_mask_preprocessing import patchify_dataset  # Unified image patchification
+from .image_mask_preprocessing import patchify_dataset, extract_large_images  # Unified image patchification and extraction
 from .preprocessing import (  # Core preprocessing functions
     resize_image_standard,
     resize_image_large,
@@ -35,8 +35,9 @@ __all__ = [
     'preprocess_image_for_model',
     'normalize_image_array',
     
-    # Image patchification
+    # Image patchification and extraction
     'patchify_dataset',
+    'extract_large_images',
     
     # Note: Label Studio annotation processing removed - use PNG exports instead
     

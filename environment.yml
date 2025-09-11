@@ -29,10 +29,10 @@ dependencies:
   - jupyter
   - setuptools<81
   
-  # Stable PyTorch stack with CUDA 11.5 (WSL2 compatible)
-  - pytorch=2.1.0
-  - torchvision=0.16.0
-  - pytorch-cuda=11.5
+  # Stable PyTorch stack with CUDA 12.1 (compatible versions)
+  - pytorch=2.1.2
+  - torchvision=0.16.2
+  - pytorch-cuda=12.1
   
   # Stable FastAI v2 and other pip packages
   - pip:

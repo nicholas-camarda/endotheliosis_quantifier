@@ -216,6 +216,113 @@ def data_load_command(args):
 # Note: process_annotations_command removed - use PNG exports from Label Studio instead
 
 
+def extract_images_command(args):
+    """Extract large images from TIF files without patchifying them."""
+    logger = get_logger("eq.extract_images")
+    logger.info("🔄 Starting image extraction pipeline...")
+
+    from pathlib import Path
+    from eq.processing.image_mask_preprocessing import extract_large_images
+    
+    # Validate input directory
+    input_path = Path(args.input_dir)
+    if not input_path.exists():
+        logger.error(f"❌ Input directory does not exist: {input_path}")
+        sys.exit(1)
+    
+    # Create output directory
+    output_path = Path(args.output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    logger.info(f"📁 Output directory: {output_path}")
+    
+    # Extract large images
+    logger.info("📦 Extracting large images from TIF files...")
+    counts = extract_large_images(
+        input_root=str(input_path),
+        output_root=str(output_path)
+    )
+    
+    # Report results
+    image_count = counts.get("images", 0)
+    mask_count = counts.get("masks", 0)
+    logger.info(f"✅ Extraction completed!")
+    logger.info(f"📊 Extracted {image_count} images and {mask_count} masks")
+    logger.info(f"📁 Output structure:")
+    logger.info(f"   - {output_path}/images/ (extracted image files)")
+    logger.info(f"   - {output_path}/masks/ (extracted mask files)")
+    logger.info("🎉 Image extraction pipeline completed successfully!")
+
+
+def validate_naming_command(args):
+    """Validate subject naming conventions in image files."""
+    logger = get_logger("eq.validate_naming")
+    logger.info("🔍 Starting naming convention validation...")
+
+    from pathlib import Path
+    from eq.data_management.metadata_processor import validate_subject_naming
+    
+    # Validate input directory
+    data_path = Path(args.data_dir)
+    if not data_path.exists():
+        logger.error(f"❌ Data directory does not exist: {data_path}")
+        sys.exit(1)
+    
+    # Find images directory
+    images_dir = data_path / "images"
+    if not images_dir.exists():
+        logger.error(f"❌ Images directory not found: {images_dir}")
+        logger.error("   Expected structure: data_dir/images/")
+        sys.exit(1)
+    
+    logger.info(f"📁 Validating images in: {images_dir}")
+    
+    # Collect all image files
+    all_image_files = []
+    for subject_dir in images_dir.iterdir():
+        if subject_dir.is_dir():
+            images = (list(subject_dir.glob("*.png")) + 
+                     list(subject_dir.glob("*.tif")) + 
+                     list(subject_dir.glob("*.jpg")) + 
+                     list(subject_dir.glob("*.jpeg")))
+            all_image_files.extend([img.name for img in images])
+    
+    if not all_image_files:
+        logger.warning("⚠️  No image files found in the images directory")
+        return
+    
+    logger.info(f"📊 Found {len(all_image_files)} image files to validate")
+    
+    # Validate naming conventions
+    validation_results = validate_subject_naming(all_image_files, images_dir)
+    
+    # Print detailed results
+    if validation_results['invalid_files']:
+        logger.error(f"\n🚨 VALIDATION FAILED!")
+        logger.error(f"   Invalid files: {len(validation_results['invalid_files'])}")
+        logger.error(f"   Valid files: {len(validation_results['valid_files'])}")
+        
+        logger.error(f"\n❌ Invalid files:")
+        for invalid_file in validation_results['invalid_files']:
+            logger.error(f"   - {invalid_file}")
+        
+        if args.strict:
+            logger.error("\n💥 Exiting with error code due to --strict flag")
+            sys.exit(1)
+    else:
+        logger.info(f"\n✅ VALIDATION PASSED!")
+        logger.info(f"   All {len(validation_results['valid_files'])} files have valid naming conventions")
+        logger.info(f"   Detected naming convention: {', '.join(validation_results['naming_conventions_detected'])}")
+        logger.info(f"   Found {len(validation_results['subject_ids_found'])} unique subjects")
+    
+    # Print warnings
+    if validation_results['warnings']:
+        logger.warning(f"\n⚠️  Warnings:")
+        for warning in validation_results['warnings']:
+            logger.warning(f"   {warning}")
+    
+    logger.info("🎉 Naming validation completed!")
+
+
 def process_data_command(args):
     """Process raw data into derived_data."""
     logger = get_logger("eq.process_data")
@@ -859,6 +966,18 @@ Examples:
     process_parser.add_argument('--overlap', type=float, default=DEFAULT_PATCH_OVERLAP, help=f'Overlap between patches (default: {DEFAULT_PATCH_OVERLAP})')
     # auto-detect masks; no explicit flag needed
     process_parser.set_defaults(func=process_data_command)
+    
+    # Extract images command (for large TIF files)
+    extract_parser = subparsers.add_parser('extract-images', help='Extract large images from TIF files without patchifying')
+    extract_parser.add_argument('--input-dir', required=True, help='Input directory with TIF files (e.g., mitochondria data)')
+    extract_parser.add_argument('--output-dir', required=True, help='Output directory for extracted images')
+    extract_parser.set_defaults(func=extract_images_command)
+
+    # Validate naming command
+    validate_parser = subparsers.add_parser('validate-naming', help='Validate subject naming conventions in image files')
+    validate_parser.add_argument('--data-dir', required=True, help='Data directory containing images/ and masks/ subdirectories')
+    validate_parser.add_argument('--strict', action='store_true', help='Exit with error code if any invalid files are found')
+    validate_parser.set_defaults(func=validate_naming_command)
     
     # Training command
     train_parser = subparsers.add_parser('train-segmenter', help='Train segmentation model')
