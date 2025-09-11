@@ -268,14 +268,7 @@ def train_glomeruli_with_datablock(
     save_callback = attach_best_model_callback(model_folder_name)
     learn.fit_one_cycle(epochs, lr_max=learning_rate, cbs=[save_callback])
     
-    # Generate training visualizations
-    logger.info("Generating training visualizations...")
-    save_plots(learn, output_path, model_folder_name)
-
-    # Save the model and training history
-    model_path = export_final_model(learn, output_path, model_folder_name)
-    
-    # Save training history
+    # Save training history BEFORE any plotting/predictions that may alter recorder state
     save_training_history(learn, output_path, model_folder_name, {
         'epochs': epochs,
         'batch_size': batch_size,
@@ -284,6 +277,13 @@ def train_glomeruli_with_datablock(
         'base_model_path': base_model_path or 'None (from scratch)',
         'training_approach': 'transfer_learning' if base_model_path else 'from_scratch'
     })
+
+    # Generate training visualizations
+    logger.info("Generating training visualizations...")
+    save_plots(learn, output_path, model_folder_name)
+
+    # Save the model
+    model_path = export_final_model(learn, output_path, model_folder_name)
     
     # Save run metadata
     save_run_metadata(output_path, model_folder_name, config_path)
