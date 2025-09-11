@@ -459,6 +459,8 @@ data/derived_data/mito/
 2. **Training**: Use raw data directly with dynamic patching
 3. **Result**: No preprocessing needed - maximum augmentation diversity
 
+--- 
+
 ### 🔄 FastAI v2 Implementation Status
 
 **Current Status**:
@@ -471,7 +473,7 @@ data/derived_data/mito/
 - ⏳ **Evaluation Pipeline**: Pending - Will be implemented after training validation
 - ⏳ **Inference Pipeline**: Pending - Will be implemented after training validation
 
-**Recent Optimizations (2025-09-07)**:
+**Recent Optimizations (2025-09-11)**:
 - ✅ **Dynamic Patching**: Implemented full image processing with synchronized augmentation and cropping (default for all training methods)
 - ✅ **Image Extraction**: New `eq extract-images` command for extracting large images from TIF files
 - ✅ **Smart Data Loading**: Automatic selection between large images (dynamic patching) and patches (traditional training)
@@ -484,10 +486,10 @@ data/derived_data/mito/
 - ✅ **Error Handling**: Improved data integrity validation and error reporting
 - ✅ **Training Infrastructure**: Complete training pipeline with proper file organization
 - ✅ **Type Safety**: Robust transform handling for both single items and image-mask pairs
- - ✅ **Dynamic Patching Sizes**: Separate `--crop-size` (spatial crop) and `--image-size` (final resize)
- - ✅ **Loss Selection**: `--loss {dice|bcedice|tversky}` with loss name included in model folder (e.g., `_loss-dice`)
- - ✅ **Coverage Metrics**: Logs both "any-positive" and ">= min_pos_pixels" validation crop coverage
- - ✅ **Run Logs**: Logs dynamic patch sizes at dataloader creation
+- ✅ **Dynamic Patching Sizes**: Separate `--crop-size` (spatial crop) and `--image-size` (final resize)
+- ✅ **Loss Selection**: `--loss {dice|bcedice|tversky}` with loss name included in model folder (e.g., `_loss-dice`)
+- ✅ **Coverage Metrics**: Logs both "any-positive" and ">= min_pos_pixels" validation crop coverage
+- ✅ **Run Logs**: Logs dynamic patch sizes at dataloader creation
 
 ### Planned Features
 - Feature extraction from segmented regions
