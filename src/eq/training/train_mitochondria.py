@@ -153,6 +153,15 @@ def train_mitochondria_with_datablock(
     learn.fit_one_cycle(epochs, lr_max=learning_rate, cbs=[save_callback])
     logger.info("✅ Training completed!")
     
+    # Save training history BEFORE any plotting/predictions that may alter recorder state
+    save_training_history(learn, output_path, model_folder_name, {
+        'epochs': epochs,
+        'batch_size': batch_size,
+        'learning_rate': learning_rate,
+        'image_size': image_size,
+        'training_approach': 'from_scratch'
+    })
+
     # Generate training visualizations
     logger.info("📊 Generating training visualizations...")
     save_plots(learn, output_path, model_folder_name)
@@ -186,17 +195,8 @@ def train_mitochondria_with_datablock(
     
     logger.info("=" * 60)
     
-    # Save the model and training history
+    # Save the model
     model_path = export_final_model(learn, output_path, model_folder_name)
-    
-    # Save training history
-    save_training_history(learn, output_path, model_folder_name, {
-        'epochs': epochs,
-        'batch_size': batch_size,
-        'learning_rate': learning_rate,
-        'image_size': image_size,
-        'training_approach': 'from_scratch'
-    })
     
     # Save run metadata
     save_run_metadata(output_path, model_folder_name, config_path)
