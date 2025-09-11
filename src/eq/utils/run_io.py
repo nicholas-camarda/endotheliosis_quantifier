@@ -175,6 +175,11 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
         
         # Plot first few predictions: add a RAW column for sanity
         fig, axes = plt.subplots(3, 5, figsize=(20, 12))
+        try:
+            # Add model folder name into the figure title for easier README embedding
+            fig.suptitle(f"Validation Predictions – {model_folder_name}", fontsize=14)
+        except Exception:
+            pass
         
         # Always decode to display-ready space; never assume channels
         for i in range(min(3, len(images))):
@@ -400,7 +405,8 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
             axes[i, 4].set_title(f'Overlay {i+1}\n(Green=TP, Red=FP, Blue=FN)')
             axes[i, 4].axis('off')
         
-        plt.tight_layout()
+        # Leave room for the suptitle
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
         plt.savefig(output_dir / f"{model_folder_name}_validation_predictions.png", dpi=150, bbox_inches='tight')
         plt.close()
         logger.info(f"Validation predictions saved to: {output_dir / f'{model_folder_name}_validation_predictions.png'}")
@@ -435,6 +441,8 @@ def save_training_history(learn: Learner, output_dir: Path, model_folder_name: s
                     if hasattr(learn.recorder, 'metric_names') and learn.recorder.metric_names:
                         # Filter out potential duplicate/empty entries and normalize
                         base_names = [str(n).strip() for n in learn.recorder.metric_names if str(n).strip()]
+                        # FastAI includes 'time' for display only; it is not present in values. Remove it.
+                        base_names = [n for n in base_names if n.lower() != 'time']
                     else:
                         base_names = ['train_loss', 'valid_loss']
                     # Remove 'epoch' if present and deduplicate while preserving order

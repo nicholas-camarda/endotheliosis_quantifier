@@ -313,18 +313,18 @@ After training completes, you'll find several useful files in your model directo
 - Should show both curves decreasing and converging
 
 **Example Mitochondria Training Loss:**
-![Mitochondria Training Loss](models/segmentation/mitochondria/mitochondria_model-pretrain_e50_b16_lr1e-3_sz256/mitochondria_model-pretrain_e50_b16_lr1e-3_sz256_training_loss.png)
+![Mitochondria Training Loss](assets/mitochondria/training_loss.png)
 
 **Glomeruli Training Loss: Transfer vs Scratch (side-by-side):**
 
 <div style="display: flex; gap: 35px;">
   <div style="flex: 1; text-align: center;">
     <div><strong>Transfer Learning</strong></div>
-    <img src="models/segmentation/glomeruli/transfer/glomeruli_model-transfer_loss-bcedice_e50_b16_lr1e-3_sz256/glomeruli_model-transfer_loss-bcedice_e50_b16_lr1e-3_sz256_training_loss.png" alt="Glomeruli Transfer Learning Training Loss" />
+    <img src="assets/glomeruli/transfer/training_loss.png" alt="Glomeruli Transfer Learning Training Loss" />
   </div>
   <div style="flex: 1; text-align: center;">
     <div><strong>From Scratch</strong></div>
-    <img src="models/segmentation/glomeruli/scratch/glomeruli_model-scratch_e50_b16_lr1e-3_sz256/glomeruli_model-scratch_e50_b16_lr1e-3_sz256_training_loss.png" alt="Glomeruli From Scratch Training Loss" />
+    <img src="assets/glomeruli/scratch/training_loss.png" alt="Glomeruli From Scratch Training Loss" />
   </div>
   
 </div>
@@ -335,18 +335,18 @@ After training completes, you'll find several useful files in your model directo
 - Helps identify common failure modes (e.g., missing small structures, false positives)
 
 **Example Mitochondria Validation Predictions:**
-![Mitochondria Validation Predictions](models/segmentation/mitochondria/mitochondria_model-pretrain_e50_b16_lr1e-3_sz256/mitochondria_model-pretrain_e50_b16_lr1e-3_sz256_validation_predictions.png)
+![Mitochondria Validation Predictions](assets/mitochondria/validation_predictions.png)
 
 **Glomeruli Validation Predictions: Transfer vs Scratch (side-by-side):**
 
 <div style="display: flex; gap: 35px;">
   <div style="flex: 1; text-align: center;">
     <div><strong>Transfer Learning</strong></div>
-    <img src="models/segmentation/glomeruli/transfer/glomeruli_model-transfer_loss-dice_e50_b16_lr1e-3_sz256/glomeruli_model-transfer_loss-dice_e50_b16_lr1e-3_sz256_validation_predictions.png" alt="Glomeruli Transfer Learning Validation Predictions" />
+    <img src="assets/glomeruli/transfer/validation_predictions.png" alt="Glomeruli Transfer Learning Validation Predictions" />
   </div>
   <div style="flex: 1; text-align: center;">
     <div><strong>From Scratch</strong></div>
-    <img src="models/segmentation/glomeruli/scratch/glomeruli_model-scratch_e50_b16_lr1e-3_sz256/glomeruli_model-scratch_e50_b16_lr1e-3_sz256_validation_predictions.png" alt="Glomeruli From Scratch Validation Predictions" />
+    <img src="assets/glomeruli/scratch/validation_predictions.png" alt="Glomeruli From Scratch Validation Predictions" />
   </div>
 </div>
 
@@ -399,6 +399,9 @@ The dynamic patching approach processes full images on-the-fly during training a
 3. Extracts synchronized random 256×256 crops from augmented images
 4. Converts to tensors and applies additional batch augmentations
 5. No preprocessing required - works directly with raw data
+
+Note on crop and resize sizes:
+- For glomeruli training we use a larger spatial crop by default (crop_size=512) because glomeruli structures are roughly double the visual scale of mitochondria in our data. After cropping, we resize to image_size=256 for backbone compatibility and consistent batch shapes. These are configurable with `--crop-size` (spatial crop before resizing) and `--image-size` (final network input size).
 
 **Benefits of Dynamic Patching**:
 - **Better Augmentation Diversity**: Augmentations applied to full images before cropping
@@ -569,6 +572,10 @@ eq mode --show
 eq capabilities
 ```
 
+**Copy Files for README Embeddings**:
+```bash
+python -m eq.utils.copy_readme_assets --models-root models/segmentation --assets-root assets
+```
 ---
 
 ## Contributing
