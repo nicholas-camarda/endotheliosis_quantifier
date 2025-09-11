@@ -354,7 +354,7 @@ def transfer_learn_glomeruli(
         stage1_epochs: Epochs for frozen encoder training (default: 3)
         stage2_epochs: Epochs for unfrozen fine-tuning (default: 27)
         stage1_lr: Learning rate for stage 1 (default: 1e-3)
-        stage2_lr: Learning rate for stage 2 (default: 1e-5)
+        stage2_lr: Learning rate for stage 2 (if None, lr_find chooses)
         
     Returns:
         Learner: Trained glomeruli model
@@ -469,18 +469,15 @@ def transfer_learn_glomeruli(
     else:
         fine_tune_lr = float(stage2_lr if stage2_lr and stage2_lr > 0 else 1e-4)
         logger.info(f"Skipping lr_find; using provided fine-tune LR: {fine_tune_lr}")
-    # Use conservative discriminative learning rates to stabilize Dice
-    # These are standard in the FastAI v2 documentation
-    low_lr = max(fine_tune_lr / 30.0, fine_tune_lr * (1.0/30.0))
-    high_lr = max(fine_tune_lr / 3.0, fine_tune_lr * (1.0/3.0))
+    # Use broader discriminative learning rates to enable adaptation
+    low_lr = fine_tune_lr * 0.1
+    high_lr = fine_tune_lr
     logger.info(f"Using discriminative LRs for fine-tuning: slice({low_lr}, {high_lr})")
     
-    # In stage 2, monitor validation loss for checkpointing and early stopping
-    from fastai.callback.tracker import EarlyStoppingCallback
+    # In stage 2, monitor validation loss for best checkpoint; no early stopping
     loss_save_cb = attach_best_model_callback(model_folder_name, monitor='valid_loss')
-    early_stop_cb = EarlyStoppingCallback(monitor='valid_loss', patience=10)
-    logger.info(f"Fine-tuning for {stage2_epochs} epochs with LR slice (monitor=valid_loss, early stopping)")
-    learn.fit_one_cycle(stage2_epochs, lr_max=slice(low_lr, high_lr), cbs=[loss_save_cb, early_stop_cb])
+    logger.info(f"Fine-tuning for {stage2_epochs} epochs with LR slice (monitor=valid_loss, no early stopping)")
+    learn.fit_one_cycle(stage2_epochs, lr_max=slice(low_lr, high_lr), cbs=[loss_save_cb])
     
     # Save training history BEFORE any plotting/predictions that may alter recorder state
     save_training_history(learn, output_path, model_folder_name, {
