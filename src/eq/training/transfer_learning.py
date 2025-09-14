@@ -11,6 +11,7 @@ from typing import Optional, Union
 import torch
 import matplotlib.pyplot as plt
 from fastai.vision.all import *
+from fastai.callback.tracker import EarlyStoppingCallback
 # BCEWithLogitsLossFlat import removed - using FastAI v2 automatic loss selection
 
 from eq.data_management.standard_getters import get_y
@@ -79,7 +80,7 @@ def _format_run_suffix(epochs: int, batch_size: int, learning_rate: float, image
 
 
 def load_model_for_transfer_learning(
-    model_path: Union[str, Path],
+    model_path: Optional[Union[str, Path]],
     target_data_dir: Union[str, Path],
     image_size: int = 256,
     crop_size: Optional[int] = None,
@@ -93,6 +94,7 @@ def load_model_for_transfer_learning(
     pos_crop_attempts: int = 10,
     load_encoder_only: bool = True,
     reinit_decoder: bool = True,
+    imagenet_pretrained: bool = True,
 ) -> Learner:
     """
     Load a pretrained model for transfer learning, handling namespace issues.
@@ -109,7 +111,10 @@ def load_model_for_transfer_learning(
     Returns:
         Learner: New learner ready for transfer learning
     """
-    logger.info(f"Loading pretrained model from: {model_path}")
+    if model_path is not None:
+        logger.info(f"Loading pretrained model from: {model_path}")
+    else:
+        logger.info("No base model provided; building learner with requested encoder initialization")
     
     # Make get_y function available in global namespace for model loading
     import sys
@@ -150,18 +155,20 @@ def load_model_for_transfer_learning(
             target_dls,
             resnet34,
             n_out=2,  # 2 classes: background (0) + glomeruli (1) - matches mitochondria model
-            metrics=Dice,  # Standard Dice metric works with multiclass!
+            metrics=[Dice, JaccardCoeff()],  # Track Dice and mIoU
             loss_func=custom_loss if custom_loss else None,
             path=output_path,  # Save artifacts directly under the model output directory
-            model_dir='.'  # Ensure callbacks/save go inside output_path
+            model_dir='.',  # Ensure callbacks/save go inside output_path
+            pretrained=imagenet_pretrained,
         )
     else:
         learn = unet_learner(
             target_dls,
             resnet34,
             n_out=2,  # 2 classes: background (0) + glomeruli (1) - matches mitochondria model
-            metrics=Dice,  # Standard Dice metric works with multiclass!
-            loss_func=custom_loss if custom_loss else None
+            metrics=[Dice, JaccardCoeff()],  # Track Dice and mIoU
+            loss_func=custom_loss if custom_loss else None,
+            pretrained=imagenet_pretrained,
         )
     
     # Enable mixed precision to significantly reduce VRAM usage
@@ -176,78 +183,79 @@ def load_model_for_transfer_learning(
     else:
         logger.info(f"Using default loss function: {learn.loss_func}")
     
-    # Load the pretrained weights
-    try:
-        # Method 1: Try to load the full learner and extract weights
-        pretrained_learn = load_learner(model_path)
-        logger.info("Successfully loaded pretrained learner")
-        
-        if load_encoder_only:
-            # Strict encoder-only: copy by submodule state_dict
-            src_enc = _get_encoder_module(pretrained_learn.model)
-            dst_enc = _get_encoder_module(learn.model)
-            if src_enc is None or dst_enc is None:
-                raise RuntimeError("Could not resolve encoder modules for strict encoder-only loading")
-            src_sd = src_enc.state_dict()
-            dst_sd = dst_enc.state_dict()
-            copied = 0
-            for k, v in src_sd.items():
-                if k in dst_sd and dst_sd[k].shape == v.shape:
-                    dst_sd[k] = v
-                    copied += 1
-            dst_enc.load_state_dict(dst_sd)
-            logger.info(f"Strict encoder-only weights loaded: {copied} params")
-        else:
-            # Copy all compatible layers (full model)
-            pretrained_state = pretrained_learn.model.state_dict()
-            current_state = learn.model.state_dict()
-            compatible_weights = {}
-            for key, value in pretrained_state.items():
-                if key in current_state and current_state[key].shape == value.shape:
-                    compatible_weights[key] = value
-            current_state.update(compatible_weights)
-            learn.model.load_state_dict(current_state)
-            logger.info(f"Successfully loaded {len(compatible_weights)} compatible layers (full model)")
-        
-    except Exception as e:
-        logger.warning(f"Could not load full learner: {e}")
-        logger.info("Attempting to load just the model weights...")
-        
+    # Load the pretrained weights if provided
+    if model_path is not None:
         try:
-            # Method 2: Try to load just the model state dict
-            checkpoint = torch.load(model_path, map_location='cpu')
-            if 'model' in checkpoint:
-                pretrained_state = checkpoint['model']
-                if load_encoder_only:
-                    # Strict encoder-only via submodule state_dicts
-                    src_learn = load_learner(model_path)
-                    src_enc = _get_encoder_module(src_learn.model)
-                    dst_enc = _get_encoder_module(learn.model)
-                    if src_enc is None or dst_enc is None:
-                        raise RuntimeError("Could not resolve encoder modules for strict encoder-only loading (checkpoint)")
-                    src_sd = src_enc.state_dict()
-                    dst_sd = dst_enc.state_dict()
-                    copied = 0
-                    for k, v in src_sd.items():
-                        if k in dst_sd and dst_sd[k].shape == v.shape:
-                            dst_sd[k] = v
-                            copied += 1
-                    dst_enc.load_state_dict(dst_sd)
-                    logger.info(f"Strict encoder-only weights loaded from checkpoint: {copied} params")
-                else:
-                    current_state = learn.model.state_dict()
-                    compatible_weights = {}
-                    for key, value in pretrained_state.items():
-                        if key in current_state and current_state[key].shape == value.shape:
-                            compatible_weights[key] = value
-                    current_state.update(compatible_weights)
-                    learn.model.load_state_dict(current_state)
-                    logger.info(f"Successfully loaded {len(compatible_weights)} compatible layers from checkpoint (full model)")
+        # Method 1: Try to load the full learner and extract weights
+            pretrained_learn = load_learner(model_path)
+            logger.info("Successfully loaded pretrained learner")
+        
+            if load_encoder_only:
+            # Strict encoder-only: copy by submodule state_dict
+                src_enc = _get_encoder_module(pretrained_learn.model)
+                dst_enc = _get_encoder_module(learn.model)
+                if src_enc is None or dst_enc is None:
+                    raise RuntimeError("Could not resolve encoder modules for strict encoder-only loading")
+                src_sd = src_enc.state_dict()
+                dst_sd = dst_enc.state_dict()
+                copied = 0
+                for k, v in src_sd.items():
+                    if k in dst_sd and dst_sd[k].shape == v.shape:
+                        dst_sd[k] = v
+                        copied += 1
+                dst_enc.load_state_dict(dst_sd)
+                logger.info(f"Strict encoder-only weights loaded: {copied} params")
             else:
-                logger.warning("No 'model' key found in checkpoint, using random initialization")
-        except Exception as e2:
-            logger.warning(f"Could not load model weights: {e2}")
-            logger.info("Proceeding with random initialization")
+            # Copy all compatible layers (full model)
+                pretrained_state = pretrained_learn.model.state_dict()
+                current_state = learn.model.state_dict()
+                compatible_weights = {}
+                for key, value in pretrained_state.items():
+                    if key in current_state and current_state[key].shape == value.shape:
+                        compatible_weights[key] = value
+                current_state.update(compatible_weights)
+                learn.model.load_state_dict(current_state)
+                logger.info(f"Successfully loaded {len(compatible_weights)} compatible layers (full model)")
+        
+        except Exception as e:
+            logger.warning(f"Could not load full learner: {e}")
+            logger.info("Attempting to load just the model weights...")
+        
+            try:
+            # Method 2: Try to load just the model state dict
+                checkpoint = torch.load(model_path, map_location='cpu')
+                if 'model' in checkpoint:
+                    pretrained_state = checkpoint['model']
+                    if load_encoder_only:
+                    # Strict encoder-only via submodule state_dicts
+                        src_learn = load_learner(model_path)
+                        src_enc = _get_encoder_module(src_learn.model)
+                        dst_enc = _get_encoder_module(learn.model)
+                        if src_enc is None or dst_enc is None:
+                            raise RuntimeError("Could not resolve encoder modules for strict encoder-only loading (checkpoint)")
+                        src_sd = src_enc.state_dict()
+                        dst_sd = dst_enc.state_dict()
+                        copied = 0
+                        for k, v in src_sd.items():
+                            if k in dst_sd and dst_sd[k].shape == v.shape:
+                                dst_sd[k] = v
+                                copied += 1
+                        dst_enc.load_state_dict(dst_sd)
+                        logger.info(f"Strict encoder-only weights loaded from checkpoint: {copied} params")
+                    else:
+                        current_state = learn.model.state_dict()
+                        compatible_weights = {}
+                        for key, value in pretrained_state.items():
+                            if key in current_state and current_state[key].shape == value.shape:
+                                compatible_weights[key] = value
+                        current_state.update(compatible_weights)
+                        learn.model.load_state_dict(current_state)
+                        logger.info(f"Successfully loaded {len(compatible_weights)} compatible layers from checkpoint (full model)")
+                else:
+                    logger.warning("No 'model' key found in checkpoint, using random initialization")
+            except Exception as e2:
+                logger.warning(f"Could not load model weights: {e2}")
+                logger.info("Proceeding with random initialization")
     
     # Optionally reinitialize decoder to avoid negative transfer from source task
     if reinit_decoder:
@@ -311,7 +319,7 @@ def load_model_for_transfer_learning(
 
 
 def transfer_learn_glomeruli(
-    base_model_path: Union[str, Path],
+    base_model_path: Optional[Union[str, Path]],
     glomeruli_data_dir: Union[str, Path],
     output_dir: Union[str, Path],
     model_name: str = "glomeruli_transfer_model",
@@ -334,6 +342,7 @@ def transfer_learn_glomeruli(
     crop_size: Optional[int] = None,
     encoder_only: bool = True,
     reinit_decoder: bool = True,
+    imagenet_pretrained: bool = True,
 ) -> Learner:
     """
     Perform transfer learning from mitochondria to glomeruli segmentation using FastAI v2 best practices.
@@ -362,7 +371,7 @@ def transfer_learn_glomeruli(
     # Set up logging for transfer learning
     from eq.utils.logger import setup_logging
     logger = setup_logging(verbose=True)
-    logger.info("Starting transfer learning from mitochondria to glomeruli")
+    logger.info("Starting transfer learning (two-stage) for glomeruli segmentation")
     
     # Calculate stage epochs if not provided
     if stage1_epochs is None:
@@ -422,6 +431,7 @@ def transfer_learn_glomeruli(
         pos_crop_attempts=pos_crop_attempts,
         load_encoder_only=encoder_only,
         reinit_decoder=reinit_decoder,
+        imagenet_pretrained=imagenet_pretrained,
     )
     
     # Save data splits manifest
@@ -436,8 +446,9 @@ def transfer_learn_glomeruli(
     learn.freeze()
     logger.info(f"Training frozen encoder for {stage1_epochs} epochs with LR={stage1_lr}")
     # In stage 1 optimize for validation loss (head warmup)
-    save_callback = attach_best_model_callback(model_folder_name, monitor='valid_loss')
-    learn.fit_one_cycle(stage1_epochs, lr_max=stage1_lr, cbs=[save_callback])
+    save_callback = attach_best_model_callback(model_folder_name, monitor='dice')
+    early_stop_s1 = EarlyStoppingCallback(monitor='dice', patience=3, min_delta=0.0)
+    learn.fit_one_cycle(stage1_epochs, lr_max=stage1_lr, cbs=[save_callback, early_stop_s1])
     
     # STAGE 2: Unfreeze and fine-tune (FastAI v2 best practice)
     logger.info("STAGE 2: Unfreezing encoder for fine-tuning")
@@ -475,9 +486,10 @@ def transfer_learn_glomeruli(
     logger.info(f"Using discriminative LRs for fine-tuning: slice({low_lr}, {high_lr})")
     
     # In stage 2, monitor validation loss for best checkpoint; no early stopping
-    loss_save_cb = attach_best_model_callback(model_folder_name, monitor='valid_loss')
-    logger.info(f"Fine-tuning for {stage2_epochs} epochs with LR slice (monitor=valid_loss, no early stopping)")
-    learn.fit_one_cycle(stage2_epochs, lr_max=slice(low_lr, high_lr), cbs=[loss_save_cb])
+    loss_save_cb = attach_best_model_callback(model_folder_name, monitor='dice')
+    logger.info(f"Fine-tuning for {stage2_epochs} epochs with LR slice (monitor=dice, early stopping on dice)")
+    early_stop_cb = EarlyStoppingCallback(monitor='dice', patience=5, min_delta=0.0)
+    learn.fit_one_cycle(stage2_epochs, lr_max=slice(low_lr, high_lr), cbs=[loss_save_cb, early_stop_cb])
     
     # Save training history BEFORE any plotting/predictions that may alter recorder state
     save_training_history(learn, output_path, model_folder_name, {
@@ -490,7 +502,7 @@ def transfer_learn_glomeruli(
         'stage2_learning_rate_used': float(fine_tune_lr),
         'crop_size': int(crop_size) if crop_size is not None else int(image_size),
         'output_size': int(image_size),
-        'base_model_path': str(base_model_path),
+        'base_model_path': str(base_model_path) if base_model_path is not None else 'None',
         'training_approach': 'two_stage_transfer_learning'
     })
     

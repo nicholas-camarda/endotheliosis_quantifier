@@ -255,7 +255,7 @@ python -m eq.training.train_mitochondria \
 
 # Option A: Two-stage transfer learning from mitochondria (recommended)
 # The system will auto-detect the best mitochondria model automatically
-# Crop size 512 to reflect the fact that glomeruli are larger, then resize down to 256 for backbone compatibility
+# Crop size 512 to reflect the fact that glomeruli are larger
 python -m eq.training.train_glomeruli \
   --data-dir data/raw_data/preeclampsia_project \
   --model-dir models/segmentation/glomeruli \
@@ -263,7 +263,7 @@ python -m eq.training.train_glomeruli \
   --batch-size 16 \
   --learning-rate 1e-3 \
   --loss bcedice \
-  --image-size 256 \
+  --image-size 512 \
   --crop-size 512 \
   --use-dynamic-patching
 
@@ -276,7 +276,7 @@ python -m eq.training.train_glomeruli \
   --batch-size 16 \
   --learning-rate 1e-3 \
   --loss dice \
-  --image-size 256 \
+  --image-size 512 \
   --crop-size 512 \
   --use-dynamic-patching \
   --from-scratch

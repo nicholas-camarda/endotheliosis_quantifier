@@ -20,6 +20,7 @@ import numpy as np
 import torch
 from fastai.callback.all import *
 from fastai.vision.all import *
+from fastai.callback.tracker import EarlyStoppingCallback
 
 from eq.utils.logger import get_logger
 from eq.utils.run_io import (
@@ -133,7 +134,7 @@ def train_mitochondria_with_datablock(
         dls,
         resnet34,
         n_out=2,  # 2 classes: background (0) + mitochondria (1)
-        metrics=Dice,  # Standard Dice metric works with multiclass!
+        metrics=[Dice, JaccardCoeff()],  # Track Dice and mIoU
         path=output_path,  # Save artifacts directly under the model output directory
         model_dir='.'  # Ensure callbacks/save go inside output_path
     )
@@ -146,11 +147,12 @@ def train_mitochondria_with_datablock(
     
     # Add callbacks for training visualization
     logger.info("📋 Attaching training callbacks...")
-    save_callback = attach_best_model_callback(model_folder_name)
+    save_callback = attach_best_model_callback(model_folder_name, monitor='dice')
     
     # Train with callbacks
     logger.info(f"🚀 Starting training for {epochs} epochs with learning rate {learning_rate}...")
-    learn.fit_one_cycle(epochs, lr_max=learning_rate, cbs=[save_callback])
+    early_stop_cb = EarlyStoppingCallback(monitor='dice', patience=5, min_delta=0.0)
+    learn.fit_one_cycle(epochs, lr_max=learning_rate, cbs=[save_callback, early_stop_cb])
     logger.info("✅ Training completed!")
     
     # Save training history BEFORE any plotting/predictions that may alter recorder state

@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
 
 import matplotlib.pyplot as plt
 from fastai.vision.all import *
+from fastai.callback.tracker import EarlyStoppingCallback
 
 from eq.utils.logger import get_logger
 from eq.utils.config_manager import ConfigManager
@@ -110,6 +111,9 @@ def train_glomeruli_with_transfer_learning(
     loss_name: Optional[str] = None,
     crop_size: Optional[int] = None,
     use_lr_find: bool = True,
+    encoder_only: bool = True,
+    reinit_decoder: bool = True,
+    imagenet_pretrained: bool = True,
 ) -> Learner:
     """
     Train glomeruli model using transfer learning from mitochondria model.
@@ -129,24 +133,7 @@ def train_glomeruli_with_transfer_learning(
     """
     logger.info("Starting glomeruli training with transfer learning")
     
-    if base_model_path is None:
-        # Default path to mitochondria model
-        base_model_path = "models/segmentation/mitochondria/mitochondria_model.pkl"
-    
-    if not Path(base_model_path).exists():
-        logger.warning(f"Base model not found at {base_model_path}, training from scratch")
-        return train_glomeruli_with_datablock(
-            data_dir=data_dir,
-            output_dir=output_dir,
-            model_name=model_name,
-            batch_size=batch_size,
-            epochs=epochs,
-            learning_rate=learning_rate,
-            image_size=image_size,
-            use_dynamic_patching=True
-        )
-    
-    # Use transfer learning with positive-aware cropping
+    # Build learner with explicit encoder init mode via transfer utility
     learn = transfer_learn_glomeruli(
         base_model_path=base_model_path,
         glomeruli_data_dir=data_dir,
@@ -163,6 +150,9 @@ def train_glomeruli_with_transfer_learning(
         loss_name=loss_name,
         crop_size=crop_size,
         use_lr_find=use_lr_find,
+        encoder_only=encoder_only,
+        reinit_decoder=reinit_decoder,
+        imagenet_pretrained=imagenet_pretrained,
     )
     
     return learn
@@ -245,7 +235,7 @@ def train_glomeruli_with_datablock(
         dls,
         resnet34,
         n_out=2,  # 2 classes: background (0) + glomeruli (1)
-        metrics=Dice,  # Standard Dice metric works with multiclass!
+        metrics=[Dice, JaccardCoeff()],  # Track Dice and mIoU
         path=output_path,  # Save artifacts directly under the model output directory
         model_dir='.'  # Ensure callbacks/save go inside output_path
     )
@@ -265,8 +255,9 @@ def train_glomeruli_with_datablock(
     
     # Train the model with callbacks
     logger.info(f"Training for {epochs} epochs...")
-    save_callback = attach_best_model_callback(model_folder_name)
-    learn.fit_one_cycle(epochs, lr_max=learning_rate, cbs=[save_callback])
+    save_callback = attach_best_model_callback(model_folder_name, monitor='dice')
+    early_stop_cb = EarlyStoppingCallback(monitor='dice', patience=5, min_delta=0.0)
+    learn.fit_one_cycle(epochs, lr_max=learning_rate, cbs=[save_callback, early_stop_cb])
     
     # Save training history BEFORE any plotting/predictions that may alter recorder state
     save_training_history(learn, output_path, model_folder_name, {
@@ -371,6 +362,17 @@ def main():
     parser.add_argument('--use-dynamic-patching', action='store_true', default=True, help='Use dynamic patching')
     parser.add_argument('--loss', type=str, default='', help='Loss to use: dice | bcedice | tversky (default: fastai/weighted)')
     parser.add_argument('--skip-lr-find', action='store_true', help='Skip lr_find and use provided learning rate for fine-tune')
+    # Encoder initialization options
+    parser.add_argument(
+        '--encoder-init',
+        choices=['em', 'imagenet'],
+        default='imagenet',
+        help='Encoder initialization: em (requires --base-model .pkl), imagenet (torchvision). Default: imagenet. No auto-fallbacks.'
+    )
+    parser.add_argument('--encoder-only', dest='encoder_only', action='store_true', default=True, help='When using EM base model, load encoder-only weights (default: True)')
+    parser.add_argument('--no-encoder-only', dest='encoder_only', action='store_false')
+    parser.add_argument('--reinit-decoder', dest='reinit_decoder', action='store_true', default=True, help='Reinitialize decoder/head after loading encoder (default: True)')
+    parser.add_argument('--no-reinit-decoder', dest='reinit_decoder', action='store_false')
     
     args = parser.parse_args()
 
@@ -392,6 +394,9 @@ def main():
             )
             if base_model and not args.base_model:
                 args.base_model = base_model
+                # If config specifies a pretrained model, default to EM init unless user overrides
+                if parser.get_default('encoder_init') == args.encoder_init and not args.from_scratch:
+                    args.encoder_init = 'em'
             # training hyperparams
             model_cfg = cfg_yaml.get('model', {}) if isinstance(cfg_yaml.get('model'), dict) else {}
             training_cfg = model_cfg.get('training', {}) if isinstance(model_cfg.get('training'), dict) else {}
@@ -426,30 +431,37 @@ def main():
         logger.info(f"🧾 Model name: {args.model_name}")
         logger.info(f"⚙️  Epochs: {args.epochs}, Batch size: {args.batch_size}")
         
-        # AUTO-DETECT MITOCHONDRIA MODEL FOR TRANSFER LEARNING (PRIMARY APPROACH)
+        # Decide encoder initialization mode deterministically (no auto)
+        init_mode = args.encoder_init
+        base_model_path = args.base_model
+        imagenet_pretrained = True
+
         if args.from_scratch:
-            logger.info("🔧 FROM SCRATCH (Forced): User requested training from scratch")
-            args.base_model = None
-        elif not args.base_model:
-            # Try to auto-detect the best mitochondria model
-            auto_detected_model = find_best_mitochondria_model()
-            if auto_detected_model:
-                args.base_model = auto_detected_model
-                logger.info("🎯 TRANSFER LEARNING (Primary): Auto-detected mitochondria model")
-                logger.info(f"🔄 Using base model: {args.base_model}")
-            else:
-                logger.info("🔧 FROM SCRATCH (Fallback): No mitochondria model found")
-        else:
-            logger.info("🔄 TRANSFER LEARNING (Manual): Using provided base model")
-            logger.info(f"🔄 Using base model: {args.base_model}")
+            init_mode = 'none'
+            base_model_path = None
+            logger.info("🔧 FROM SCRATCH: Random encoder initialization requested")
+
+        if init_mode == 'em':
+            if not base_model_path:
+                raise SystemExit("--encoder-init em requires --base-model path to a mitochondria .pkl file")
+            if not Path(base_model_path).exists():
+                raise SystemExit(f"Provided --base-model does not exist: {base_model_path}")
+            logger.info("🎯 ENCODER INIT: EM (loading encoder from mitochondria model)")
+            logger.info(f"🔄 Base model: {base_model_path}")
+            imagenet_pretrained = False
+        elif init_mode == 'imagenet':
+            base_model_path = None
+            imagenet_pretrained = True
+            logger.info("🖼️  ENCODER INIT: ImageNet (torchvision pretrained)")
+        elif init_mode == 'none':
+            raise SystemExit(f"Must select a valid encoder init mode when not training from scratch: em | imagenet")
         
-        # Train the model using transfer learning if base model provided, otherwise from scratch
-        if args.base_model:
-            model = train_glomeruli_with_transfer_learning(
+        # Always use the two-stage schedule helper; it supports all init modes now
+        model = train_glomeruli_with_transfer_learning(
                 data_dir=args.data_dir,
                 output_dir=args.model_dir,
                 model_name=args.model_name,
-                base_model_path=args.base_model,
+                base_model_path=base_model_path,
                 batch_size=args.batch_size,
                 epochs=args.epochs,
                 learning_rate=args.learning_rate,
@@ -458,22 +470,10 @@ def main():
                 loss_name=args.loss or None,
                 crop_size=args.crop_size,
                 # Skip lr_find if user asked to, or use provided LR directly
-                use_lr_find=(not args.skip_lr_find)
-            )
-        else:
-            model = train_glomeruli_with_datablock(
-                data_dir=args.data_dir,
-                output_dir=args.model_dir,
-                model_name=args.model_name,
-                base_model_path=args.base_model,
-                batch_size=args.batch_size,
-                epochs=args.epochs,
-                learning_rate=args.learning_rate,
-                image_size=args.image_size,
-                config_path=config_path,
-                use_dynamic_patching=use_dynamic_patching
-                # TODO: implement loss_name
-                # loss_name=args.loss or None
+                use_lr_find=(not args.skip_lr_find),
+                encoder_only=args.encoder_only,
+                reinit_decoder=args.reinit_decoder,
+                imagenet_pretrained=imagenet_pretrained,
             )
         
         logger.info("🎉 Glomeruli training completed successfully!")
