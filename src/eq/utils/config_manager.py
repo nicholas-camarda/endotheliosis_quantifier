@@ -11,9 +11,9 @@ import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
-from pathlib import Path
 
 from .mode_manager import EnvironmentMode, ModeConfig
+from .paths import get_cache_path, get_data_path, get_logs_path, get_models_path, get_output_path
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,7 @@ class ConfigManager:
             "EQ_OUTPUT_PATH": self.global_config.output_path,
             "EQ_CACHE_PATH": self.global_config.cache_path,
             "EQ_MODEL_PATH": self.global_config.model_path,
+            "EQ_LOG_PATH": str(get_logs_path()),
             "EQ_LOG_LEVEL": self.global_config.log_level,
             "EQ_DEFAULT_MODE": self.global_config.default_mode
         }
@@ -117,10 +118,10 @@ class ConfigManager:
         """Load global configuration."""
         # Check for environment variables first
         config = GlobalConfig(
-            data_path=os.getenv("EQ_DATA_PATH", "data/preeclampsia_data"),
-            output_path=os.getenv("EQ_OUTPUT_PATH", "output"),
-            cache_path=os.getenv("EQ_CACHE_PATH", "data/cache"),
-            model_path=os.getenv("EQ_MODEL_PATH", "models"),
+            data_path=str(get_data_path()),
+            output_path=str(get_output_path()),
+            cache_path=str(get_cache_path()),
+            model_path=str(get_models_path()),
             log_level=os.getenv("EQ_LOG_LEVEL", "INFO"),
             default_mode=os.getenv("EQ_DEFAULT_MODE", "auto")
         )

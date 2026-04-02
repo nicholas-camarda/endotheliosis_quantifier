@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
 from fastai.vision.all import *
 
 from eq.utils.logger import get_logger
+from eq.utils.paths import get_project_root, resolve_project_path
 
 logger = get_logger("eq.glomeruli_prediction")
 
@@ -85,7 +86,8 @@ def run_glomeruli_prediction(config_path: str = "configs/glomeruli_finetuning_co
     
     # Load configuration
     import yaml
-    with open(config_path, 'r') as f:
+    resolved_config_path = resolve_project_path(config_path)
+    with open(resolved_config_path, 'r') as f:
         config = yaml.safe_load(f)
     
     logger.info(f"Configuration loaded: {config.get('name', 'Unknown')}")
@@ -128,7 +130,7 @@ def run_glomeruli_prediction(config_path: str = "configs/glomeruli_finetuning_co
     logger.info(f"✅ Validation masks loaded: {val_masks.shape}")
     
     # Load the backup model
-    backup_model_path = "backups/glomerulus_segmentation_model-dynamic_unet-e50_b16_s84.pkl"
+    backup_model_path = get_project_root() / "backups/glomerulus_segmentation_model-dynamic_unet-e50_b16_s84.pkl"
     logger.info(f"🧠 Loading backup model: {backup_model_path}")
     
     try:

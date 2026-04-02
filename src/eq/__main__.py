@@ -13,6 +13,7 @@ import numpy as np
 
 from eq.utils.logger import ProgressLogger, get_logger, log_function_call, setup_logging
 from eq.utils.mode_manager import EnvironmentMode, ModeManager
+from eq.utils.paths import get_cache_path, get_data_path, get_output_path
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -414,9 +415,10 @@ def pipeline_command(args):
     logger.info("🔄 Starting end-to-end production inference...")
     
     # Auto-determine cache and output directories
-    data_dir = args.data_dir
-    cache_dir = f"{data_dir}/cache"
-    output_dir = "output"
+    default_data_dir = str(get_data_path())
+    data_dir = args.data_dir or default_data_dir
+    cache_dir = str(get_cache_path()) if data_dir == default_data_dir else f"{data_dir}/cache"
+    output_dir = str(get_output_path())
     
     # Check for QUICK_TEST mode
     is_quick_test = os.getenv('QUICK_TEST') == 'true'
@@ -475,9 +477,10 @@ def seg_command(args):
     logger.info(f"🔧 Mode: {mode_manager.current_mode.value}")
     
     # Auto-determine cache and output directories
-    data_dir = args.data_dir
-    cache_dir = f"{data_dir}/cache"
-    output_dir = "output"  # Always use the output directory in project root
+    default_data_dir = str(get_data_path())
+    data_dir = args.data_dir or default_data_dir
+    cache_dir = str(get_cache_path()) if data_dir == default_data_dir else f"{data_dir}/cache"
+    output_dir = str(get_output_path())
     
     print("🚀 === SEGMENTATION TRAINING ===")
     print("Training segmentation model to find glomeruli...")
@@ -491,17 +494,23 @@ def seg_command(args):
     try:
         # Use the actual working pipeline for segmentation training with proper data paths
         from eq.pipeline.run_production_pipeline import run_pipeline
-        
-        run_pipeline(
-            epochs=args.epochs, 
-            run_type="development" if is_quick_test else "production", 
+
+        success = run_pipeline(
+            epochs=args.epochs,
+            run_type="development" if is_quick_test else "production",
             use_existing_models=False,  # Force training new models
             data_dir=data_dir,
             cache_dir=cache_dir
         )
-        
-        logger.info("✅ Segmentation training complete!")
-        
+
+        if success:
+            logger.info("✅ Segmentation training complete!")
+            print("🎉 Segmentation training completed successfully!")
+        else:
+            logger.error("❌ Segmentation training failed!")
+            print("❌ Segmentation training failed!")
+            sys.exit(1)
+
     except Exception as e:
         logger.error(f"❌ Segmentation training failed: {e}")
         print(f"❌ Segmentation training failed: {e}")
@@ -534,9 +543,10 @@ def quant_endo_command(args):
     logger.info(f"🔧 Mode: {mode_manager.current_mode.value}")
     
     # Auto-determine cache and output directories
-    data_dir = args.data_dir
-    cache_dir = f"{data_dir}/cache"
-    output_dir = "output"  # Always use the output directory in project root
+    default_data_dir = str(get_data_path())
+    data_dir = args.data_dir or default_data_dir
+    cache_dir = str(get_cache_path()) if data_dir == default_data_dir else f"{data_dir}/cache"
+    output_dir = str(get_output_path())
     
     print("🚀 === QUANTIFICATION TRAINING ===")
     print("Training quantification model for endotheliosis scoring...")

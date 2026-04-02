@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from eq.models.fastai_segmenter import FastaiSegmenter, SegmentationConfig
 from eq.utils.config_manager import PipelineConfigManager
 from eq.utils.hardware_detection import HardwareDetector
+from eq.utils.paths import get_cache_path, get_data_path
 from eq.data_management.output_manager import OutputManager
 
 
@@ -20,8 +21,8 @@ def run_pipeline(
     epochs: int = 50,
     run_type: str = 'production',
     use_existing_models: bool = True,
-    data_dir: str = 'data/preeclampsia_data',
-    cache_dir: str = 'data/preeclampsia_data/cache',
+    data_dir: Optional[str] = None,
+    cache_dir: Optional[str] = None,
     segmentation_model: Optional[str] = None,
 ):
     """Run the production pipeline for endotheliosis quantification.
@@ -40,6 +41,9 @@ def run_pipeline(
         cache_dir: Path to cache directory
         segmentation_model: Name of segmentation model to use (defaults to config)
     """
+
+    data_dir = str(Path(data_dir)) if data_dir else str(get_data_path())
+    cache_dir = str(Path(cache_dir)) if cache_dir else str(get_cache_path())
 
     # Check hardware capabilities and set MPS fallback only if needed
     hardware_detector = HardwareDetector()
@@ -477,12 +481,12 @@ if __name__ == '__main__':
         help='Whether to use existing pre-trained models for inference.',
     )
     parser.add_argument(
-        '--data-dir', type=str, default='data/preeclampsia_data', help='Path to the data directory.'
+        '--data-dir', type=str, default=str(get_data_path()), help='Path to the data directory.'
     )
     parser.add_argument(
         '--cache-dir',
         type=str,
-        default='data/preeclampsia_data/cache',
+        default=str(get_cache_path()),
         help='Path to the cache directory.',
     )
     args = parser.parse_args()

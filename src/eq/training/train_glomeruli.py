@@ -20,6 +20,9 @@ import matplotlib.pyplot as plt
 from fastai.vision.all import *
 
 from eq.utils.logger import get_logger
+from eq.utils.paths import (ensure_directory, get_derived_data_path,
+                            get_models_path, get_output_path,
+                            resolve_project_path)
 
 logger = get_logger("eq.retrain_glomeruli_original")
 
@@ -69,9 +72,9 @@ def retrain_glomeruli_original():
     logger.info("🔄 Starting glomeruli retraining using original approach")
     
     # Set up paths (using derived data that already has train/test splits)
-    project_directory = Path.cwd()
-    train_mask_path = project_directory / 'derived_data/glomeruli_data/training/mask_patches'
-    train_image_path = project_directory / 'derived_data/glomeruli_data/training/image_patches'
+    debug_dir = ensure_directory(get_output_path() / "debug" / "train_glomeruli")
+    train_mask_path = get_derived_data_path() / 'glomeruli_data' / 'training' / 'mask_patches'
+    train_image_path = get_derived_data_path() / 'glomeruli_data' / 'training' / 'image_patches'
     
     # Load data paths
     logger.info("📁 Loading data paths...")
@@ -96,7 +99,7 @@ def retrain_glomeruli_original():
     
     # Load pretrained mitochondria model
     logger.info("🧠 Loading pretrained mitochondria model...")
-    mito_model_path = project_directory / "backups/mito_dynamic_unet_seg_model-e50_b16.pkl"
+    mito_model_path = resolve_project_path("backups/mito_dynamic_unet_seg_model-e50_b16.pkl")
     if not mito_model_path.exists():
         raise FileNotFoundError(f"Mitochondria model not found: {mito_model_path}")
     
@@ -164,7 +167,7 @@ def retrain_glomeruli_original():
     # Show batch to verify
     logger.info("👀 Showing sample batch...")
     glom_dls.show_batch(max_n=4, vmin=0, vmax=1, figsize=(8, 8))
-    plt.savefig('debug_original_batch.png')
+    plt.savefig(debug_dir / 'debug_original_batch.png')
     plt.close()
     
     # Set up model for transfer learning
@@ -197,7 +200,7 @@ def retrain_glomeruli_original():
     
     # Plot training history
     segmentation_model.recorder.plot_loss()
-    plt.savefig('debug_head_training_loss.png')
+    plt.savefig(debug_dir / 'debug_head_training_loss.png')
     plt.close()
     
     # Unfreeze the entire model
@@ -220,13 +223,13 @@ def retrain_glomeruli_original():
     
     # Plot final training history
     segmentation_model.recorder.plot_loss()
-    plt.savefig('debug_full_training_loss.png')
+    plt.savefig(debug_dir / 'debug_full_training_loss.png')
     plt.close()
     
     # Show results
     logger.info("📊 Showing final results...")
     segmentation_model.show_results(max_n=6, figsize=(2, 6))
-    plt.savefig('debug_final_results.png')
+    plt.savefig(debug_dir / 'debug_final_results.png')
     plt.close()
     
     # Print final metrics safely
@@ -250,7 +253,7 @@ def retrain_glomeruli_original():
     
     # Save the model
     logger.info("💾 Saving model...")
-    output_dir = project_directory / "models/segmentation/glomeruli_retrained"
+    output_dir = get_models_path() / "segmentation" / "glomeruli_retrained"
     output_dir.mkdir(parents=True, exist_ok=True)
     
     fname = f"glomerulus_segmentation_model-dynamic_unet-e{n_epochs}_b{batch_size}_s{len(glom_image_files)}_retrained.pkl"

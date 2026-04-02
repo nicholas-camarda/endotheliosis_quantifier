@@ -7,31 +7,31 @@ description: "Fine-tune mitochondria-pretrained U-Net on glomeruli segmentation 
 
 # Transfer Learning Configuration
 pretrained_model:
-  path: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model-e50_b16.pkl"
+  path: "~/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/mitochondria/mito_dynamic_unet_seg_model-e50_b16.pkl"
   description: "Mitochondria-pretrained U-Net model"
   freeze_encoder: false  # Allow full fine-tuning
 
 # Data Pipeline Configuration
 data:
   # Raw data paths (project-based organization)
-  raw_images: "raw_data/preeclampsia_project/data"
-  raw_annotations: "raw_data/preeclampsia_project/annotations/annotations.json"
-  raw_metadata: "raw_data/preeclampsia_project/subject_metadata.xlsx"
+  raw_images: "~/ProjectsRuntime/endotheliosis_quantifier/raw_data/preeclampsia_project/data"
+  raw_annotations: "~/ProjectsRuntime/endotheliosis_quantifier/raw_data/preeclampsia_project/annotations/annotations.json"
+  raw_metadata: "~/ProjectsRuntime/endotheliosis_quantifier/raw_data/preeclampsia_project/subject_metadata.xlsx"
   
   # Processed data paths
-  metadata: "derived_data/glomeruli_data/metadata/standardized_metadata.xlsx"
+  metadata: "~/ProjectsRuntime/endotheliosis_quantifier/derived_data/glomeruli_data/metadata/standardized_metadata.xlsx"
   
   # Label Studio annotations
   annotations:
-    json_file: "raw_data/preeclampsia_project/annotations/annotations.json"  # Path to Label Studio export - will be copied to derived_data/cache
+    json_file: "~/ProjectsRuntime/endotheliosis_quantifier/raw_data/preeclampsia_project/annotations/annotations.json"  # Path to Label Studio export - will be copied to derived_data/cache
     processor: "load_annotations_from_json"  # Function from data_loader.py
     
   # Processed data structure
   processed:
-    train_dir: "derived_data/glomeruli_data/training/image_patches"
-    train_mask_dir: "derived_data/glomeruli_data/training/mask_patches"
-    test_dir: "derived_data/glomeruli_data/testing/image_patches"
-    cache_dir: "derived_data/glomeruli_data/cache"
+    train_dir: "~/ProjectsRuntime/endotheliosis_quantifier/derived_data/glomeruli_data/training/image_patches"
+    train_mask_dir: "~/ProjectsRuntime/endotheliosis_quantifier/derived_data/glomeruli_data/training/mask_patches"
+    test_dir: "~/ProjectsRuntime/endotheliosis_quantifier/derived_data/glomeruli_data/testing/image_patches"
+    cache_dir: "~/ProjectsRuntime/endotheliosis_quantifier/derived_data/glomeruli_data/cache"
     
   # Image preprocessing
   preprocessing:
@@ -66,7 +66,7 @@ model:
       monitor: "val_dice"
       
   # Output model path
-  checkpoint_path: "models/segmentation/glomeruli_xfer_learn/glom_dynamic_unet_seg_model-e50_b16.pkl"
+  checkpoint_path: "~/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli_xfer_learn/glom_dynamic_unet_seg_model-e50_b16.pkl"
 
 # Label Studio Integration
 label_studio:
@@ -108,7 +108,7 @@ reproducibility:
 logging:
   level: "INFO"
   save_plots: true
-  plot_dir: "output/glomeruli_finetuning/plots"
+  plot_dir: "~/ProjectsRuntime/endotheliosis_quantifier/output/glomeruli_finetuning/plots"
   metrics:
     - "dice_coefficient"
     - "iou"
@@ -122,7 +122,7 @@ evaluation:
     - "sensitivity"
     - "specificity"
   save_predictions: true
-  prediction_dir: "output/glomeruli_finetuning/predictions"
+  prediction_dir: "~/ProjectsRuntime/endotheliosis_quantifier/output/glomeruli_finetuning/predictions"
 
 # Final Model Information
 final_model:

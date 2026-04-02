@@ -32,6 +32,10 @@ from eq.evaluation.evaluate_glomeruli_model import GlomeruliModelEvaluator
 # )
 from eq.processing.convert_files import convert_tif_to_jpg
 from eq.utils.logger import get_logger
+from eq.utils.paths import (ensure_directory, get_derived_data_path,
+                            get_logs_path, get_models_path, get_output_path,
+                            get_project_root, get_raw_data_path,
+                            resolve_project_path, resolve_runtime_path)
 
 
 def get_y(x):
@@ -51,11 +55,11 @@ class SegmentationPipeline:
         from datetime import datetime
 
         # Create logs directory if it doesn't exist
-        Path("logs").mkdir(exist_ok=True)
+        logs_dir = ensure_directory(get_logs_path())
         
         # Create timestamped log filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_filename = f"logs/segmentation_pipeline_{timestamp}.log"
+        log_filename = logs_dir / f"segmentation_pipeline_{timestamp}.log"
         
         # Set up file handler with detailed formatting
         file_handler = logging.FileHandler(log_filename)
@@ -77,8 +81,8 @@ class SegmentationPipeline:
         self.logger.addHandler(console_handler)
         self.logger.setLevel(logging.INFO)
         
-        self.config_path = config_path
-        self.config = self._load_config(config_path)
+        self.config_path = str(resolve_project_path(config_path))
+        self.config = self._load_config(self.config_path)
         self.stage = self.config.get('name', 'unknown')
         
         # Log startup information
@@ -104,9 +108,10 @@ class SegmentationPipeline:
     def _load_config(self, config_path: str) -> Dict[str, Any]:
         """Load YAML configuration file."""
         try:
-            with open(config_path, 'r') as f:
+            resolved_config_path = resolve_project_path(config_path)
+            with open(resolved_config_path, 'r') as f:
                 config = yaml.safe_load(f)
-            self.logger.info(f"Loaded configuration from {config_path}")
+            self.logger.info(f"Loaded configuration from {resolved_config_path}")
             return config
         except Exception as e:
             self.logger.error(f"Failed to load config {config_path}: {e}")
@@ -116,13 +121,13 @@ class SegmentationPipeline:
         """Create necessary output directories."""
         # Always use production directories - QUICK_TEST only affects training parameters
         standard_dirs = [
-            "logs",
-            "raw_data",
-            "derived_data", 
-            "output",
-            "models/segmentation/mitochondria",
-            "models/segmentation/glomeruli_xfer_learn",
-            "models/regression"
+            get_logs_path(),
+            get_raw_data_path(),
+            get_derived_data_path(),
+            get_output_path(),
+            get_models_path() / "segmentation" / "mitochondria",
+            get_models_path() / "segmentation" / "glomeruli_xfer_learn",
+            get_models_path() / "regression",
         ]
         
         for directory in standard_dirs:
@@ -149,7 +154,7 @@ class SegmentationPipeline:
         
         for directory in directories:
             if directory:
-                Path(directory).mkdir(parents=True, exist_ok=True)
+                resolve_runtime_path(directory).mkdir(parents=True, exist_ok=True)
                 self.logger.info(f"Ensured config directory exists: {directory}")
     
     def _validate_paths(self):
@@ -175,9 +180,12 @@ class SegmentationPipeline:
             ])
         
         for path in required_paths:
-            if path and not os.path.exists(path):
-                self.logger.error(f"Required path does not exist: {path}")
-                raise FileNotFoundError(f"Required path does not exist: {path}")
+            if not path:
+                continue
+            resolved_path = resolve_runtime_path(path)
+            if not resolved_path.exists():
+                self.logger.error(f"Required path does not exist: {resolved_path}")
+                raise FileNotFoundError(f"Required path does not exist: {resolved_path}")
     
     def _convert_images(self):
         """Convert TIF images to JPG format."""
@@ -194,7 +202,7 @@ class SegmentationPipeline:
             raw_images = data_config.get('raw_images')
             train_dir = data_config.get('processed', {}).get('train_dir')
             if raw_images and train_dir:
-                convert_tif_to_jpg(raw_images, train_dir)
+                convert_tif_to_jpg(str(resolve_runtime_path(raw_images)), str(resolve_runtime_path(train_dir)))
         
         self.logger.info("Image conversion completed")
     
@@ -224,7 +232,7 @@ class SegmentationPipeline:
             return  # Only needed for glomeruli fine-tuning
             
         # Check if derived_data already exists and has content
-        derived_base = Path("derived_data/glomeruli_data")
+        derived_base = get_derived_data_path() / "glomeruli_data"
         training_image_patches = derived_base / "training" / "image_patches"
         testing_image_patches = derived_base / "testing" / "image_patches"
         prediction_image_patches = derived_base / "prediction" / "image_patches"
@@ -259,7 +267,7 @@ class SegmentationPipeline:
         processed_config = data_config.get('processed', {})
         
         # Define clean derived_data structure (mito-style: separate image_patches and mask_patches directories)
-        derived_base = Path("derived_data/glomeruli_data")
+        derived_base = get_derived_data_path() / "glomeruli_data"
         training_base = derived_base / "training"
         testing_base = derived_base / "testing"
         cache_dir = derived_base / "cache"
@@ -289,13 +297,13 @@ class SegmentationPipeline:
         
         # Copy annotations to cache
         annotations_file = data_config.get('annotations', {}).get('json_file')
-        if annotations_file and Path(annotations_file).exists():
+        if annotations_file and resolve_runtime_path(annotations_file).exists():
             import shutil
-            shutil.copy2(annotations_file, cache_dir / "annotations.json")
+            shutil.copy2(resolve_runtime_path(annotations_file), cache_dir / "annotations.json")
             self.logger.info(f"Copied annotations to {cache_dir / 'annotations.json'}")
         
         # Use raw images/masks roots from config (do not require train/test under raw)
-        raw_images_dir = Path(raw_images_dir)
+        raw_images_dir = resolve_runtime_path(raw_images_dir)
         images_dir = raw_images_dir / "images"
         masks_dir = raw_images_dir / "masks"
         if not images_dir.exists():
@@ -445,7 +453,7 @@ class SegmentationPipeline:
             if not raw_images_dir:
                 raise ValueError("raw_images path not specified in config")
             
-            data_dir = Path(raw_images_dir)
+            data_dir = resolve_runtime_path(raw_images_dir)
             
             # Check if we already have the clean structure
             images_dir = data_dir / "images"
@@ -587,7 +595,7 @@ class SegmentationPipeline:
             if use_pretrained:
                 # Load pretrained model for evaluation
                 self.logger.info("🚀 Loading pretrained mitochondria model for evaluation...")
-                pretrained_model_path = "backups/mito_dynamic_unet_seg_model-e50_b16.pkl"
+                pretrained_model_path = str(resolve_project_path("backups/mito_dynamic_unet_seg_model-e50_b16.pkl"))
                 
                 if not os.path.exists(pretrained_model_path):
                     raise FileNotFoundError(f"Pretrained model not found: {pretrained_model_path}")
@@ -600,7 +608,7 @@ class SegmentationPipeline:
                 self.logger.info(f"✅ Loaded pretrained model: {pretrained_model_path}")
                 
                 # Get output directory for evaluation results
-                output_dir = model_config.get('output_dir', 'models/segmentation/mitochondria')
+                output_dir = str(resolve_runtime_path(model_config.get('output_dir', 'models/segmentation/mitochondria')))
                 model_name = 'mito_pretrained_evaluation'
                 
                 # Run evaluation on validation data
@@ -613,7 +621,8 @@ class SegmentationPipeline:
 
                 # Get output directory and model name from config
                 checkpoint_path = model_config.get('checkpoint_path', '')
-                output_dir = os.path.dirname(checkpoint_path) if checkpoint_path else model_config.get('output_dir', 'models/segmentation/mitochondria')
+                resolved_checkpoint_path = str(resolve_runtime_path(checkpoint_path)) if checkpoint_path else ''
+                output_dir = os.path.dirname(resolved_checkpoint_path) if checkpoint_path else str(resolve_runtime_path(model_config.get('output_dir', 'models/segmentation/mitochondria')))
                 model_name = os.path.basename(checkpoint_path).replace('.pkl', '') if checkpoint_path else model_config.get('model_name', 'mito_model')
                 
                 # Check if we're in quick test mode and adjust training parameters
@@ -653,8 +662,9 @@ class SegmentationPipeline:
             # Check if model already exists
             model_config = self.config.get('model', {})
             checkpoint_path = model_config.get('checkpoint_path', '')
-            if checkpoint_path and Path(checkpoint_path).exists():
-                self.logger.info(f"✅ Model checkpoint already exists: {checkpoint_path}")
+            resolved_checkpoint_path = resolve_runtime_path(checkpoint_path) if checkpoint_path else None
+            if resolved_checkpoint_path and resolved_checkpoint_path.exists():
+                self.logger.info(f"✅ Model checkpoint already exists: {resolved_checkpoint_path}")
                 self.logger.info("Model will be loaded instead of retrained")
             
             # Use the new training module
@@ -662,8 +672,8 @@ class SegmentationPipeline:
             # TODO: Update to use proper configuration-based training
             # For now, use the basic training function
             segmenter = train_glomeruli(
-                data_dir=self.config.get('data', {}).get('processed', {}).get('cache_dir', ''),
-                model_dir=self.config.get('model', {}).get('output_dir', 'models/segmentation/glomeruli_xfer_learn'),
+                data_dir=str(resolve_runtime_path(self.config.get('data', {}).get('processed', {}).get('cache_dir', ''))),
+                model_dir=str(resolve_runtime_path(self.config.get('model', {}).get('output_dir', 'models/segmentation/glomeruli_xfer_learn'))),
                 base_model=self.config.get('model', {}).get('base_model', ''),
                 epochs=self.config.get('training', {}).get('epochs', 50)
             )
@@ -677,15 +687,17 @@ class SegmentationPipeline:
                 from eq.data_management.loaders import load_pickled_data
                 cache_dir = self.config.get('data', {}).get('processed', {}).get('cache_dir')
                 if cache_dir:
-                    val_images = load_pickled_data(Path(cache_dir) / 'val_images.pickle')
-                    val_masks = load_pickled_data(Path(cache_dir) / 'val_masks.pickle')
+                    resolved_cache_dir = resolve_runtime_path(cache_dir)
+                    val_images = load_pickled_data(resolved_cache_dir / 'val_images.pickle')
+                    val_masks = load_pickled_data(resolved_cache_dir / 'val_masks.pickle')
                 else:
                     raise ValueError("Cache directory not specified in config for validation data")
 
                 # Determine output directory and model name
                 model_config = self.config.get('model', {})
                 checkpoint_path = model_config.get('checkpoint_path', '')
-                output_dir = os.path.dirname(checkpoint_path) if checkpoint_path else model_config.get('output_dir', 'models/segmentation/glomeruli_xfer_learn')
+                resolved_checkpoint_path = str(resolve_runtime_path(checkpoint_path)) if checkpoint_path else ''
+                output_dir = os.path.dirname(resolved_checkpoint_path) if checkpoint_path else str(resolve_runtime_path(model_config.get('output_dir', 'models/segmentation/glomeruli_xfer_learn')))
                 model_name = os.path.basename(checkpoint_path).replace('.pkl', '') if checkpoint_path else model_config.get('model_name', 'glom_model')
 
                 # load learner if not available from returned segmenter
@@ -698,16 +710,16 @@ class SegmentationPipeline:
 
                 if learn is None:
                     # Try to load from checkpoint path if exists
-                    if checkpoint_path and os.path.exists(checkpoint_path):
+                    if checkpoint_path and resolved_checkpoint_path and os.path.exists(resolved_checkpoint_path):
                         try:
                             # Use consolidated model loader
                             from eq.data_management.model_loading import load_model_safely
-                            learn = load_model_safely(checkpoint_path, model_type="glomeruli")
+                            learn = load_model_safely(resolved_checkpoint_path, model_type="glomeruli")
                             self.logger.info("✅ Loaded model using consolidated loader")
                         except Exception as e:
                             self.logger.warning(f"Consolidated loading failed ({e}), falling back to historical method")
                             from eq.data_management.model_loading import load_model_with_historical_support
-                            learn = load_model_with_historical_support(checkpoint_path)
+                            learn = load_model_with_historical_support(resolved_checkpoint_path)
                     else:
                         self.logger.warning("Learner not available for evaluation; skipping glomeruli evaluation step.")
                         return

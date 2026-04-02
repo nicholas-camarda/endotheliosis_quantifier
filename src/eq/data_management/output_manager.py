@@ -6,18 +6,19 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from eq.utils.logger import get_logger
+from eq.utils.paths import get_output_path
 
 
 class OutputManager:
     """Manages output directory creation and organization for pipeline runs."""
     
-    def __init__(self, base_output_dir: str = "output"):
+    def __init__(self, base_output_dir: Optional[str] = None):
         """Initialize the output manager.
         
         Args:
             base_output_dir: Base directory for all outputs
         """
-        self.base_output_dir = Path(base_output_dir)
+        self.base_output_dir = Path(base_output_dir) if base_output_dir else get_output_path()
         self.logger = get_logger("eq.output_manager")
         
     def create_output_directory(

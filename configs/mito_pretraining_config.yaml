@@ -8,33 +8,33 @@ description: "Initial U-Net training on mitochondria EM data for transfer learni
 # Data Pipeline Configuration
 data:
   # Step 1: Raw TIF stack extraction
-  raw_stack: "data/mitochondria_data/mitochondria-data-stack.tif"
+  raw_stack: "~/ProjectsRuntime/endotheliosis_quantifier/data/mitochondria_data/mitochondria-data-stack.tif"
   
   # Step 2: Extracted individual TIFs (already done)
   extracted_tifs:
-    training: "data/mitochondria_data/training.tif"
-    testing: "data/mitochondria_data/testing.tif"
-    training_groundtruth: "data/mitochondria_data/training_groundtruth.tif"
-    testing_groundtruth: "data/mitochondria_data/testing_groundtruth.tif"
+    training: "~/ProjectsRuntime/endotheliosis_quantifier/data/mitochondria_data/training.tif"
+    testing: "~/ProjectsRuntime/endotheliosis_quantifier/data/mitochondria_data/testing.tif"
+    training_groundtruth: "~/ProjectsRuntime/endotheliosis_quantifier/data/mitochondria_data/training_groundtruth.tif"
+    testing_groundtruth: "~/ProjectsRuntime/endotheliosis_quantifier/data/mitochondria_data/testing_groundtruth.tif"
   
   # Step 3: Converted JPG images
   converted_images:
-    base_dir: "data/mitochondria_data"
-    train_dir: "data/mitochondria_data/training"
-    test_dir: "data/mitochondria_data/testing"
+    base_dir: "~/ProjectsRuntime/endotheliosis_quantifier/data/mitochondria_data"
+    train_dir: "~/ProjectsRuntime/endotheliosis_quantifier/data/mitochondria_data/training"
+    test_dir: "~/ProjectsRuntime/endotheliosis_quantifier/data/mitochondria_data/testing"
   
   # Step 4: Patch generation for U-Net (already completed)
   patches:
     size: 224  # U-Net input size - changed to match pretrained model
     overlap: 0.1  # 10% overlap between patches
-    output_dir: "derived_data/mitochondria_data/training/image_patches"
-    mask_output_dir: "derived_data/mitochondria_data/training/mask_patches"
+    output_dir: "~/ProjectsRuntime/endotheliosis_quantifier/derived_data/mitochondria_data/training/image_patches"
+    mask_output_dir: "~/ProjectsRuntime/endotheliosis_quantifier/derived_data/mitochondria_data/training/mask_patches"
   
   # Step 5: Data loading for U-Net training
   processed:
-    train_dir: "derived_data/mitochondria_data/training/image_patches"
-    train_mask_dir: "derived_data/mitochondria_data/training/mask_patches"
-    cache_dir: "derived_data/mitochondria_data/cache"
+    train_dir: "~/ProjectsRuntime/endotheliosis_quantifier/derived_data/mitochondria_data/training/image_patches"
+    train_mask_dir: "~/ProjectsRuntime/endotheliosis_quantifier/derived_data/mitochondria_data/training/mask_patches"
+    cache_dir: "~/ProjectsRuntime/endotheliosis_quantifier/derived_data/mitochondria_data/cache"
     train_ratio: 0.8
     val_ratio: 0.2
     random_seed: 42
@@ -54,9 +54,9 @@ model:
     weight_decay: 1e-4
     
   # Output configuration
-  output_dir: "models/segmentation/mitochondria"
+  output_dir: "~/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/mitochondria"
   model_name: "mito_dynamic_unet_seg_model-e50_b16"
-  checkpoint_path: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model-e50_b16.pkl"
+  checkpoint_path: "~/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/mitochondria/mito_dynamic_unet_seg_model-e50_b16.pkl"
 
 # Hardware Configuration
 hardware:
@@ -73,10 +73,10 @@ reproducibility:
 logging:
   level: "INFO"
   save_plots: true
-  plot_dir: "output/plots"
+  plot_dir: "~/ProjectsRuntime/endotheliosis_quantifier/output/plots"
   
 # Next Step Information
 next_step:
   description: "Use this trained model as starting point for glomeruli fine-tuning"
   config_file: "configs/glomeruli_finetuning_config.yaml"
-  checkpoint_to_use: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model-e50_b16.pkl"
+  checkpoint_to_use: "~/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/mitochondria/mito_dynamic_unet_seg_model-e50_b16.pkl"
