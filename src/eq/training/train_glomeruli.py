@@ -245,7 +245,7 @@ def train_glomeruli_with_datablock(
         dls,
         resnet34,
         n_out=2,  # 2 classes: background (0) + glomeruli (1)
-        metrics=Dice,  # Standard Dice metric works with multiclass!
+        metrics=[Dice, JaccardCoeff()],  # Track both Dice and IoU for segmentation quality
         path=output_path,  # Save artifacts directly under the model output directory
         model_dir='.'  # Ensure callbacks/save go inside output_path
     )

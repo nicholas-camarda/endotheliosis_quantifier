@@ -150,7 +150,7 @@ def load_model_for_transfer_learning(
             target_dls,
             resnet34,
             n_out=2,  # 2 classes: background (0) + glomeruli (1) - matches mitochondria model
-            metrics=Dice,  # Standard Dice metric works with multiclass!
+            metrics=[Dice, JaccardCoeff()],  # Track both Dice and IoU for segmentation quality
             loss_func=custom_loss if custom_loss else None,
             path=output_path,  # Save artifacts directly under the model output directory
             model_dir='.'  # Ensure callbacks/save go inside output_path
@@ -160,7 +160,7 @@ def load_model_for_transfer_learning(
             target_dls,
             resnet34,
             n_out=2,  # 2 classes: background (0) + glomeruli (1) - matches mitochondria model
-            metrics=Dice,  # Standard Dice metric works with multiclass!
+            metrics=[Dice, JaccardCoeff()],  # Track both Dice and IoU for segmentation quality
             loss_func=custom_loss if custom_loss else None
         )
     
