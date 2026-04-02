@@ -78,6 +78,13 @@ def _load_process_metadata_file():
     return process_metadata_file
 
 
+def _load_organize_lucchi_dataset():
+    """Import the Lucchi organizer only when requested from the CLI."""
+    from eq.data_management.organize_lucchi_dataset import organize_lucchi_dataset
+
+    return organize_lucchi_dataset
+
+
 def _load_visualizers():
     """Import visualization helpers only when the visualize command is used."""
     from eq.utils.image_mask_vis import visualize_batch_masks, visualize_image_mask_pair, visualize_mask
@@ -268,6 +275,18 @@ def extract_images_command(args):
     logger.info(f"   - {output_path}/images/ (extracted image files)")
     logger.info(f"   - {output_path}/masks/ (extracted mask files)")
     logger.info("🎉 Image extraction pipeline completed successfully!")
+
+
+def organize_lucchi_command(args):
+    """Organize the Lucchi dataset into the repo's expected train/test layout."""
+    logger = get_logger("eq.organize_lucchi")
+    logger.info("🔄 Starting Lucchi dataset organization...")
+
+    organize_lucchi_dataset = _load_organize_lucchi_dataset()
+    output_path = organize_lucchi_dataset(args.input_dir, args.output_dir)
+
+    print(f"✅ Lucchi dataset organized at: {output_path}")
+    logger.info("🎉 Lucchi dataset organization completed successfully!")
 
 
 def validate_naming_command(args):
@@ -992,6 +1011,12 @@ Examples:
     extract_parser.add_argument('--input-dir', required=True, help='Input directory with TIF files (e.g., mitochondria data)')
     extract_parser.add_argument('--output-dir', required=True, help='Output directory for extracted images')
     extract_parser.set_defaults(func=extract_images_command)
+
+    # Lucchi dataset organization command
+    lucchi_parser = subparsers.add_parser('organize-lucchi', help='Organize Lucchi img/ and label/ stacks into train/test folders')
+    lucchi_parser.add_argument('--input-dir', required=True, help='Input directory containing Lucchi img/ and label/ folders')
+    lucchi_parser.add_argument('--output-dir', default='data/derived_data/mito', help='Output directory for organized Lucchi data')
+    lucchi_parser.set_defaults(func=organize_lucchi_command)
 
     # Validate naming command
     validate_parser = subparsers.add_parser('validate-naming', help='Validate subject naming conventions in image files')

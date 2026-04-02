@@ -27,6 +27,7 @@ def test_cli_help():
     assert 'train-segmenter' in result.stdout
     assert 'capabilities' in result.stdout
     assert 'mode' in result.stdout
+    assert 'organize-lucchi' in result.stdout
 
 
 def test_cli_no_command_shows_help_and_fails():
@@ -41,6 +42,13 @@ def test_cli_data_load_help():
     assert '--data-dir' in result.stdout
     assert '--test-data-dir' in result.stdout
     assert '--cache-dir' in result.stdout
+
+
+def test_cli_organize_lucchi_help():
+    result = run_cli('organize-lucchi', '--help')
+    assert result.returncode == 0
+    assert '--input-dir' in result.stdout
+    assert '--output-dir' in result.stdout
 
 
 def test_cli_mode_show_runs():
