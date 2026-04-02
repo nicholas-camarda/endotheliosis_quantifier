@@ -50,6 +50,7 @@ from .metadata_processor import (
     MetadataProcessor,
     process_metadata_file,
 )
+from .organize_lucchi_dataset import organize_lucchi_dataset
 
 # Train/val/test splitting - handled automatically by FastAI v2 RandomSplitter
 
@@ -76,6 +77,9 @@ __all__ = [
     # Metadata processing
     'MetadataProcessor',
     'process_metadata_file',
+
+    # Dataset utilities
+    'organize_lucchi_dataset',
     
     # Train/val/test splitting - handled automatically by FastAI v2
 ]
