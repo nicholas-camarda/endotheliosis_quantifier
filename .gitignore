@@ -64,6 +64,7 @@ test_output/
 .coverage
 .coverage.*
 htmlcov/
+.specs/
 
 # Built docs
 docs/_build/
