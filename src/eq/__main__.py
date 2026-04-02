@@ -78,6 +78,20 @@ def _load_process_metadata_file():
     return process_metadata_file
 
 
+def _load_backup_snapshot():
+    """Import backup creation helpers lazily."""
+    from eq.data_management.backup_utils import create_backup_snapshot
+
+    return create_backup_snapshot
+
+
+def _load_contract_first_quantification():
+    """Import the contract-first quantification pipeline lazily."""
+    from eq.quantification import run_contract_first_quantification
+
+    return run_contract_first_quantification
+
+
 def _load_organize_lucchi_dataset():
     """Import the Lucchi organizer only when requested from the CLI."""
     from eq.data_management.organize_lucchi_dataset import organize_lucchi_dataset
@@ -618,6 +632,35 @@ def quantify_command(args):
     #     model_path=args.model_path
     # )
     logger.info("✅ Quantification complete!")
+
+
+@log_function_call
+def prepare_quant_contract_command(args):
+    """Prepare contract artifacts for canonical quantification data."""
+    logger = get_logger("eq.prepare_quant_contract")
+    logger.info("🔄 Preparing quantification contract artifacts...")
+
+    try:
+        run_contract_first_quantification = _load_contract_first_quantification()
+        outputs = run_contract_first_quantification(
+            project_dir=Path(args.data_dir),
+            segmentation_model_path=Path(args.segmentation_model),
+            output_dir=Path(args.output_dir),
+            mapping_file=Path(args.mapping_file) if args.mapping_file else None,
+            annotation_source=args.annotation_source,
+            score_source=args.score_source,
+            apply_migration=args.apply_migration,
+            stop_after='contract',
+        )
+        print("✅ Quantification contract artifacts created:")
+        for key, value in outputs.items():
+            print(f"  - {key}: {value}")
+    except Exception as e:
+        logger.error(f"❌ Quantification contract preparation failed: {e}")
+        print(f"❌ Quantification contract preparation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
     
 @log_function_call
 def metadata_process_command(args):
@@ -909,33 +952,39 @@ def quant_endo_command(args):
     logger.info(f"📋 Training parameters: batch_size={batch_size}, epochs={args.epochs}")
     logger.info(f"🔧 Mode: {mode_manager.current_mode.value}")
     
-    # Auto-determine cache and output directories
-    data_dir = args.data_dir
-    cache_dir = f"{data_dir}/cache"
-    output_dir = "output"  # Always use the output directory in project root
-    
+    project_dir = Path(args.data_dir)
+    output_dir = Path(args.output_dir)
+    mapping_file = Path(args.mapping_file) if args.mapping_file else None
+    segmentation_model = Path(args.segmentation_model)
+
     print("🚀 === QUANTIFICATION TRAINING ===")
     print("Training quantification model for endotheliosis scoring...")
-    print(f"Data directory: {data_dir}")
-    print(f"Cache directory: {cache_dir} (auto-detected)")
-    print(f"Output directory: {output_dir} (auto-detected)")
-    print(f"Segmentation model: {args.segmentation_model}")
-    print(f"Epochs: {args.epochs}")
-    print(f"Batch size: {batch_size}")
+    print(f"Project directory: {project_dir}")
+    print(f"Output directory: {output_dir}")
+    print(f"Segmentation model: {segmentation_model}")
+    print(f"Score source: {args.score_source}")
+    print(f"Annotation source: {args.annotation_source if args.annotation_source else 'auto-detect'}")
+    print(f"Mapping file: {mapping_file if mapping_file else 'None'}")
+    print(f"Apply migration: {args.apply_migration}")
+    print(f"Stop after: {args.stop_after}")
     print(f"Quick test: {is_quick_test}")
     
     try:
-        # Use the actual working pipeline for quantification training with proper data paths
-        from eq.pipeline.run_production_pipeline import run_pipeline
-        
-        run_pipeline(
-            epochs=args.epochs, 
-            run_type="development" if is_quick_test else "production", 
-            use_existing_models=True,  # Use existing segmentation models for ROI extraction
-            data_dir=data_dir,
-            cache_dir=cache_dir
+        run_contract_first_quantification = _load_contract_first_quantification()
+        outputs = run_contract_first_quantification(
+            project_dir=project_dir,
+            segmentation_model_path=segmentation_model,
+            output_dir=output_dir,
+            mapping_file=mapping_file,
+            annotation_source=args.annotation_source,
+            score_source=args.score_source,
+            apply_migration=args.apply_migration,
+            stop_after=args.stop_after,
         )
-        
+
+        print("✅ Quantification pipeline outputs:")
+        for key, value in outputs.items():
+            print(f"  - {key}: {value}")
         logger.info("✅ Quantification training complete!")
         
     except Exception as e:
@@ -944,6 +993,33 @@ def quant_endo_command(args):
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+
+@log_function_call
+def backup_project_data_command(args):
+    """Create a timestamped backup snapshot for project data."""
+    logger = get_logger("eq.backup_project_data")
+    create_backup_snapshot = _load_backup_snapshot()
+
+    project_dir = Path(args.project_dir)
+    sources = [
+        project_dir / 'images',
+        project_dir / 'masks',
+        project_dir / 'subject_metadata.xlsx',
+    ]
+    if args.include_derived and args.derived_dir:
+        sources.append(Path(args.derived_dir))
+
+    artifact = create_backup_snapshot(
+        sources=sources,
+        backup_dir=Path(args.backup_dir),
+        label=args.label,
+    )
+    logger.info("✅ Backup created at %s", artifact.backup_root)
+    print(f"✅ Backup created at {artifact.backup_root}")
+    print(f"  manifest.files: {artifact.manifest_files}")
+    print(f"  manifest.sha256: {artifact.manifest_sha256}")
+    print(f"  manifest.meta: {artifact.manifest_meta}")
 
 
 def main():
@@ -1045,12 +1121,35 @@ Examples:
     
     # Quantification training command
     quant_parser = subparsers.add_parser('quant-endo', help='Train quantification model for endotheliosis scoring')
-    quant_parser.add_argument('--data-dir', required=True, help='Training data directory')
+    quant_parser.add_argument('--data-dir', required=True, help='Raw project directory containing images/, masks/, and subject_metadata.xlsx')
     quant_parser.add_argument('--segmentation-model', required=True, help='Path to trained segmentation model')
-    quant_parser.add_argument('--annotation-file', help='Annotation JSON file with endotheliosis scores')
+    quant_parser.add_argument('--score-source', default='auto', choices=['auto', 'labelstudio', 'spreadsheet'], help='Preferred score source contract')
+    quant_parser.add_argument('--annotation-source', help='Label Studio annotation export path or git source spec like git:REV:path/to/annotations.json')
+    quant_parser.add_argument('--mapping-file', help='CSV mapping legacy image stems to canonical subject_image_id values')
+    quant_parser.add_argument('--output-dir', default='output/quantification', help='Directory to write quantification outputs')
+    quant_parser.add_argument('--apply-migration', action='store_true', help='Apply renames in place instead of producing a dry-run migration report')
+    quant_parser.add_argument('--stop-after', default='model', choices=['contract', 'roi', 'embeddings', 'model'], help='Stop after a specific contract/scoring stage')
     quant_parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     quant_parser.add_argument('--epochs', type=int, default=50, help='Number of epochs')
     quant_parser.set_defaults(func=quant_endo_command)
+
+    contract_parser = subparsers.add_parser('prepare-quant-contract', help='Build canonical contract artifacts for quantification')
+    contract_parser.add_argument('--data-dir', required=True, help='Raw project directory containing images/, masks/, and subject_metadata.xlsx')
+    contract_parser.add_argument('--segmentation-model', required=True, help='Path to trained segmentation model used later for embeddings')
+    contract_parser.add_argument('--score-source', default='auto', choices=['auto', 'labelstudio', 'spreadsheet'], help='Preferred score source contract')
+    contract_parser.add_argument('--annotation-source', help='Label Studio annotation export path or git source spec like git:REV:path/to/annotations.json')
+    contract_parser.add_argument('--mapping-file', help='CSV mapping legacy image stems to canonical subject_image_id values')
+    contract_parser.add_argument('--output-dir', default='output/quantification', help='Directory to write contract preparation artifacts')
+    contract_parser.add_argument('--apply-migration', action='store_true', help='Apply renames in place instead of producing a dry-run migration report')
+    contract_parser.set_defaults(func=prepare_quant_contract_command)
+
+    backup_parser = subparsers.add_parser('backup-project-data', help='Create a timestamped backup of project data before migration work')
+    backup_parser.add_argument('--project-dir', required=True, help='Raw project directory containing images/, masks/, and subject_metadata.xlsx')
+    backup_parser.add_argument('--backup-dir', default='backup', help='Directory in which to create the snapshot')
+    backup_parser.add_argument('--label', default='project_backup', help='Label prefix for the snapshot directory')
+    backup_parser.add_argument('--include-derived', action='store_true', help='Also copy a derived-data directory into the snapshot')
+    backup_parser.add_argument('--derived-dir', help='Optional derived-data directory to include when --include-derived is set')
+    backup_parser.set_defaults(func=backup_project_data_command)
     
     # Feature extraction command
     features_parser = subparsers.add_parser('extract-features', help='Extract features')

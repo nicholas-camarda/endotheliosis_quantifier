@@ -14,6 +14,12 @@ from typing import Any, Dict, Optional, Union, cast, Tuple, List
 import pandas as pd
 import numpy as np
 
+from eq.data_management.canonical_naming import (
+    classify_naming_conventions,
+    parse_image_path,
+    parse_mask_path,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,43 +38,28 @@ def extract_subject_info(filename: str) -> Tuple[Optional[str], Optional[str]]:
     Returns:
         Tuple of (subject_id, image_number) or (None, None) if parsing fails
     """
-    # Remove file extension
     stem = Path(filename).stem
-    
-    # Try new format: SUBJECT-IMAGE_NUMBER
-    if '-' in stem:
-        parts = stem.split('-')
-        if len(parts) >= 2:
-            # Find the last part that looks like a number
-            image_number = None
-            subject_id = None
-            
-            for i in range(len(parts) - 1, -1, -1):
-                try:
-                    # Try to parse as integer
-                    int(parts[i])
-                    image_number = parts[i]
-                    subject_id = '-'.join(parts[:i]) if i > 0 else parts[0]
-                    break
-                except ValueError:
-                    continue
-            
-            if subject_id and image_number:
-                return subject_id, image_number
-    
-    # Try old format: SUBJECT_ImageIMAGE_NUMBER
-    if '_Image' in stem:
-        parts = stem.split('_Image')
-        if len(parts) == 2:
-            subject_id = parts[0]
-            image_number = parts[1]
-            return subject_id, image_number
-    
-    # If no pattern matches, return None
+    parsed = parse_image_path(Path(filename), allow_legacy=True)
+    if parsed is not None:
+        return parsed.subject_prefix, str(parsed.image_index)
+
+    parsed_mask = parse_mask_path(Path(filename), allow_legacy=True)
+    if parsed_mask is not None:
+        return parsed_mask.subject_prefix, str(parsed_mask.image_index)
+
+    legacy_stem = stem.replace('_mask', '')
+    parsed_legacy = parse_image_path(Path(f'{legacy_stem}.jpg'), allow_legacy=True)
+    if parsed_legacy is not None:
+        return parsed_legacy.subject_prefix, str(parsed_legacy.image_index)
+
     return None, None
 
 
-def validate_subject_naming(filenames: List[str], data_dir: Path) -> Dict[str, Any]:
+def validate_subject_naming(
+    filenames: List[str],
+    data_dir: Path,
+    require_canonical: bool = False,
+) -> Dict[str, Any]:
     """
     Validate subject naming conventions and provide detailed error messages.
     
@@ -109,6 +100,8 @@ def validate_subject_naming(filenames: List[str], data_dir: Path) -> Dict[str, A
             logger.error(error_msg)
             continue
         
+        parsed = parse_image_path(Path(filename), allow_legacy=True) or parse_mask_path(Path(filename), allow_legacy=True)
+
         # Validate subject ID format
         if not subject_id or len(subject_id.strip()) == 0:
             validation_results['invalid_files'].append(filename)
@@ -147,15 +140,25 @@ def validate_subject_naming(filenames: List[str], data_dir: Path) -> Dict[str, A
             logger.error(error_msg)
             continue
         
+        if require_canonical and parsed is not None and parsed.naming_format != 'canonical':
+            validation_results['invalid_files'].append(filename)
+            error_msg = (
+                f"❌ LEGACY FILENAME NOT ALLOWED: '{filename}'\n"
+                f"   Canonical raw-data mode requires filenames like 'T19-1.jpg' and 'T19-1_mask.jpg'."
+            )
+            validation_results['errors'].append(error_msg)
+            logger.error(error_msg)
+            continue
+
         # Valid file
         validation_results['valid_files'].append(filename)
         validation_results['subject_ids_found'].add(subject_id)
         
         # Detect naming convention
-        if '-' in filename:
-            validation_results['naming_conventions_detected'].add('new_format')
-        elif '_Image' in filename:
-            validation_results['naming_conventions_detected'].add('legacy_format')
+        if parsed is not None:
+            validation_results['naming_conventions_detected'].add(
+                'new_format' if parsed.naming_format == 'canonical' else 'legacy_format'
+            )
     
     # Generate summary warnings
     if len(validation_results['naming_conventions_detected']) > 1:
@@ -434,12 +437,33 @@ class MetadataProcessor:
             'scores_without_images': 0,
             'validation_errors': []
         }
+        canonical_subject_image_ids = {
+            str(value)
+            for value in df['subject_id'].dropna().astype(str).unique().tolist()
+        }
         
         # Collect all image filenames for naming validation
-        all_image_files = []
+        all_image_files: list[str] = []
+        all_mask_files: list[str] = []
         for subject_dir in image_subject_dirs:
-            images = list(subject_dir.glob("*.png")) + list(subject_dir.glob("*.tif")) + list(subject_dir.glob("*.jpg")) + list(subject_dir.glob("*.jpeg"))
+            images = (
+                list(subject_dir.glob("*.png"))
+                + list(subject_dir.glob("*.tif"))
+                + list(subject_dir.glob("*.tiff"))
+                + list(subject_dir.glob("*.jpg"))
+                + list(subject_dir.glob("*.jpeg"))
+            )
             all_image_files.extend([img.name for img in images])
+            mask_subject_dir = masks_dir / subject_dir.name
+            if mask_subject_dir.exists():
+                masks = (
+                    list(mask_subject_dir.glob("*.png"))
+                    + list(mask_subject_dir.glob("*.tif"))
+                    + list(mask_subject_dir.glob("*.tiff"))
+                    + list(mask_subject_dir.glob("*.jpg"))
+                    + list(mask_subject_dir.glob("*.jpeg"))
+                )
+                all_mask_files.extend([mask.name for mask in masks])
         
         # Validate subject naming conventions
         if all_image_files:
@@ -458,18 +482,40 @@ class MetadataProcessor:
             if naming_validation['warnings']:
                 for warning in naming_validation['warnings']:
                     logger.warning(warning)
+
+        observed_conventions = classify_naming_conventions(
+            [Path(name) for name in all_image_files + all_mask_files]
+        )
+        file_validation['naming_conventions_detected'] = sorted(observed_conventions)
+        file_validation['mixed_naming_detected'] = len(observed_conventions) > 1
+        if len(observed_conventions) > 1:
+            file_validation['validation_errors'].append(
+                'Mixed canonical and legacy raw-data naming detected.'
+            )
         
         for subject_dir in image_subject_dirs:
             subject_id = subject_dir.name
             
             # Find images in this subject directory
-            images = list(subject_dir.glob("*.png")) + list(subject_dir.glob("*.tif"))
+            images = (
+                list(subject_dir.glob("*.png"))
+                + list(subject_dir.glob("*.tif"))
+                + list(subject_dir.glob("*.tiff"))
+                + list(subject_dir.glob("*.jpg"))
+                + list(subject_dir.glob("*.jpeg"))
+            )
             
             # Find corresponding masks in the masks directory
             mask_subject_dir = masks_dir / subject_id
             masks = []
             if mask_subject_dir.exists():
-                masks = list(mask_subject_dir.glob("*.png")) + list(mask_subject_dir.glob("*.tif"))
+                masks = (
+                    list(mask_subject_dir.glob("*.png"))
+                    + list(mask_subject_dir.glob("*.tif"))
+                    + list(mask_subject_dir.glob("*.tiff"))
+                    + list(mask_subject_dir.glob("*.jpg"))
+                    + list(mask_subject_dir.glob("*.jpeg"))
+                )
             
             if images:
                 file_validation['subjects_with_images'] += 1
@@ -485,10 +531,15 @@ class MetadataProcessor:
             # Validate image/mask pairs and score coverage
             for image in images:
                 image_stem = image.stem  # e.g., "T19_Image0"
-                expected_mask = mask_subject_dir / f"{image_stem}_mask{image.suffix}"
+                expected_mask = None
+                for suffix in (image.suffix, '.png', '.jpg', '.jpeg', '.tif', '.tiff'):
+                    candidate = mask_subject_dir / f"{image_stem}_mask{suffix}"
+                    if candidate.exists():
+                        expected_mask = candidate
+                        break
                 
                 # Check if mask exists
-                if expected_mask.exists():
+                if expected_mask is not None and expected_mask.exists():
                     file_validation['image_mask_pairs'] += 1
                 else:
                     file_validation['images_without_masks'] += 1
@@ -499,17 +550,17 @@ class MetadataProcessor:
                 subject_id, image_number = extract_subject_info(image.name)
                 
                 if subject_id and image_number:
-                    # Look for scores for this subject in metadata
-                    # Try both new format (T19-1) and old format (T19_Image0)
-                    subject_scores = df[df['subject_id'].str.startswith(subject_id + '-')]
-                    if subject_scores.empty:
-                        # Try old format as fallback
-                        old_format_id = f"{subject_id}_Image{image_number}"
-                        subject_scores = df[df['subject_id'] == old_format_id]
-                    
-                    if subject_scores.empty:
+                    parsed_image = parse_image_path(image, allow_legacy=True)
+                    if parsed_image is not None and parsed_image.naming_format == 'canonical':
+                        subject_scores = df[df['subject_id'] == parsed_image.subject_image_id]
+                    else:
+                        subject_scores = df[df['subject_id'].str.startswith(f'{subject_id}-', na=False)]
+
+                    if subject_scores.empty or (parsed_image is not None and parsed_image.naming_format != 'canonical'):
                         file_validation['images_without_scores'] += 1
-                        file_validation['validation_errors'].append(f"No scores for {image} (subject: {subject_id}, image: {image_number})")
+                        file_validation['validation_errors'].append(
+                            f"No trustworthy metadata join for {image}; canonical naming is required for score linkage."
+                        )
                 else:
                     file_validation['images_without_scores'] += 1
                     file_validation['validation_errors'].append(f"Could not parse subject info from {image}")
@@ -535,6 +586,29 @@ class MetadataProcessor:
                 if not expected_image.exists():
                     file_validation['masks_without_images'] += 1
                     file_validation['validation_errors'].append(f"No image for {mask}")
+
+        canonical_raw_ids: set[str] = set()
+        for subject_dir in image_subject_dirs:
+            for image in (
+                list(subject_dir.glob('*.png'))
+                + list(subject_dir.glob('*.tif'))
+                + list(subject_dir.glob('*.tiff'))
+                + list(subject_dir.glob('*.jpg'))
+                + list(subject_dir.glob('*.jpeg'))
+            ):
+                parsed = parse_image_path(image, allow_legacy=False)
+                if parsed is not None:
+                    canonical_raw_ids.add(parsed.subject_image_id)
+
+        missing_metadata_ids = sorted(canonical_subject_image_ids - canonical_raw_ids)
+        orphan_raw_ids = sorted(canonical_raw_ids - canonical_subject_image_ids)
+        file_validation['scores_without_images'] = len(missing_metadata_ids)
+        file_validation['missing_metadata_subject_image_ids'] = missing_metadata_ids
+        file_validation['orphan_canonical_raw_ids'] = orphan_raw_ids
+        if missing_metadata_ids:
+            file_validation['validation_errors'].append(
+                f'Metadata has {len(missing_metadata_ids)} canonical ids without canonical raw images.'
+            )
         
         # Calculate overall validation status
         total_issues = (file_validation['images_without_masks'] + 

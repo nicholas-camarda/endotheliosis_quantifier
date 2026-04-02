@@ -50,6 +50,21 @@ from .metadata_processor import (
     MetadataProcessor,
     process_metadata_file,
 )
+from .backup_utils import create_backup_snapshot
+from .canonical_contract import (
+    apply_migration_plan,
+    build_migration_plan,
+    validate_project_contract,
+)
+from .canonical_naming import (
+    ParsedSubjectImageId,
+    parse_subject_image_stem,
+    parse_image_path,
+    parse_mask_path,
+    canonical_image_name,
+    canonical_mask_name,
+    subject_prefix_from_subject_image_id,
+)
 from .organize_lucchi_dataset import organize_lucchi_dataset
 
 # Train/val/test splitting - handled automatically by FastAI v2 RandomSplitter
@@ -77,6 +92,17 @@ __all__ = [
     # Metadata processing
     'MetadataProcessor',
     'process_metadata_file',
+    'create_backup_snapshot',
+    'apply_migration_plan',
+    'build_migration_plan',
+    'validate_project_contract',
+    'ParsedSubjectImageId',
+    'parse_subject_image_stem',
+    'parse_image_path',
+    'parse_mask_path',
+    'canonical_image_name',
+    'canonical_mask_name',
+    'subject_prefix_from_subject_image_id',
 
     # Dataset utilities
     'organize_lucchi_dataset',
