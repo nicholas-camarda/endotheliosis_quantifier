@@ -19,6 +19,8 @@ project_root/
 │   │   └── <project_name>/
 │   │       ├── images/
 │   │       ├── masks/
+│   │       ├── annotations/
+│   │       │   └── annotations.json
 │   │       └── subject_metadata.xlsx
 │   └── derived_data/
 │       ├── mito/
@@ -35,10 +37,10 @@ project_root/
 ## Purpose Of Each Directory
 
 - `data/raw_data/`
-  Original source datasets and annotations.
+  Original source datasets and annotations. For the current preeclampsia quantification baseline, this includes image/mask pairs plus a Label Studio JSON export.
 
 - `data/derived_data/`
-  Processed outputs such as extracted images, patchified datasets, metadata exports, or cached intermediates.
+  Processed outputs such as extracted images, metadata exports, or cached intermediates. Static patch datasets are legacy support rather than the intended long-term glomeruli contract.
 
 - `models/segmentation/mitochondria/`
   Trained mitochondria segmentation models and associated training artifacts.
@@ -50,7 +52,25 @@ project_root/
   Run logs and temporary experiment logs.
 
 - `output/`
-  General-purpose generated outputs such as visualizations, reports, and one-off analysis exports.
+  General-purpose generated outputs such as visualizations, quantification review reports, and one-off analysis exports.
+
+For quantification runs, a typical output subtree now looks like:
+
+```text
+output/quantification/<project_name>/
+├── labelstudio_scores/
+├── scored_examples/
+├── roi_crops/
+├── embeddings/
+└── ordinal_model/
+    ├── ordinal_predictions.csv
+    ├── ordinal_metrics.json
+    ├── ordinal_confusion_matrix.csv
+    └── review_report/
+        ├── ordinal_review.html
+        ├── selected_examples.csv
+        └── assets/
+```
 
 - `test_output/`
   Temporary files created by tests or debugging scripts.

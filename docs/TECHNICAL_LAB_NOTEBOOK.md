@@ -339,25 +339,31 @@ eq metadata-process \
 
 ### What Exists
 
-The branch contains quantification-related code in [`src/eq/evaluation/quantification_metrics.py`](/home/ncamarda/endotheliosis_quantifier/src/eq/evaluation/quantification_metrics.py).
+The current `master` branch now contains a maintained baseline quantification path under [`src/eq/quantification/pipeline.py`](/home/ncamarda/endotheliosis_quantifier/src/eq/quantification/pipeline.py) plus supporting contract and score-recovery utilities.
 
-What that module currently implements:
+What exists today:
 
-- openness score from thresholded bright regions inside a glomerulus mask
-- coarse grade assignment from openness thresholds
-- summary statistics over batches
-- a rule-based severity label
+- Label Studio-first score recovery from image-level annotation exports
+- explicit duplicate-annotation reconciliation with audit outputs
+- image-level scored-example tables joined to raw image/mask pairs
+- union-ROI extraction over the full multi-component mask
+- frozen segmentation-encoder embedding extraction
+- grouped ordinal image-level endotheliosis prediction
+- prediction exports with class probabilities, expected score, top-two margin, and entropy
+- an HTML review artifact with selected example cases
+- the older openness heuristic in [`src/eq/evaluation/quantification_metrics.py`](/home/ncamarda/endotheliosis_quantifier/src/eq/evaluation/quantification_metrics.py), now best treated as an audit feature rather than the primary learned model
 
-### What Does Not Yet Exist As A Completed Branch Workflow
+### What Does Not Yet Exist As A Matured Workflow
 
-The current `master` branch does **not** provide a completed learned quantification stack with:
+The current `master` branch still does **not** provide:
 
-- dedicated feature-extraction modules
-- trained regression models
-- validated subject-level endotheliosis score prediction
-- a maintained end-to-end learned quantification CLI path
+- calibrated uncertainty estimates
+- per-glomerulus labels inside multi-glomerulus images
+- validated subject-level endotheliosis prediction as the primary target
+- a fully production-hardened deployment path from predicted masks to final score
+- faithful attribution methods for the embedding model
 
-The CLI commands `extract-features` and `quantify` still print that they are not yet implemented.
+The CLI commands `extract-features` and `quantify` still print that they are not yet implemented, so the maintained quantification surface is currently `prepare-quant-contract` plus `quant-endo`.
 
 ## Inference Status
 
@@ -389,10 +395,13 @@ For the current branch, the safest supported workflow is:
 
 1. validate raw naming with `eq validate-naming`
 2. prepare derived data with `eq extract-images` or `eq process-data`
-3. process metadata with `eq metadata-process` if scoring spreadsheets are present
-4. audit masks with `eq audit-derived`
-5. train mitochondria via `python -m eq.training.train_mitochondria`
-6. train glomeruli via `python -m eq.training.train_glomeruli`
+3. export Label Studio PNG masks plus annotation JSON when image-level quantification labels are needed
+4. process metadata with `eq metadata-process` if spreadsheets are present for legacy support or audit context
+5. run `eq prepare-quant-contract` to recover score-linked image/mask pairs
+6. run `eq quant-endo` for the current embedding-first image-level baseline
+7. audit masks with `eq audit-derived`
+8. train mitochondria via `python -m eq.training.train_mitochondria`
+9. train glomeruli via `python -m eq.training.train_glomeruli`
 
 The dedicated training modules are more trustworthy than the older orchestration-style CLI routes for heavy model training.
 
@@ -400,8 +409,9 @@ The dedicated training modules are more trustworthy than the older orchestration
 
 As of April 2, 2026 on `master`, the main known gaps are:
 
-- learned feature extraction is not implemented as a maintained pipeline
-- learned regression-based quantification is not implemented as a maintained pipeline
+- the maintained learned quantification path is still an image-level baseline rather than a biologically explicit per-glomerulus model
+- uncertainty outputs are confidence proxies, not calibrated probabilities
+- interpretation in the HTML review report is descriptive rather than attribution-faithful
 - inference exists but is not uniformly current
 - some configs, README examples, and code defaults still disagree on exact training hyperparameters
 
@@ -409,6 +419,6 @@ As of April 2, 2026 on `master`, the main known gaps are:
 
 The current `master` branch should be described as:
 
-**A maintained segmentation repository with useful data-preparation and metadata utilities, partial inference code, and only heuristic rather than learned quantification.**
+**A maintained segmentation repository with useful data-preparation utilities, a working Label Studio-first image-level learned quantification baseline, partial inference code, and remaining scientific/production gaps around calibration, deployment, and per-glomerulus labeling.**
 
-That is a more accurate summary of the checked-in branch than the older claim that the full endotheliosis scoring pipeline is already implemented.
+That is more accurate than either older extreme: the branch is no longer heuristic-only for quantification, but it is also not yet a finished clinically trustworthy scoring system.

@@ -4,20 +4,22 @@ This guide keeps the more explanatory, beginner-friendly walkthrough for the pro
 
 ## What This Project Is
 
-Endotheliosis Quantifier (`eq`) is a deep learning pipeline for automated quantification of endotheliosis severity in glomeruli histology images.
+Endotheliosis Quantifier (`eq`) is a deep learning pipeline for segmentation-first analysis of glomeruli histology images, with a maintained image-level endotheliosis scoring baseline built on Label Studio annotations.
 
 At a high level, the project uses a two-stage idea:
 
 1. Train a segmentation model on a mitochondria dataset to learn useful visual features such as edges, substructure, and boundaries.
 2. Transfer that knowledge to glomeruli segmentation in kidney histology images.
 
-That segmentation output is intended to support downstream quantification of disease severity.
+That segmentation output now supports a first frozen-embedding ordinal scoring workflow for preeclampsia data.
 
 ## Key Ideas
 
 - **Two-stage training**: mitochondria pretraining followed by glomeruli fine-tuning
 - **Dynamic patching**: train on full images with augmentations and on-the-fly crops instead of permanently patchifying everything upfront
 - **ROI identification**: segment glomeruli regions before later quantification steps
+- **Label Studio-first scoring**: for the current preeclampsia workflow, the image-level grade attached in Label Studio is the primary supervised target
+- **Union ROI semantics**: image-level scoring uses the full multi-component mask region rather than only the largest connected component
 
 ## What Data You Need
 
@@ -29,7 +31,7 @@ There are two main image data sources:
 You may also have subject-level metadata such as a scoring spreadsheet:
 
 - **Subject metadata**: usually something like `subject_metadata.xlsx`
-- This is useful because one subject can have multiple images, and those images may be scored individually
+- This is still useful for audit trails, summaries, or legacy workflows, but it is not the default score source for the current preeclampsia quantification baseline
 
 ### Example Metadata Layout
 
@@ -39,6 +41,8 @@ You may also have subject-level metadata such as a scoring spreadsheet:
 | 2            | 0     | 1     | 0.5   | 0     | 0     |
 | 3            | 0     | 0.5   | 1     | 0     | 0     |
 | 4            | 0.5   | 0.5   | 0     | 0     | 0     |
+
+For the current scoring workflow, think of that spreadsheet as optional legacy metadata rather than the canonical supervised label table.
 
 ## Naming Convention
 
@@ -59,7 +63,7 @@ Supported image formats are typically `tif`, `tiff`, `png`, `jpg`, or `jpeg`. Ma
 
 ## Creating Masks With Label Studio
 
-If masks are being created manually, Label Studio is a practical workflow.
+If masks are being created manually, Label Studio is a practical workflow. For the current preeclampsia quantification path, the Label Studio export is more than a mask source: it is also the canonical image-level grading source.
 
 ### 1. Install Label Studio
 
@@ -72,16 +76,21 @@ label-studio start
 
 Then follow the [Label Studio Quick Start Guide](https://labelstud.io/guide/quick_start).
 
-### 2. Export Masks
+### 2. Export Masks And Annotation JSON
 
 Inside Label Studio:
 
 1. Open the project.
 2. Click `Export`.
 3. Choose `Brush labels to PNG`.
-4. Download the masks.
+4. Also export the task annotations as JSON.
+5. Download both the masks and the annotation export.
 
-This export is convenient because it gives you one PNG mask per image and usually preserves a clean binary mask workflow.
+This is convenient because:
+
+- the PNG export gives you one binary mask per image
+- the JSON export preserves the image-level `grade` choice attached to that image/mask pair
+- the quantification pipeline can recover duplicate annotations explicitly and prefer the latest graded annotation
 
 ### 3. Organize The Data
 
@@ -99,6 +108,8 @@ data/raw_data/your_project/
 │   │   └── T19-1_mask.png
 │   └── T30/
 │       └── T30-1_mask.png
+├── annotations/
+│   └── annotations.json
 └── subject_metadata.xlsx
 ```
 
@@ -114,8 +125,9 @@ data/raw_data/
 └── your_project_name/
     ├── images/
     ├── masks/
-    └── annotations/
-        └── annotations.json
+    ├── annotations/
+    │   └── annotations.json
+    └── subject_metadata.xlsx
 ```
 
 This is cleaner than older hardcoded machine-specific paths and works better across WSL, Windows, and macOS.
@@ -164,6 +176,13 @@ data/raw_data/your_project/
 └── masks/
 ```
 
+For quantification, the current contract is also intentionally simple:
+
+- one scored example per image/mask pair
+- score recovered from the Label Studio annotation export
+- one union ROI built from all positive pixels in the mask
+- frozen segmentation-encoder embeddings extracted from that union ROI
+
 ## Example Training Flow
 
 ### 1. Prepare Lucchi Images
@@ -198,6 +217,31 @@ python -m eq.training.train_glomeruli \
   --image-size 256 \
   --crop-size 512
 ```
+
+### 4. Run The Current Quantification Baseline
+
+```bash
+eq prepare-quant-contract \
+  --data-dir data/raw_data/your_project \
+  --segmentation-model models/segmentation/glomeruli/<your_model>.pkl \
+  --score-source labelstudio \
+  --annotation-source data/raw_data/your_project/annotations/annotations.json
+
+eq quant-endo \
+  --data-dir data/raw_data/your_project \
+  --segmentation-model models/segmentation/glomeruli/<your_model>.pkl \
+  --score-source labelstudio \
+  --annotation-source data/raw_data/your_project/annotations/annotations.json \
+  --output-dir output/quantification/your_project
+```
+
+This writes:
+
+- recovered Label Studio score tables and duplicate-resolution audit outputs
+- union-ROI image and mask crops
+- frozen segmentation encoder embeddings
+- ordinal predictions with class probabilities and confidence proxies
+- an HTML review report with 5-7 mixed example cases
 
 ## A Good Mental Model For The Repo
 

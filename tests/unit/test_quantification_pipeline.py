@@ -155,10 +155,11 @@ def test_build_image_level_scored_table_and_extract_rois(tmp_path: Path):
     mask_dir.mkdir(parents=True)
 
     image = np.zeros((120, 120, 3), dtype=np.uint8)
-    image[30:90, 30:90] = 180
+    image[20:50, 20:50] = 180
+    image[70:100, 70:100] = 120
     Image.fromarray(image).save(image_dir / 'T19_Image5.jpg')
 
-    mask = _make_rect_mask((120, 120), [(35, 35, 85, 85)])
+    mask = _make_rect_mask((120, 120), [(25, 25, 45, 45), (75, 75, 95, 95)])
     Image.fromarray(mask).save(mask_dir / 'T19_Image5_mask.jpg')
 
     score_table = pd.DataFrame(
@@ -179,9 +180,15 @@ def test_build_image_level_scored_table_and_extract_rois(tmp_path: Path):
     assert scored.loc[0, 'subject_image_id'] == 'T19_Image5'
     assert scored.loc[0, 'glomerulus_id'] == 1
 
-    roi_table = extract_image_level_roi_crops(scored, tmp_path / 'roi')
+    roi_table = extract_image_level_roi_crops(scored, tmp_path / 'roi', padding=0)
     assert roi_table.loc[0, 'roi_status'] == 'ok'
-    assert roi_table.loc[0, 'roi_component_selection'] == 'single_component'
+    assert roi_table.loc[0, 'roi_component_selection'] == 'union_mask'
+    assert roi_table.loc[0, 'roi_component_count'] == 2
+    assert roi_table.loc[0, 'roi_bbox_x0'] == 25
+    assert roi_table.loc[0, 'roi_bbox_y0'] == 25
+    assert roi_table.loc[0, 'roi_bbox_x1'] == 95
+    assert roi_table.loc[0, 'roi_bbox_y1'] == 95
+    assert 0.4 < roi_table.loc[0, 'roi_largest_component_area_fraction'] < 0.6
     assert Path(str(roi_table.loc[0, 'roi_image_path'])).exists()
 
 
@@ -202,7 +209,7 @@ def test_prepare_encoder_for_forward_wraps_module_list():
 
 def test_evaluate_embedding_table_runs_with_grouped_subject_splits(tmp_path: Path):
     rows = []
-    for subject_index, subject_prefix in enumerate(['T19', 'T20', 'T21']):
+    for subject_index, subject_prefix in enumerate(['T19', 'T20', 'T21', 'T22']):
         for image_index in range(1, 3):
             score = float(ALLOWED_SCORE_VALUES[(subject_index + image_index) % len(ALLOWED_SCORE_VALUES)])
             rows.append(
@@ -211,13 +218,61 @@ def test_evaluate_embedding_table_runs_with_grouped_subject_splits(tmp_path: Pat
                     'subject_prefix': subject_prefix,
                     'glomerulus_id': 1,
                     'score': score,
+                    'raw_image_path': str(tmp_path / f'{subject_prefix}-{image_index}.jpg'),
+                    'raw_mask_path': str(tmp_path / f'{subject_prefix}-{image_index}_mask.jpg'),
+                    'roi_image_path': str(tmp_path / f'{subject_prefix}-{image_index}_roi.jpg'),
+                    'roi_mask_path': str(tmp_path / f'{subject_prefix}-{image_index}_roi_mask.jpg'),
+                    'roi_bbox_x0': 0,
+                    'roi_bbox_y0': 0,
+                    'roi_bbox_x1': 20,
+                    'roi_bbox_y1': 20,
+                    'roi_area': 100,
+                    'roi_fill_fraction': 0.25,
+                    'roi_mean_intensity': 0.5 + 0.1 * image_index,
+                    'roi_openness_score': 0.2 + 0.05 * subject_index,
+                    'roi_component_count': 2,
+                    'roi_component_selection': 'union_mask',
+                    'roi_union_bbox_width': 20,
+                    'roi_union_bbox_height': 20,
+                    'roi_largest_component_area_fraction': 0.5,
                     'embedding_0000': float(subject_index),
                     'embedding_0001': float(image_index),
                     'embedding_0002': float(subject_index + image_index),
                 }
             )
+
+            raw_image = np.full((24, 24, 3), fill_value=40 * (subject_index + 1), dtype=np.uint8)
+            raw_mask = _make_rect_mask((24, 24), [(4, 4, 10, 10), (14, 14, 20, 20)])
+            roi_image = raw_image[2:22, 2:22]
+            roi_mask = raw_mask[2:22, 2:22]
+            Image.fromarray(raw_image).save(tmp_path / f'{subject_prefix}-{image_index}.jpg')
+            Image.fromarray(raw_mask).save(tmp_path / f'{subject_prefix}-{image_index}_mask.jpg')
+            Image.fromarray(roi_image).save(tmp_path / f'{subject_prefix}-{image_index}_roi.jpg')
+            Image.fromarray(roi_mask).save(tmp_path / f'{subject_prefix}-{image_index}_roi_mask.jpg')
+
     embedding_df = pd.DataFrame(rows)
     artifacts = evaluate_embedding_table(embedding_df, tmp_path / 'model')
     assert artifacts['metrics'].exists()
     assert artifacts['predictions'].exists()
     assert artifacts['confusion_matrix'].exists()
+    assert artifacts['review_html'].exists()
+    assert artifacts['review_examples'].exists()
+
+    predictions_df = pd.read_csv(artifacts['predictions'])
+    for probability_column in [
+        'prob_score_0_0',
+        'prob_score_0_5',
+        'prob_score_1_0',
+        'prob_score_1_5',
+        'prob_score_2_0',
+        'prob_score_2_5',
+        'prob_score_3_0',
+    ]:
+        assert probability_column in predictions_df.columns
+    assert {'expected_score', 'top_two_margin', 'entropy', 'absolute_error', 'prediction_error'}.issubset(
+        predictions_df.columns
+    )
+
+    html = artifacts['review_html'].read_text(encoding='utf-8')
+    assert 'descriptive audit signals' in html
+    assert html.count('class="example-card"') == 7

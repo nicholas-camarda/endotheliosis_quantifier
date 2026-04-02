@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import pickle
+from html import escape
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -12,7 +13,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
-from PIL import Image
+from PIL import Image, ImageDraw
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, cohen_kappa_score, confusion_matrix, mean_absolute_error
 from sklearn.model_selection import GroupKFold
@@ -65,6 +66,20 @@ def _class_index_to_score(index: np.ndarray | int) -> np.ndarray | float:
     if isinstance(index, np.ndarray):
         return ALLOWED_SCORE_VALUES[index]
     return float(ALLOWED_SCORE_VALUES[int(index)])
+
+
+def _score_probability_column_name(score: float) -> str:
+    score_str = str(score).replace('.', '_')
+    return f'prob_score_{score_str}'
+
+
+def _score_label(score: float) -> str:
+    return f'{score:g}'
+
+
+def _entropy(probabilities: np.ndarray) -> np.ndarray:
+    safe = np.clip(probabilities, 1e-12, 1.0)
+    return -(safe * np.log(safe)).sum(axis=1)
 
 
 def _find_canonical_path(root: Path, subject_image_id: str, is_mask: bool) -> Optional[Path]:
@@ -126,6 +141,52 @@ def _extract_components(mask_array: np.ndarray, min_area: int = 64) -> list[dict
     for rank, component in enumerate(components, start=1):
         component['glomerulus_id'] = rank
     return components
+
+
+def _build_union_mask(mask_array: np.ndarray, min_component_area: int = 64) -> dict[str, Any] | None:
+    binary_mask = _threshold_mask(mask_array)
+    if not binary_mask.any():
+        return None
+
+    components = _extract_components(mask_array, min_area=min_component_area)
+    if components:
+        union_mask = np.zeros_like(binary_mask, dtype=np.uint8)
+        for component in components:
+            union_mask = np.maximum(union_mask, component['mask'].astype(np.uint8))
+        component_count = len(components)
+        largest_component_area = max(int(component['area']) for component in components)
+        selection = 'union_mask'
+    else:
+        union_mask = binary_mask
+        num_labels, _, stats, _ = cv2.connectedComponentsWithStats(binary_mask, connectivity=8)
+        component_count = max(0, int(num_labels) - 1)
+        largest_component_area = int(stats[1:, cv2.CC_STAT_AREA].max()) if num_labels > 1 else int(binary_mask.sum())
+        selection = 'union_mask_all_positive_fallback'
+
+    ys, xs = np.where(union_mask > 0)
+    if len(xs) == 0 or len(ys) == 0:
+        return None
+
+    x0 = int(xs.min())
+    y0 = int(ys.min())
+    x1 = int(xs.max()) + 1
+    y1 = int(ys.max()) + 1
+    union_area = int(union_mask.sum())
+    largest_fraction = float(largest_component_area / union_area) if union_area else 0.0
+
+    return {
+        'mask': union_mask,
+        'bbox_x0': x0,
+        'bbox_y0': y0,
+        'bbox_x1': x1,
+        'bbox_y1': y1,
+        'component_count': int(component_count),
+        'component_selection': selection,
+        'union_area': union_area,
+        'largest_component_area_fraction': largest_fraction,
+        'bbox_width': int(x1 - x0),
+        'bbox_height': int(y1 - y0),
+    }
 
 
 def build_scored_example_table(project_dir: Path, metadata_df: pd.DataFrame, output_dir: Path) -> pd.DataFrame:
@@ -293,7 +354,7 @@ def extract_image_level_roi_crops(
     padding: int = 32,
     min_component_area: int = 64,
 ) -> pd.DataFrame:
-    """Extract one ROI crop per scored image using the largest connected mask component."""
+    """Extract one union ROI crop per scored image using the full multi-component mask."""
     output_dir = Path(output_dir)
     image_crop_dir = output_dir / 'images'
     mask_crop_dir = output_dir / 'masks'
@@ -313,6 +374,9 @@ def extract_image_level_roi_crops(
     result['roi_openness_score'] = np.nan
     result['roi_component_count'] = np.nan
     result['roi_component_selection'] = ''
+    result['roi_union_bbox_width'] = np.nan
+    result['roi_union_bbox_height'] = np.nan
+    result['roi_largest_component_area_fraction'] = np.nan
 
     for index, scored_row in result.iterrows():
         if str(scored_row.get('join_status', '')) != 'ok':
@@ -325,29 +389,21 @@ def extract_image_level_roi_crops(
         mask_path = Path(str(scored_row['raw_mask_path']))
         image_array = np.array(Image.open(image_path).convert('RGB'))
         mask_array = np.array(Image.open(mask_path).convert('L'))
-        components = _extract_components(mask_array, min_area=min_component_area)
-        result.at[index, 'roi_component_count'] = len(components)
-
-        if not components:
+        union = _build_union_mask(mask_array, min_component_area=min_component_area)
+        if union is None:
             result.at[index, 'roi_status'] = 'component_not_found'
             continue
 
-        component = max(components, key=lambda item: (int(item['area']), -float(item['distance_from_center'])))
-        result.at[index, 'roi_component_selection'] = (
-            'single_component' if len(components) == 1 else 'largest_component'
-        )
+        result.at[index, 'roi_component_count'] = int(union['component_count'])
+        result.at[index, 'roi_component_selection'] = str(union['component_selection'])
 
-        x = int(component['bbox_x'])
-        y = int(component['bbox_y'])
-        w = int(component['bbox_w'])
-        h = int(component['bbox_h'])
-        x0 = max(0, x - padding)
-        y0 = max(0, y - padding)
-        x1 = min(image_array.shape[1], x + w + padding)
-        y1 = min(image_array.shape[0], y + h + padding)
+        x0 = max(0, int(union['bbox_x0']) - padding)
+        y0 = max(0, int(union['bbox_y0']) - padding)
+        x1 = min(image_array.shape[1], int(union['bbox_x1']) + padding)
+        y1 = min(image_array.shape[0], int(union['bbox_y1']) + padding)
 
         crop_image = image_array[y0:y1, x0:x1]
-        crop_mask = (component['mask'][y0:y1, x0:x1] * 255).astype(np.uint8)
+        crop_mask = (union['mask'][y0:y1, x0:x1] * 255).astype(np.uint8)
 
         crop_name = f"{scored_row['subject_image_id']}.png"
         image_crop_path = image_crop_dir / crop_name
@@ -366,12 +422,15 @@ def extract_image_level_roi_crops(
         result.at[index, 'roi_bbox_y0'] = y0
         result.at[index, 'roi_bbox_x1'] = x1
         result.at[index, 'roi_bbox_y1'] = y1
-        result.at[index, 'roi_area'] = int(component['area'])
+        result.at[index, 'roi_area'] = int(union['union_area'])
         result.at[index, 'roi_fill_fraction'] = fill_fraction
         result.at[index, 'roi_mean_intensity'] = (
             float(gray_crop[crop_mask > 0].mean()) if (crop_mask > 0).any() else 0.0
         )
         result.at[index, 'roi_openness_score'] = float(quant_metrics.openness_score)
+        result.at[index, 'roi_union_bbox_width'] = int(union['bbox_width'])
+        result.at[index, 'roi_union_bbox_height'] = int(union['bbox_height'])
+        result.at[index, 'roi_largest_component_area_fraction'] = float(union['largest_component_area_fraction'])
 
     result.to_csv(output_dir / 'roi_scored_examples.csv', index=False)
     return result
@@ -510,6 +569,268 @@ class OrdinalThresholdModel:
         return self.predict_proba(x).argmax(axis=1)
 
 
+def _save_preview_image(image: Image.Image, output_path: Path, max_side: int = 900) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    preview = image.copy()
+    preview.thumbnail((max_side, max_side))
+    preview.save(output_path)
+    return output_path
+
+
+def _render_mask_overlay(
+    raw_image_path: Path,
+    raw_mask_path: Path,
+    bbox: tuple[int, int, int, int],
+) -> Image.Image:
+    image = Image.open(raw_image_path).convert('RGB')
+    mask = np.array(Image.open(raw_mask_path).convert('L'))
+    image_array = np.array(image).astype(np.float32)
+    positive = mask > 0
+    overlay_color = np.array([255.0, 64.0, 64.0], dtype=np.float32)
+    image_array[positive] = 0.65 * image_array[positive] + 0.35 * overlay_color
+    overlay = Image.fromarray(np.clip(image_array, 0, 255).astype(np.uint8))
+
+    draw = ImageDraw.Draw(overlay)
+    draw.rectangle(bbox, outline=(32, 200, 255), width=4)
+    return overlay
+
+
+def _build_probability_rows(row: pd.Series) -> str:
+    rows: list[str] = []
+    for score in ALLOWED_SCORE_VALUES:
+        column = _score_probability_column_name(float(score))
+        probability = float(row.get(column, 0.0))
+        rows.append(
+            '<tr>'
+            f'<td>{escape(_score_label(float(score)))}</td>'
+            f'<td><div class="prob-bar"><span style="width:{probability * 100:.1f}%"></span></div></td>'
+            f'<td>{probability:.3f}</td>'
+            '</tr>'
+        )
+    return ''.join(rows)
+
+
+def _review_narrative(row: pd.Series) -> str:
+    return (
+        f"Prediction was {float(row['predicted_score']):.1f} against a true grade of {float(row['score']):.1f}. "
+        f"The full mask contained {int(row['roi_component_count'])} connected component(s) with fill fraction "
+        f"{float(row['roi_fill_fraction']):.3f} and openness score {float(row['roi_openness_score']):.3f}. "
+        "These are descriptive audit signals for review, not faithful feature attribution."
+    )
+
+
+def _select_review_examples(predictions_df: pd.DataFrame, max_examples: int = 7) -> pd.DataFrame:
+    if predictions_df.empty:
+        return predictions_df.copy()
+
+    work = predictions_df.copy()
+    selected: list[str] = []
+    selected_rows: list[pd.Series] = []
+
+    def take_rows(frame: pd.DataFrame, count: int, bucket: str) -> None:
+        nonlocal selected, selected_rows
+        for _, row in frame.iterrows():
+            key = str(row['subject_image_id'])
+            if key in selected:
+                continue
+            picked = row.copy()
+            picked['selection_bucket'] = bucket
+            selected_rows.append(picked)
+            selected.append(key)
+            if len(selected_rows) >= max_examples or sum(
+                1 for item in selected_rows if item['selection_bucket'] == bucket
+            ) >= count:
+                break
+
+    take_rows(
+        work.sort_values(['absolute_error', 'entropy', 'top_two_margin'], ascending=[False, False, True]),
+        count=2,
+        bucket='highest_error',
+    )
+    take_rows(
+        work.sort_values(['entropy', 'top_two_margin', 'absolute_error'], ascending=[False, True, False]),
+        count=2,
+        bucket='highest_uncertainty',
+    )
+    confident_correct = work[work['predicted_class'] == work['score_class']].sort_values(
+        ['top_two_margin', 'entropy'], ascending=[False, True]
+    )
+    take_rows(confident_correct, count=2, bucket='confident_correct')
+
+    midpoint = float(np.median(ALLOWED_SCORE_VALUES))
+    mid_range = work.assign(
+        distance_to_midpoint=np.abs(work['score'] - midpoint),
+        expected_distance_to_midpoint=np.abs(work['expected_score'] - midpoint),
+    ).sort_values(
+        ['distance_to_midpoint', 'expected_distance_to_midpoint', 'absolute_error', 'entropy'],
+        ascending=[True, True, True, True],
+    )
+    take_rows(mid_range, count=1, bucket='representative_mid_range')
+
+    if len(selected_rows) < min(max_examples, len(work)):
+        filler = work.sort_values(['absolute_error', 'entropy'], ascending=[False, False])
+        take_rows(filler, count=max_examples, bucket='additional_review_case')
+
+    selected_df = pd.DataFrame(selected_rows)
+    if selected_df.empty:
+        return work.head(min(max_examples, len(work))).copy()
+    return selected_df.head(min(max_examples, len(work))).reset_index(drop=True)
+
+
+def generate_html_review_report(
+    predictions_df: pd.DataFrame,
+    metrics_summary: dict[str, Any],
+    output_dir: Path,
+    max_examples: int = 7,
+) -> Dict[str, Path]:
+    output_dir = Path(output_dir)
+    assets_dir = output_dir / 'assets'
+    output_dir.mkdir(parents=True, exist_ok=True)
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    selected = _select_review_examples(predictions_df, max_examples=max_examples)
+    selected_path = output_dir / 'selected_examples.csv'
+    selected.to_csv(selected_path, index=False)
+
+    cards: list[str] = []
+    for example_index, row in selected.iterrows():
+        raw_image_path = Path(str(row['raw_image_path']))
+        raw_mask_path = Path(str(row['raw_mask_path']))
+        roi_image_path = Path(str(row['roi_image_path']))
+        bbox = (
+            int(row['roi_bbox_x0']),
+            int(row['roi_bbox_y0']),
+            int(row['roi_bbox_x1']),
+            int(row['roi_bbox_y1']),
+        )
+
+        raw_preview_path = assets_dir / f'example_{example_index:02d}_raw.png'
+        overlay_preview_path = assets_dir / f'example_{example_index:02d}_overlay.png'
+        roi_preview_path = assets_dir / f'example_{example_index:02d}_roi.png'
+
+        raw_image = Image.open(raw_image_path).convert('RGB')
+        raw_with_bbox = raw_image.copy()
+        raw_draw = ImageDraw.Draw(raw_with_bbox)
+        raw_draw.rectangle(bbox, outline=(32, 200, 255), width=4)
+        _save_preview_image(raw_with_bbox, raw_preview_path)
+        _save_preview_image(_render_mask_overlay(raw_image_path, raw_mask_path, bbox), overlay_preview_path)
+        _save_preview_image(Image.open(roi_image_path).convert('RGB'), roi_preview_path, max_side=500)
+
+        probability_rows = _build_probability_rows(row)
+        cards.append(
+            f"""
+            <section class="example-card">
+              <h2>{escape(str(row['subject_image_id']))} <span class="bucket">{escape(str(row['selection_bucket']))}</span></h2>
+              <div class="image-grid">
+                <figure>
+                  <img src="assets/{raw_preview_path.name}" alt="Raw image with ROI bounding box">
+                  <figcaption>Raw image with union ROI bounding box</figcaption>
+                </figure>
+                <figure>
+                  <img src="assets/{overlay_preview_path.name}" alt="Full mask overlay">
+                  <figcaption>Full multi-component mask overlay</figcaption>
+                </figure>
+                <figure>
+                  <img src="assets/{roi_preview_path.name}" alt="Union ROI crop">
+                  <figcaption>Union ROI crop used for embeddings</figcaption>
+                </figure>
+              </div>
+              <div class="summary-grid">
+                <div><strong>True grade</strong><span>{float(row['score']):.1f}</span></div>
+                <div><strong>Predicted grade</strong><span>{float(row['predicted_score']):.1f}</span></div>
+                <div><strong>Expected score</strong><span>{float(row['expected_score']):.3f}</span></div>
+                <div><strong>Absolute error</strong><span>{float(row['absolute_error']):.3f}</span></div>
+                <div><strong>Top-two margin</strong><span>{float(row['top_two_margin']):.3f}</span></div>
+                <div><strong>Entropy</strong><span>{float(row['entropy']):.3f}</span></div>
+              </div>
+              <p class="narrative">{escape(_review_narrative(row))}</p>
+              <div class="detail-grid">
+                <div>
+                  <h3>Class Probabilities</h3>
+                  <table>
+                    <thead><tr><th>Grade</th><th>Probability</th><th>Value</th></tr></thead>
+                    <tbody>{probability_rows}</tbody>
+                  </table>
+                </div>
+                <div>
+                  <h3>Audit Features</h3>
+                  <table>
+                    <tbody>
+                      <tr><th>Mask components</th><td>{int(row['roi_component_count'])}</td></tr>
+                      <tr><th>ROI area</th><td>{int(row['roi_area'])}</td></tr>
+                      <tr><th>Fill fraction</th><td>{float(row['roi_fill_fraction']):.3f}</td></tr>
+                      <tr><th>Mean intensity</th><td>{float(row['roi_mean_intensity']):.3f}</td></tr>
+                      <tr><th>Openness score</th><td>{float(row['roi_openness_score']):.3f}</td></tr>
+                      <tr><th>Union bbox</th><td>{int(row['roi_union_bbox_width'])} x {int(row['roi_union_bbox_height'])}</td></tr>
+                      <tr><th>Largest-component area fraction</th><td>{float(row['roi_largest_component_area_fraction']):.3f}</td></tr>
+                      <tr><th>ROI selection</th><td>{escape(str(row['roi_component_selection']))}</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+            """
+        )
+
+    overall = metrics_summary.get('overall', {})
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <title>Endotheliosis Review Report</title>
+      <style>
+        body {{ font-family: "Helvetica Neue", Arial, sans-serif; margin: 2rem auto; max-width: 1200px; color: #1f2933; background: #f7fafc; }}
+        h1, h2, h3 {{ color: #102a43; }}
+        .overall {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }}
+        .overall div, .summary-grid div {{ background: white; border-radius: 10px; padding: 0.85rem 1rem; box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08); }}
+        .overall strong, .summary-grid strong {{ display: block; font-size: 0.85rem; color: #486581; margin-bottom: 0.25rem; }}
+        .overall span, .summary-grid span {{ font-size: 1.1rem; font-weight: 600; }}
+        .note {{ background: #fff7e6; border-left: 4px solid #d9822b; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem; }}
+        .example-card {{ background: white; padding: 1.25rem; border-radius: 14px; margin-bottom: 1.25rem; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08); }}
+        .image-grid, .detail-grid, .summary-grid {{ display: grid; gap: 1rem; }}
+        .image-grid {{ grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 1rem; }}
+        .detail-grid {{ grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }}
+        img {{ width: 100%; height: auto; border-radius: 10px; border: 1px solid #d9e2ec; background: #f0f4f8; }}
+        figure {{ margin: 0; }}
+        figcaption {{ font-size: 0.85rem; color: #52606d; margin-top: 0.4rem; }}
+        table {{ width: 100%; border-collapse: collapse; }}
+        th, td {{ text-align: left; padding: 0.45rem 0.4rem; border-bottom: 1px solid #e5e7eb; font-size: 0.92rem; }}
+        .prob-bar {{ width: 100%; background: #e5e7eb; border-radius: 999px; height: 10px; overflow: hidden; }}
+        .prob-bar span {{ display: block; height: 100%; background: linear-gradient(90deg, #2cb1bc, #127fbf); }}
+        .bucket {{ font-size: 0.85rem; color: #486581; }}
+        .narrative {{ color: #334e68; line-height: 1.5; }}
+      </style>
+    </head>
+    <body>
+      <h1>Endotheliosis Example Review</h1>
+      <div class="note">
+        The model target is the Label Studio image-level grade attached to the full image/mask pair. Probabilities,
+        top-two margin, and entropy are confidence proxies for review. The audit features shown below are descriptive
+        context, not faithful feature attribution or mechanistic explanation.
+      </div>
+      <section class="overall">
+        <div><strong>Examples reviewed</strong><span>{len(selected)}</span></div>
+        <div><strong>Total examples</strong><span>{int(metrics_summary.get('n_examples', len(predictions_df)))}</span></div>
+        <div><strong>MAE</strong><span>{float(overall.get('mae', np.nan)):.3f}</span></div>
+        <div><strong>Accuracy</strong><span>{float(overall.get('accuracy', np.nan)):.3f}</span></div>
+        <div><strong>Within-one-bin</strong><span>{float(overall.get('within_one_bin_accuracy', np.nan)):.3f}</span></div>
+        <div><strong>Quadratic weighted kappa</strong><span>{float(overall.get('quadratic_weighted_kappa', np.nan)):.3f}</span></div>
+      </section>
+      {''.join(cards)}
+    </body>
+    </html>
+    """
+
+    html_path = output_dir / 'ordinal_review.html'
+    html_path.write_text(html, encoding='utf-8')
+    return {
+        'html': html_path,
+        'selected_examples': selected_path,
+        'assets_dir': assets_dir,
+    }
+
+
 def evaluate_embedding_table(embedding_df: pd.DataFrame, output_dir: Path, n_splits: int = 3) -> Dict[str, Path]:
     """Train and evaluate the first ordinal endotheliosis predictor."""
     output_dir = Path(output_dir)
@@ -540,13 +861,27 @@ def evaluate_embedding_table(embedding_df: pd.DataFrame, output_dir: Path, n_spl
         x_train = scaler.fit_transform(x[train_idx])
         x_test = scaler.transform(x[test_idx])
         model = OrdinalThresholdModel(n_classes=len(ALLOWED_SCORE_VALUES)).fit(x_train, y[train_idx])
-        pred_class = model.predict(x_test)
+        probabilities = model.predict_proba(x_test)
+        pred_class = probabilities.argmax(axis=1)
         pred_score = _class_index_to_score(pred_class)
         true_score = _class_index_to_score(y[test_idx])
-        fold_df = work_df.iloc[test_idx][['subject_image_id', 'subject_prefix', 'glomerulus_id', 'score']].copy()
+        expected_score = probabilities @ ALLOWED_SCORE_VALUES
+        sorted_probabilities = np.sort(probabilities, axis=1)
+        top_two_margin = sorted_probabilities[:, -1] - sorted_probabilities[:, -2]
+        entropy = _entropy(probabilities)
+
+        fold_df = work_df.iloc[test_idx].drop(columns=['score_class', *embedding_columns], errors='ignore').copy()
         fold_df['fold'] = fold_index
+        fold_df['score_class'] = y[test_idx]
         fold_df['predicted_score'] = pred_score
         fold_df['predicted_class'] = pred_class
+        fold_df['expected_score'] = expected_score
+        fold_df['top_two_margin'] = top_two_margin
+        fold_df['entropy'] = entropy
+        fold_df['absolute_error'] = np.abs(fold_df['score'].to_numpy(dtype=np.float64) - pred_score.astype(np.float64))
+        fold_df['prediction_error'] = pred_score.astype(np.float64) - fold_df['score'].to_numpy(dtype=np.float64)
+        for class_index, score_value in enumerate(ALLOWED_SCORE_VALUES):
+            fold_df[_score_probability_column_name(float(score_value))] = probabilities[:, class_index]
         predictions.append(fold_df)
 
         fold_metrics.append(
@@ -566,11 +901,14 @@ def evaluate_embedding_table(embedding_df: pd.DataFrame, output_dir: Path, n_spl
     predictions_path = output_dir / 'ordinal_predictions.csv'
     predictions_df.to_csv(predictions_path, index=False)
 
-    merged_predictions = predictions_df.merge(
-        work_df[['subject_image_id', 'glomerulus_id', 'score_class']],
-        on=['subject_image_id', 'glomerulus_id'],
-        how='left',
-    )
+    if 'score_class' in predictions_df.columns:
+        merged_predictions = predictions_df.copy()
+    else:
+        merged_predictions = predictions_df.merge(
+            work_df[['subject_image_id', 'glomerulus_id', 'score_class']],
+            on=['subject_image_id', 'glomerulus_id'],
+            how='left',
+        )
     confusion = confusion_matrix(
         merged_predictions['score_class'],
         merged_predictions['predicted_class'],
@@ -622,11 +960,20 @@ def evaluate_embedding_table(embedding_df: pd.DataFrame, output_dir: Path, n_spl
             handle,
         )
 
+    report_artifacts = generate_html_review_report(
+        predictions_df=predictions_df,
+        metrics_summary=summary,
+        output_dir=output_dir / 'review_report',
+    )
+
     return {
         'predictions': predictions_path,
         'confusion_matrix': confusion_path,
         'metrics': metrics_path,
         'model': model_path,
+        'review_html': report_artifacts['html'],
+        'review_examples': report_artifacts['selected_examples'],
+        'review_assets_dir': report_artifacts['assets_dir'],
     }
 
 
