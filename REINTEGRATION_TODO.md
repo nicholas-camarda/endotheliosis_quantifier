@@ -30,5 +30,7 @@
 ## Merge Preparation
 
 - [x] Reassess branch cleanliness and test coverage on `codex/reintegrate-recent-work`
-- [ ] Decide whether the branch is ready to merge back into `master`
+- [x] Fix stale output cleanup behavior to match the new run directory layout
+- [x] Add skip-friendly raw/derived data structure audit tests
+- [x] Decide whether the branch is ready to merge back into `master`
 - [ ] Push branch and prepare merge sequence once stable

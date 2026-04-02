@@ -1,6 +1,5 @@
-from __future__ import annotations
-
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from eq.data_management.output_manager import OutputManager
@@ -112,3 +111,27 @@ def test_output_manager_resolves_relative_base_dir_and_writes_clean_summary(tmp_
     assert "```json\n{\n  \"batch_size\": 4\n}\n```" in summary
     assert "```json\n{\n  \"dice\": 0.9\n}\n```" in summary
     assert "\n            ## Run Information" not in summary
+
+
+def test_output_manager_cleanup_uses_run_metadata_created_at(tmp_path):
+    manager = OutputManager(base_output_dir=str(tmp_path / "output"))
+
+    stale_dirs = manager.create_output_directory("Old Data")
+    fresh_dirs = manager.create_output_directory("New Data")
+
+    old_created_at = (datetime.now() - timedelta(days=45)).isoformat()
+    new_created_at = datetime.now().isoformat()
+
+    (stale_dirs["main"] / "run_metadata.json").write_text(
+        json.dumps({"created_at": old_created_at}, indent=2),
+        encoding="utf-8",
+    )
+    (fresh_dirs["main"] / "run_metadata.json").write_text(
+        json.dumps({"created_at": new_created_at}, indent=2),
+        encoding="utf-8",
+    )
+
+    manager.cleanup_old_runs(max_age_days=30)
+
+    assert not stale_dirs["main"].exists()
+    assert fresh_dirs["main"].exists()

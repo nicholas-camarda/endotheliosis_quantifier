@@ -2,7 +2,7 @@
 """Output directory management system for the endotheliosis quantifier pipeline."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
@@ -195,30 +195,51 @@ class OutputManager:
             max_age_days: Maximum age in days for output directories to keep
         """
         import shutil
-        from datetime import timedelta
-        
+
         cutoff_date = datetime.now() - timedelta(days=max_age_days)
         cleaned_count = 0
-        
+
+        if not self.base_output_dir.exists():
+            self.logger.info(f"Cleanup skipped: base output directory does not exist: {self.base_output_dir}")
+            return
+
         for output_dir in self.base_output_dir.iterdir():
-            if output_dir.is_dir():
-                # Try to extract timestamp from directory name
-                try:
-                    # Look for timestamp pattern YYYY-MM-DD_HHMMSS
-                    import re
-                    timestamp_match = re.search(r'(\d{4}-\d{2}-\d{2}_\d{6})', output_dir.name)
-                    if timestamp_match:
-                        timestamp_str = timestamp_match.group(1)
-                        dir_date = datetime.strptime(timestamp_str, '%Y-%m-%d_%H%M%S')
-                        
-                        if dir_date < cutoff_date:
-                            shutil.rmtree(output_dir)
-                            self.logger.info(f"Cleaned up old output directory: {output_dir}")
-                            cleaned_count += 1
-                except Exception as e:
-                    self.logger.warning(f"Could not parse timestamp for {output_dir}: {e}")
-        
+            if not output_dir.is_dir():
+                continue
+
+            dir_date = self._get_run_created_at(output_dir)
+            if dir_date is None:
+                continue
+
+            if dir_date < cutoff_date:
+                shutil.rmtree(output_dir)
+                self.logger.info(f"Cleaned up old output directory: {output_dir}")
+                cleaned_count += 1
+
         self.logger.info(f"Cleanup complete: removed {cleaned_count} old output directories")
+
+    def _get_run_created_at(self, output_dir: Path) -> Optional[datetime]:
+        """Return the recorded creation time for an output directory when available."""
+        metadata_file = output_dir / "run_metadata.json"
+        if metadata_file.exists():
+            try:
+                metadata = json.loads(metadata_file.read_text(encoding='utf-8'))
+                created_at = metadata.get("created_at")
+                if created_at:
+                    return datetime.fromisoformat(created_at)
+            except Exception as e:
+                self.logger.warning(f"Could not read metadata for {output_dir}: {e}")
+
+        try:
+            import re
+
+            timestamp_match = re.search(r'(\d{4}-\d{2}-\d{2}_\d{6})', output_dir.name)
+            if timestamp_match:
+                return datetime.strptime(timestamp_match.group(1), '%Y-%m-%d_%H%M%S')
+        except Exception as e:
+            self.logger.warning(f"Could not parse timestamp for {output_dir}: {e}")
+
+        return None
 
 
 def create_output_directories(
