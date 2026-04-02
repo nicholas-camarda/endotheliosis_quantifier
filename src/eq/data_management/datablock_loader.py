@@ -43,6 +43,32 @@ from eq.core.constants import (
 from eq.utils.logger import get_logger
 
 
+def default_get_y_path(x):
+    """Resolve a mask path for either patch datasets or full-image datasets."""
+    try:
+        return get_y_patch(x)
+    except FileNotFoundError:
+        return get_y_full(x)
+
+
+def default_get_y(x):
+    """Backward-compatible mask getter returning a loaded ``PILMask`` instance."""
+    return PILMask.create(default_get_y_path(x))
+
+
+def get_items_standard(path: Path) -> List[Any]:
+    """Support either image_patches/mask_patches or images/masks layouts."""
+    root = Path(path)
+    if (root / 'image_patches').exists():
+        return get_items_patches(root)
+    if (root / 'images').exists():
+        return get_items_full_images(root)
+
+    raise FileNotFoundError(
+        f"Expected either image_patches/ or images/ under {root}."
+    )
+
+
 def build_segmentation_datablock(
     codes: Optional[List[int]] = None,
     get_items: Optional[Callable[[Path], List[Any]]] = None,
@@ -73,14 +99,13 @@ def build_segmentation_datablock(
         codes = [0, 1]
     
     if get_items is None:
-        # Reuse centralized mask-path logic via get_y_patch; only items with resolvable masks are kept
-        get_items = get_items_patches
+        get_items = get_items_standard
 
     if splitter is None:
         splitter = RandomSplitter(valid_pct=DEFAULT_VAL_RATIO, seed=42)
     
     if get_y_func is None:
-        get_y_func = get_y_patch
+        get_y_func = default_get_y_path
 
     # Modern FastAI v2 best practices: augmentations in item_tfms, normalization in batch_tfms
     if item_tfms is None:
@@ -103,6 +128,7 @@ def build_segmentation_datablock(
             ),
             # Use ImageNet normalization - critical for transfer learning performance
             Normalize.from_stats(*imagenet_stats),
+            MaskPreprocessTransform(),
         ]
 
     # Use list for blocks parameter as expected by FastAI v2

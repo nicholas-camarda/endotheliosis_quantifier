@@ -1,73 +1,69 @@
-# Project data and outputs
+# OS / editor
 .DS_Store
-scripts_*/
-scripts/
+.cursor/
+.history/
+.vscode/
 .ipynb_checkpoints/
-data/
-test_output/
-docs/
-logs/
-test
-test_cache/
-earlier_models/
-output/
-models/
-scripts/
-github_repos/
-segment-anything/
-derived_data/
-raw_data/
-backup*
-archive/
+*.swp
+*.swo
 
-# Environments
-
-.env
-.venv/
-venv/
-env/
-
-# Python artifacts
+# Python caches and tooling
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-*.egg-info/
 *.egg
-
-# Model and large binary artifacts
-*.h5
-*.hdf5
-*.pkl
-*.pt
-*.pth
-*.npz
-*.npy
-
-# Logs and reports
-*.log
-htmlcov/
-.coverage
-.coverage.*
-.pytest_cache/
-.tox/
+*.egg-info/
+.mypy_cache/
 .nox/
+.pytest_cache/
+.ruff_cache/
+.tox/
 
-# Build/dist
+# Local environments
+.env
+.venv/
+env/
+venv/
+
+# Build / packaging
 .Python
 build/
 dist/
 *.manifest
 *.spec
 
-# Docs
+# Project data and generated artifacts
+archive/
+backup*/
+data/
+derived_data/
+earlier_models/
+github_repos/
+logs/
+models/
+output/
+raw_data/
+scripts/
+scripts_*/
+segment-anything/
+test_cache/
+test_output/
+
+# Large binary artifacts
+*.h5
+*.hdf5
+*.log
+*.npy
+*.npz
+*.pkl
+*.pt
+*.pth
+
+# Coverage / reports
+.coverage
+.coverage.*
+htmlcov/
+
+# Built docs
 docs/_build/
-
-# OS/editor
-*.swp
-*.swo
-*.
-
-# Exclude all hidden folders except .agent-os
-.*/
-!.agent-os/.agent-os/

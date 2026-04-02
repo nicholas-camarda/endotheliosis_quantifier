@@ -18,10 +18,6 @@ from eq.core.constants import DEFAULT_MASK_THRESHOLD, DEFAULT_IMAGE_SIZE
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from eq.pipeline.run_production_pipeline import run_pipeline
-from eq.data_management.metadata_processor import process_metadata_file
-from eq.utils.image_mask_vis import visualize_mask, visualize_image_mask_pair, visualize_batch_masks
-
 # Optional conda environment activation (opt-in via EQ_AUTO_CONDA=1)
 try:
     from eq import ensure_conda_environment
@@ -66,6 +62,27 @@ def auto_setup_environment():
 
 # Run automatic setup when module is imported
 _auto_mode_manager = auto_setup_environment()
+
+
+def _load_run_pipeline():
+    """Import the production pipeline only when a command actually needs it."""
+    from eq.pipeline.run_production_pipeline import run_pipeline
+
+    return run_pipeline
+
+
+def _load_process_metadata_file():
+    """Import metadata processing lazily to keep CLI startup lightweight."""
+    from eq.data_management.metadata_processor import process_metadata_file
+
+    return process_metadata_file
+
+
+def _load_visualizers():
+    """Import visualization helpers only when the visualize command is used."""
+    from eq.utils.image_mask_vis import visualize_batch_masks, visualize_image_mask_pair, visualize_mask
+
+    return visualize_mask, visualize_image_mask_pair, visualize_batch_masks
 
 
 # Functions needed for loading pre-trained models
@@ -590,6 +607,7 @@ def metadata_process_command(args):
     logger.info("🔄 Processing metadata file...")
 
     try:
+        process_metadata_file = _load_process_metadata_file()
         exported = process_metadata_file(
             input_file=args.input_file,
             output_dir=args.output_dir,
@@ -703,6 +721,7 @@ def visualize_command(args):
     logger = get_logger("eq.visualize")
     
     try:
+        visualize_mask, visualize_image_mask_pair, visualize_batch_masks = _load_visualizers()
         if args.batch:
             # Batch visualization
             output_path = visualize_batch_masks(
@@ -743,6 +762,7 @@ def pipeline_command(args):
     """Run the production inference pipeline."""
     logger = get_logger("eq.pipeline")
     logger.info("🔄 Starting end-to-end production inference...")
+    run_pipeline = _load_run_pipeline()
     
     # Auto-determine cache and output directories
     data_dir = args.data_dir
