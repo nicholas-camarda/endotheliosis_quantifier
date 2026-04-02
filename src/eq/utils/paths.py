@@ -6,6 +6,12 @@ import os
 from pathlib import Path
 from typing import List, Union
 
+DEFAULT_DATA_PATH = "data/raw_data"
+DEFAULT_OUTPUT_PATH = "data/derived_data"
+DEFAULT_CACHE_PATH = "data/derived_data/cache"
+DEFAULT_MODEL_PATH = "models"
+DEFAULT_LOGS_PATH = "logs"
+
 
 def get_repo_root() -> Path:
     """Return the repository root regardless of the current working directory."""
@@ -21,19 +27,19 @@ def _resolve_repo_path(raw_path: Union[str, Path]) -> Path:
 
 def ensure_directory(path: Union[str, Path]) -> Path:
     """Ensure a directory exists, creating it if necessary."""
-    path = Path(path)
+    path = _resolve_repo_path(path)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def get_data_path() -> Path:
     """Return the default raw-data directory for local training runs."""
-    return _resolve_repo_path(os.getenv('EQ_DATA_PATH', 'data/raw_data'))
+    return _resolve_repo_path(os.getenv('EQ_DATA_PATH', DEFAULT_DATA_PATH))
 
 
 def get_output_path() -> Path:
     """Return the default derived-data/output directory."""
-    return _resolve_repo_path(os.getenv('EQ_OUTPUT_PATH', 'data/derived_data'))
+    return _resolve_repo_path(os.getenv('EQ_OUTPUT_PATH', DEFAULT_OUTPUT_PATH))
 
 
 def get_cache_path() -> Path:
@@ -41,7 +47,20 @@ def get_cache_path() -> Path:
     cache_override = os.getenv('EQ_CACHE_PATH')
     if cache_override:
         return _resolve_repo_path(cache_override)
-    return get_output_path() / 'cache'
+    return _resolve_repo_path(DEFAULT_CACHE_PATH)
+
+
+def get_models_path() -> Path:
+    """Return the default model directory."""
+    return _resolve_repo_path(os.getenv('EQ_MODEL_PATH', DEFAULT_MODEL_PATH))
+
+
+def get_logs_path() -> Path:
+    """Return the default logs directory."""
+    log_override = os.getenv('EQ_LOG_PATH') or os.getenv('EQ_LOGS_PATH')
+    if log_override:
+        return _resolve_repo_path(log_override)
+    return _resolve_repo_path(DEFAULT_LOGS_PATH)
 
 
 def find_files(

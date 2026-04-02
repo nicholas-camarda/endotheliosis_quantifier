@@ -8,12 +8,19 @@ and integration with the dual-environment architecture.
 import json
 import logging
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
-from pathlib import Path
 
 from .mode_manager import EnvironmentMode, ModeConfig
+from .paths import (
+    get_cache_path,
+    get_data_path,
+    get_logs_path,
+    get_models_path,
+    get_output_path,
+    get_repo_root,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,20 +28,20 @@ logger = logging.getLogger(__name__)
 @dataclass
 class GlobalConfig:
     """Global configuration settings."""
-    
+
     # Paths
     # Raw inputs live here (unchanged originals)
-    data_path: str = "data/raw_data"
+    data_path: str = field(default_factory=lambda: str(get_data_path()))
     # All generated artifacts go here (processed data, patches, predictions)
-    output_path: str = "data/derived_data"
+    output_path: str = field(default_factory=lambda: str(get_output_path()))
     # Optional cache for intermediate pickles/npy files
-    cache_path: str = "data/derived_data/cache"
-    model_path: str = "models"
-    
+    cache_path: str = field(default_factory=lambda: str(get_cache_path()))
+    model_path: str = field(default_factory=lambda: str(get_models_path()))
+
     # Logging
     log_level: str = "INFO"
     log_file: Optional[str] = None
-    
+
     # Environment
     default_mode: str = "auto"
     config_file: str = "~/.eq/config.json"
@@ -118,17 +125,48 @@ class ConfigManager:
     
     def _load_global_config(self) -> GlobalConfig:
         """Load global configuration."""
-        # Check for environment variables first
-        config = GlobalConfig(
-            data_path=os.getenv("EQ_DATA_PATH", "data/raw_data"),
-            output_path=os.getenv("EQ_OUTPUT_PATH", "data/derived_data"),
-            cache_path=os.getenv("EQ_CACHE_PATH", "data/derived_data/cache"),
-            model_path=os.getenv("EQ_MODEL_PATH", "models"),
-            log_level=os.getenv("EQ_LOG_LEVEL", "INFO"),
-            default_mode=os.getenv("EQ_DEFAULT_MODE", "auto")
-        )
-        
+        config = GlobalConfig(log_file=str(get_logs_path() / "eq.log"))
+
+        if self.config_path.exists():
+            try:
+                with open(self.config_path, "r") as f:
+                    config_data = json.load(f)
+
+                for key, value in config_data.get("global", {}).items():
+                    if value is None or not hasattr(config, key):
+                        continue
+
+                    if key in {"data_path", "output_path", "cache_path", "model_path", "log_file"}:
+                        value = self._resolve_config_path(value)
+
+                    setattr(config, key, value)
+            except Exception as e:
+                logger.warning(f"Failed to load global configuration: {e}. Using defaults.")
+
+        if os.getenv("EQ_DATA_PATH"):
+            config.data_path = str(get_data_path())
+        if os.getenv("EQ_OUTPUT_PATH"):
+            config.output_path = str(get_output_path())
+        if os.getenv("EQ_CACHE_PATH"):
+            config.cache_path = str(get_cache_path())
+        if os.getenv("EQ_MODEL_PATH"):
+            config.model_path = str(get_models_path())
+        if os.getenv("EQ_LOG_PATH") or os.getenv("EQ_LOGS_PATH"):
+            config.log_file = str(get_logs_path() / "eq.log")
+        if os.getenv("EQ_LOG_LEVEL"):
+            config.log_level = os.getenv("EQ_LOG_LEVEL", config.log_level)
+        if os.getenv("EQ_DEFAULT_MODE"):
+            config.default_mode = os.getenv("EQ_DEFAULT_MODE", config.default_mode)
+
         return config
+
+    @staticmethod
+    def _resolve_config_path(raw_path: str) -> str:
+        """Resolve persisted config paths relative to the repository root."""
+        path = Path(raw_path).expanduser()
+        if path.is_absolute():
+            return str(path)
+        return str((get_repo_root() / path).resolve())
     
     def _load_mode_configs(self) -> Dict[str, ModeConfig]:
         """Load mode-specific configurations."""
