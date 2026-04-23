@@ -146,7 +146,16 @@ eq quant-endo \
   --output-dir output/quantification/<your_glomeruli_project>
 ```
 
-This path currently treats the Label Studio image-level grade as the supervised target for each image/mask pair. ROI extraction uses the full multi-component mask bounding box with context padding, then builds frozen segmentation-backbone embeddings and an ordinal prediction baseline.
+This path currently treats the Label Studio image-level grade as the supervised target for each image/mask pair. ROI extraction uses the full multi-component mask bounding box with context padding, then builds frozen segmentation-backbone embeddings and a canonical penalized multiclass ordinal baseline from `src/eq/quantification/ordinal.py`.
+
+The current local runtime audit cohort is numerically stable under that estimator, but it only populates scores `0.0`, `0.5`, `1.0`, and `1.5`. The pipeline therefore reports incomplete seven-bin target support until a richer scored cohort resolves the missing upper-score support. Treat the current outputs as a predictive audit baseline with explicit cohort-shape metadata, not as full target-support validation.
+
+Current ordinal implementation surfaces:
+
+- Canonical estimator surface: `src/eq/quantification/ordinal.py`
+- Orchestration caller: `src/eq/quantification/pipeline.py` via `evaluate_embedding_table()` and the contract-first quantification entrypoints
+- CLI entrypoint: `eq quant-endo`
+- Regression surfaces: `tests/unit/test_quantification_pipeline.py` and `tests/integration/test_local_runtime_quantification_pipeline.py`
 
 ## Useful Commands
 

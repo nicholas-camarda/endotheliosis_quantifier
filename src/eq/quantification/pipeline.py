@@ -14,8 +14,12 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 from PIL import Image, ImageDraw
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, cohen_kappa_score, confusion_matrix, mean_absolute_error
+from sklearn.metrics import (
+    accuracy_score,
+    cohen_kappa_score,
+    confusion_matrix,
+    mean_absolute_error,
+)
 from sklearn.model_selection import GroupKFold
 from sklearn.preprocessing import StandardScaler
 
@@ -38,6 +42,11 @@ from eq.quantification.labelstudio_scores import (
     recover_label_studio_score_table,
 )
 from eq.quantification.migration import generate_mapping_template, inventory_raw_project
+from eq.quantification.ordinal import (
+    NUMERICAL_INSTABILITY_PATTERNS,
+    CanonicalOrdinalClassifier,
+    build_grouped_ordinal_cohort_profile,
+)
 from eq.training.transfer_learning import _get_encoder_module
 from eq.utils.logger import get_logger
 
@@ -82,7 +91,9 @@ def _entropy(probabilities: np.ndarray) -> np.ndarray:
     return -(safe * np.log(safe)).sum(axis=1)
 
 
-def _find_canonical_path(root: Path, subject_image_id: str, is_mask: bool) -> Optional[Path]:
+def _find_canonical_path(
+    root: Path, subject_image_id: str, is_mask: bool
+) -> Optional[Path]:
     subject_dir = root / subject_prefix_from_subject_image_id(subject_image_id)
     if not subject_dir.exists():
         return None
@@ -101,15 +112,21 @@ def _threshold_mask(mask_array: np.ndarray) -> np.ndarray:
     return (mask_array > 127).astype(np.uint8)
 
 
-def _component_angle(center_x: float, center_y: float, centroid_x: float, centroid_y: float) -> float:
+def _component_angle(
+    center_x: float, center_y: float, centroid_x: float, centroid_y: float
+) -> float:
     dx = centroid_x - center_x
     dy = centroid_y - center_y
     return float((np.arctan2(-dx, -dy) + (2.0 * np.pi)) % (2.0 * np.pi))
 
 
-def _extract_components(mask_array: np.ndarray, min_area: int = 64) -> list[dict[str, Any]]:
+def _extract_components(
+    mask_array: np.ndarray, min_area: int = 64
+) -> list[dict[str, Any]]:
     binary = _threshold_mask(mask_array)
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        binary, connectivity=8
+    )
     height, width = binary.shape
     center_x = width / 2.0
     center_y = height / 2.0
@@ -131,19 +148,27 @@ def _extract_components(mask_array: np.ndarray, min_area: int = 64) -> list[dict
                 'area': int(area),
                 'centroid_x': float(centroid_x),
                 'centroid_y': float(centroid_y),
-                'distance_from_center': float(np.hypot(centroid_x - center_x, centroid_y - center_y)),
-                'angle_from_top_ccw': _component_angle(center_x, center_y, centroid_x, centroid_y),
+                'distance_from_center': float(
+                    np.hypot(centroid_x - center_x, centroid_y - center_y)
+                ),
+                'angle_from_top_ccw': _component_angle(
+                    center_x, center_y, centroid_x, centroid_y
+                ),
                 'mask': component_mask,
             }
         )
 
-    components.sort(key=lambda item: (item['angle_from_top_ccw'], item['distance_from_center']))
+    components.sort(
+        key=lambda item: (item['angle_from_top_ccw'], item['distance_from_center'])
+    )
     for rank, component in enumerate(components, start=1):
         component['glomerulus_id'] = rank
     return components
 
 
-def _build_union_mask(mask_array: np.ndarray, min_component_area: int = 64) -> dict[str, Any] | None:
+def _build_union_mask(
+    mask_array: np.ndarray, min_component_area: int = 64
+) -> dict[str, Any] | None:
     binary_mask = _threshold_mask(mask_array)
     if not binary_mask.any():
         return None
@@ -158,9 +183,15 @@ def _build_union_mask(mask_array: np.ndarray, min_component_area: int = 64) -> d
         selection = 'union_mask'
     else:
         union_mask = binary_mask
-        num_labels, _, stats, _ = cv2.connectedComponentsWithStats(binary_mask, connectivity=8)
+        num_labels, _, stats, _ = cv2.connectedComponentsWithStats(
+            binary_mask, connectivity=8
+        )
         component_count = max(0, int(num_labels) - 1)
-        largest_component_area = int(stats[1:, cv2.CC_STAT_AREA].max()) if num_labels > 1 else int(binary_mask.sum())
+        largest_component_area = (
+            int(stats[1:, cv2.CC_STAT_AREA].max())
+            if num_labels > 1
+            else int(binary_mask.sum())
+        )
         selection = 'union_mask_all_positive_fallback'
 
     ys, xs = np.where(union_mask > 0)
@@ -189,7 +220,9 @@ def _build_union_mask(mask_array: np.ndarray, min_component_area: int = 64) -> d
     }
 
 
-def build_scored_example_table(project_dir: Path, metadata_df: pd.DataFrame, output_dir: Path) -> pd.DataFrame:
+def build_scored_example_table(
+    project_dir: Path, metadata_df: pd.DataFrame, output_dir: Path
+) -> pd.DataFrame:
     """Join standardized metadata to canonical raw images and masks."""
     rows: list[dict[str, Any]] = []
     images_root = Path(project_dir) / 'images'
@@ -213,7 +246,9 @@ def build_scored_example_table(project_dir: Path, metadata_df: pd.DataFrame, out
         rows.append(
             {
                 'subject_image_id': subject_image_id,
-                'subject_prefix': subject_prefix_from_subject_image_id(subject_image_id),
+                'subject_prefix': subject_prefix_from_subject_image_id(
+                    subject_image_id
+                ),
                 'glomerulus_id': int(row.glomerulus_id),
                 'score': float(row.score),
                 'raw_image_path': str(image_path) if image_path else '',
@@ -223,16 +258,18 @@ def build_scored_example_table(project_dir: Path, metadata_df: pd.DataFrame, out
             }
         )
 
-    scored_table = pd.DataFrame(rows).sort_values(['subject_image_id', 'glomerulus_id']).reset_index(drop=True)
+    scored_table = (
+        pd.DataFrame(rows)
+        .sort_values(['subject_image_id', 'glomerulus_id'])
+        .reset_index(drop=True)
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     scored_table.to_csv(output_dir / 'scored_examples.csv', index=False)
     return scored_table
 
 
 def build_image_level_scored_example_table(
-    project_dir: Path,
-    score_table: pd.DataFrame,
-    output_dir: Path,
+    project_dir: Path, score_table: pd.DataFrame, output_dir: Path
 ) -> pd.DataFrame:
     """Create one scored example per raw image/mask pair from Label Studio-derived scores."""
     rows: list[dict[str, Any]] = []
@@ -240,7 +277,9 @@ def build_image_level_scored_example_table(
     for row in score_table.itertuples(index=False):
         join_status = str(row.join_status)
         score_status = str(row.score_status)
-        roi_status = 'pending' if join_status == 'ok' and score_status == 'ok' else 'join_failed'
+        roi_status = (
+            'pending' if join_status == 'ok' and score_status == 'ok' else 'join_failed'
+        )
         rows.append(
             {
                 'subject_image_id': str(row.image_stem),
@@ -257,7 +296,11 @@ def build_image_level_scored_example_table(
             }
         )
 
-    scored_table = pd.DataFrame(rows).sort_values(['subject_prefix', 'image_name']).reset_index(drop=True)
+    scored_table = (
+        pd.DataFrame(rows)
+        .sort_values(['subject_prefix', 'image_name'])
+        .reset_index(drop=True)
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     scored_table.to_csv(output_dir / 'scored_examples.csv', index=False)
     return scored_table
@@ -299,7 +342,9 @@ def extract_roi_crops(
         mask_array = np.array(Image.open(mask_path).convert('L'))
 
         components = _extract_components(mask_array, min_area=min_component_area)
-        component_by_id = {int(component['glomerulus_id']): component for component in components}
+        component_by_id = {
+            int(component['glomerulus_id']): component for component in components
+        }
 
         for index, scored_row in subject_rows.iterrows():
             glomerulus_id = int(scored_row['glomerulus_id'])
@@ -328,7 +373,9 @@ def extract_roi_crops(
 
             gray_crop = np.array(Image.fromarray(crop_image).convert('L'))
             quant_metrics = calculate_quantification_metrics(crop_mask, gray_crop)
-            fill_fraction = float((crop_mask > 0).sum() / crop_mask.size) if crop_mask.size else 0.0
+            fill_fraction = (
+                float((crop_mask > 0).sum() / crop_mask.size) if crop_mask.size else 0.0
+            )
 
             result.at[index, 'roi_status'] = 'ok'
             result.at[index, 'roi_image_path'] = str(image_crop_path)
@@ -405,7 +452,7 @@ def extract_image_level_roi_crops(
         crop_image = image_array[y0:y1, x0:x1]
         crop_mask = (union['mask'][y0:y1, x0:x1] * 255).astype(np.uint8)
 
-        crop_name = f"{scored_row['subject_image_id']}.png"
+        crop_name = f'{scored_row["subject_image_id"]}.png'
         image_crop_path = image_crop_dir / crop_name
         mask_crop_path = mask_crop_dir / crop_name
         Image.fromarray(crop_image).save(image_crop_path)
@@ -413,7 +460,9 @@ def extract_image_level_roi_crops(
 
         gray_crop = np.array(Image.fromarray(crop_image).convert('L'))
         quant_metrics = calculate_quantification_metrics(crop_mask, gray_crop)
-        fill_fraction = float((crop_mask > 0).sum() / crop_mask.size) if crop_mask.size else 0.0
+        fill_fraction = (
+            float((crop_mask > 0).sum() / crop_mask.size) if crop_mask.size else 0.0
+        )
 
         result.at[index, 'roi_status'] = 'ok'
         result.at[index, 'roi_image_path'] = str(image_crop_path)
@@ -430,7 +479,9 @@ def extract_image_level_roi_crops(
         result.at[index, 'roi_openness_score'] = float(quant_metrics.openness_score)
         result.at[index, 'roi_union_bbox_width'] = int(union['bbox_width'])
         result.at[index, 'roi_union_bbox_height'] = int(union['bbox_height'])
-        result.at[index, 'roi_largest_component_area_fraction'] = float(union['largest_component_area_fraction'])
+        result.at[index, 'roi_largest_component_area_fraction'] = float(
+            union['largest_component_area_fraction']
+        )
 
     result.to_csv(output_dir / 'roi_scored_examples.csv', index=False)
     return result
@@ -474,15 +525,21 @@ def extract_embedding_table(
     encoder = _get_encoder_module(learn.model)
     if encoder is None:
         raise RuntimeError('Could not resolve encoder module from segmentation learner')
-    encoder = _prepare_encoder_for_forward(encoder).to(next(learn.model.parameters()).device)
+    encoder = _prepare_encoder_for_forward(encoder).to(
+        next(learn.model.parameters()).device
+    )
     encoder.eval()
 
     device = next(learn.model.parameters()).device
     prediction_core = create_prediction_core(expected_size)
 
-    valid_rows = roi_table[roi_table['roi_status'] == 'ok'].copy().reset_index(drop=True)
+    valid_rows = (
+        roi_table[roi_table['roi_status'] == 'ok'].copy().reset_index(drop=True)
+    )
     if valid_rows.empty:
-        raise ContractPreparationError('No ROI crops were extracted successfully; cannot build embeddings')
+        raise ContractPreparationError(
+            'No ROI crops were extracted successfully; cannot build embeddings'
+        )
 
     embeddings: list[np.ndarray] = []
     for row in valid_rows.itertuples(index=False):
@@ -494,7 +551,9 @@ def extract_embedding_table(
         embeddings.append(pooled.flatten().detach().cpu().numpy().astype(np.float32))
 
     embedding_matrix = np.vstack(embeddings)
-    embedding_columns = [f'embedding_{index:04d}' for index in range(embedding_matrix.shape[1])]
+    embedding_columns = [
+        f'embedding_{index:04d}' for index in range(embedding_matrix.shape[1])
+    ]
     embedding_df = pd.concat(
         [
             valid_rows.reset_index(drop=True),
@@ -519,57 +578,9 @@ def extract_embedding_table(
     return embedding_df
 
 
-class OrdinalThresholdModel:
-    """Simple cumulative-threshold ordinal classifier built from binary logits."""
-
-    def __init__(self, n_classes: int) -> None:
-        if n_classes < 2:
-            raise ValueError('OrdinalThresholdModel requires at least two classes')
-        self.n_classes = n_classes
-        self.models: list[LogisticRegression | float] = []
-
-    def fit(self, x: np.ndarray, y: np.ndarray) -> 'OrdinalThresholdModel':
-        self.models = []
-        for threshold in range(self.n_classes - 1):
-            binary_target = (y > threshold).astype(int)
-            if binary_target.min() == binary_target.max():
-                self.models.append(float(binary_target[0]))
-                continue
-            model = LogisticRegression(max_iter=1000, class_weight='balanced')
-            model.fit(x, binary_target)
-            self.models.append(model)
-        return self
-
-    def predict_proba(self, x: np.ndarray) -> np.ndarray:
-        cumulative = []
-        for model in self.models:
-            if isinstance(model, float):
-                cumulative.append(np.full(shape=(x.shape[0],), fill_value=model, dtype=np.float64))
-            else:
-                cumulative.append(model.predict_proba(x)[:, 1])
-        cumulative_probs = np.vstack(cumulative).T if cumulative else np.empty((x.shape[0], 0), dtype=np.float64)
-
-        if cumulative_probs.size:
-            for column in range(1, cumulative_probs.shape[1]):
-                cumulative_probs[:, column] = np.minimum(
-                    cumulative_probs[:, column - 1], cumulative_probs[:, column]
-                )
-
-        probabilities = np.zeros((x.shape[0], self.n_classes), dtype=np.float64)
-        probabilities[:, 0] = 1.0 - cumulative_probs[:, 0]
-        for class_index in range(1, self.n_classes - 1):
-            probabilities[:, class_index] = cumulative_probs[:, class_index - 1] - cumulative_probs[:, class_index]
-        probabilities[:, -1] = cumulative_probs[:, -1]
-        probabilities = np.clip(probabilities, 0.0, 1.0)
-        row_sums = probabilities.sum(axis=1, keepdims=True)
-        row_sums[row_sums == 0.0] = 1.0
-        return probabilities / row_sums
-
-    def predict(self, x: np.ndarray) -> np.ndarray:
-        return self.predict_proba(x).argmax(axis=1)
-
-
-def _save_preview_image(image: Image.Image, output_path: Path, max_side: int = 900) -> Path:
+def _save_preview_image(
+    image: Image.Image, output_path: Path, max_side: int = 900
+) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     preview = image.copy()
     preview.thumbnail((max_side, max_side))
@@ -578,9 +589,7 @@ def _save_preview_image(image: Image.Image, output_path: Path, max_side: int = 9
 
 
 def _render_mask_overlay(
-    raw_image_path: Path,
-    raw_mask_path: Path,
-    bbox: tuple[int, int, int, int],
+    raw_image_path: Path, raw_mask_path: Path, bbox: tuple[int, int, int, int]
 ) -> Image.Image:
     image = Image.open(raw_image_path).convert('RGB')
     mask = np.array(Image.open(raw_mask_path).convert('L'))
@@ -612,14 +621,16 @@ def _build_probability_rows(row: pd.Series) -> str:
 
 def _review_narrative(row: pd.Series) -> str:
     return (
-        f"Prediction was {float(row['predicted_score']):.1f} against a true grade of {float(row['score']):.1f}. "
-        f"The full mask contained {int(row['roi_component_count'])} connected component(s) with fill fraction "
-        f"{float(row['roi_fill_fraction']):.3f} and openness score {float(row['roi_openness_score']):.3f}. "
-        "These are descriptive audit signals for review, not faithful feature attribution."
+        f'Prediction was {float(row["predicted_score"]):.1f} against a true grade of {float(row["score"]):.1f}. '
+        f'The full mask contained {int(row["roi_component_count"])} connected component(s) with fill fraction '
+        f'{float(row["roi_fill_fraction"]):.3f} and openness score {float(row["roi_openness_score"]):.3f}. '
+        'These are descriptive audit signals for review, not faithful feature attribution.'
     )
 
 
-def _select_review_examples(predictions_df: pd.DataFrame, max_examples: int = 7) -> pd.DataFrame:
+def _select_review_examples(
+    predictions_df: pd.DataFrame, max_examples: int = 7
+) -> pd.DataFrame:
     if predictions_df.empty:
         return predictions_df.copy()
 
@@ -637,24 +648,34 @@ def _select_review_examples(predictions_df: pd.DataFrame, max_examples: int = 7)
             picked['selection_bucket'] = bucket
             selected_rows.append(picked)
             selected.append(key)
-            if len(selected_rows) >= max_examples or sum(
-                1 for item in selected_rows if item['selection_bucket'] == bucket
-            ) >= count:
+            if (
+                len(selected_rows) >= max_examples
+                or sum(
+                    1 for item in selected_rows if item['selection_bucket'] == bucket
+                )
+                >= count
+            ):
                 break
 
     take_rows(
-        work.sort_values(['absolute_error', 'entropy', 'top_two_margin'], ascending=[False, False, True]),
+        work.sort_values(
+            ['absolute_error', 'entropy', 'top_two_margin'],
+            ascending=[False, False, True],
+        ),
         count=2,
         bucket='highest_error',
     )
     take_rows(
-        work.sort_values(['entropy', 'top_two_margin', 'absolute_error'], ascending=[False, True, False]),
+        work.sort_values(
+            ['entropy', 'top_two_margin', 'absolute_error'],
+            ascending=[False, True, False],
+        ),
         count=2,
         bucket='highest_uncertainty',
     )
-    confident_correct = work[work['predicted_class'] == work['score_class']].sort_values(
-        ['top_two_margin', 'entropy'], ascending=[False, True]
-    )
+    confident_correct = work[
+        work['predicted_class'] == work['score_class']
+    ].sort_values(['top_two_margin', 'entropy'], ascending=[False, True])
     take_rows(confident_correct, count=2, bucket='confident_correct')
 
     midpoint = float(np.median(ALLOWED_SCORE_VALUES))
@@ -662,13 +683,20 @@ def _select_review_examples(predictions_df: pd.DataFrame, max_examples: int = 7)
         distance_to_midpoint=np.abs(work['score'] - midpoint),
         expected_distance_to_midpoint=np.abs(work['expected_score'] - midpoint),
     ).sort_values(
-        ['distance_to_midpoint', 'expected_distance_to_midpoint', 'absolute_error', 'entropy'],
+        [
+            'distance_to_midpoint',
+            'expected_distance_to_midpoint',
+            'absolute_error',
+            'entropy',
+        ],
         ascending=[True, True, True, True],
     )
     take_rows(mid_range, count=1, bucket='representative_mid_range')
 
     if len(selected_rows) < min(max_examples, len(work)):
-        filler = work.sort_values(['absolute_error', 'entropy'], ascending=[False, False])
+        filler = work.sort_values(
+            ['absolute_error', 'entropy'], ascending=[False, False]
+        )
         take_rows(filler, count=max_examples, bucket='additional_review_case')
 
     selected_df = pd.DataFrame(selected_rows)
@@ -713,8 +741,13 @@ def generate_html_review_report(
         raw_draw = ImageDraw.Draw(raw_with_bbox)
         raw_draw.rectangle(bbox, outline=(32, 200, 255), width=4)
         _save_preview_image(raw_with_bbox, raw_preview_path)
-        _save_preview_image(_render_mask_overlay(raw_image_path, raw_mask_path, bbox), overlay_preview_path)
-        _save_preview_image(Image.open(roi_image_path).convert('RGB'), roi_preview_path, max_side=500)
+        _save_preview_image(
+            _render_mask_overlay(raw_image_path, raw_mask_path, bbox),
+            overlay_preview_path,
+        )
+        _save_preview_image(
+            Image.open(roi_image_path).convert('RGB'), roi_preview_path, max_side=500
+        )
 
         probability_rows = _build_probability_rows(row)
         cards.append(
@@ -831,12 +864,16 @@ def generate_html_review_report(
     }
 
 
-def evaluate_embedding_table(embedding_df: pd.DataFrame, output_dir: Path, n_splits: int = 3) -> Dict[str, Path]:
+def evaluate_embedding_table(
+    embedding_df: pd.DataFrame, output_dir: Path, n_splits: int = 3
+) -> Dict[str, Path]:
     """Train and evaluate the first ordinal endotheliosis predictor."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    embedding_columns = [column for column in embedding_df.columns if column.startswith('embedding_')]
+    embedding_columns = [
+        column for column in embedding_df.columns if column.startswith('embedding_')
+    ]
     if not embedding_columns:
         raise ValueError('Embedding table does not contain embedding columns')
 
@@ -846,31 +883,50 @@ def evaluate_embedding_table(embedding_df: pd.DataFrame, output_dir: Path, n_spl
     x = work_df[embedding_columns].to_numpy(dtype=np.float64)
     y = work_df['score_class'].to_numpy(dtype=np.int64)
     groups = work_df['subject_prefix'].astype(str).to_numpy()
+    class_indices = np.arange(len(ALLOWED_SCORE_VALUES), dtype=np.int64)
 
     unique_groups = np.unique(groups)
     split_count = min(max(2, n_splits), len(unique_groups))
     if split_count < 2:
-        raise ContractPreparationError('Need at least two subject groups for grouped evaluation')
+        raise ContractPreparationError(
+            'Need at least two subject groups for grouped evaluation'
+        )
 
     group_kfold = GroupKFold(n_splits=split_count)
     predictions: list[pd.DataFrame] = []
     fold_metrics: list[dict[str, Any]] = []
+    fold_warning_messages: list[dict[str, Any]] = []
+    cohort_profile = build_grouped_ordinal_cohort_profile(
+        y,
+        groups,
+        len(embedding_columns),
+        classes=class_indices,
+        score_values=ALLOWED_SCORE_VALUES,
+    )
 
-    for fold_index, (train_idx, test_idx) in enumerate(group_kfold.split(x, y, groups=groups), start=1):
+    for fold_index, (train_idx, test_idx) in enumerate(
+        group_kfold.split(x, y, groups=groups), start=1
+    ):
         scaler = StandardScaler()
         x_train = scaler.fit_transform(x[train_idx])
         x_test = scaler.transform(x[test_idx])
-        model = OrdinalThresholdModel(n_classes=len(ALLOWED_SCORE_VALUES)).fit(x_train, y[train_idx])
+        y_train = y[train_idx]
+        y_test = y[test_idx]
+        model = CanonicalOrdinalClassifier(classes=class_indices).fit(x_train, y_train)
         probabilities = model.predict_proba(x_test)
         pred_class = probabilities.argmax(axis=1)
         pred_score = _class_index_to_score(pred_class)
-        true_score = _class_index_to_score(y[test_idx])
+        true_score = _class_index_to_score(y_test)
         expected_score = probabilities @ ALLOWED_SCORE_VALUES
         sorted_probabilities = np.sort(probabilities, axis=1)
         top_two_margin = sorted_probabilities[:, -1] - sorted_probabilities[:, -2]
         entropy = _entropy(probabilities)
 
-        fold_df = work_df.iloc[test_idx].drop(columns=['score_class', *embedding_columns], errors='ignore').copy()
+        fold_df = (
+            work_df.iloc[test_idx]
+            .drop(columns=['score_class', *embedding_columns], errors='ignore')
+            .copy()
+        )
         fold_df['fold'] = fold_index
         fold_df['score_class'] = y[test_idx]
         fold_df['predicted_score'] = pred_score
@@ -878,10 +934,16 @@ def evaluate_embedding_table(embedding_df: pd.DataFrame, output_dir: Path, n_spl
         fold_df['expected_score'] = expected_score
         fold_df['top_two_margin'] = top_two_margin
         fold_df['entropy'] = entropy
-        fold_df['absolute_error'] = np.abs(fold_df['score'].to_numpy(dtype=np.float64) - pred_score.astype(np.float64))
-        fold_df['prediction_error'] = pred_score.astype(np.float64) - fold_df['score'].to_numpy(dtype=np.float64)
+        fold_df['absolute_error'] = np.abs(
+            fold_df['score'].to_numpy(dtype=np.float64) - pred_score.astype(np.float64)
+        )
+        fold_df['prediction_error'] = pred_score.astype(np.float64) - fold_df[
+            'score'
+        ].to_numpy(dtype=np.float64)
         for class_index, score_value in enumerate(ALLOWED_SCORE_VALUES):
-            fold_df[_score_probability_column_name(float(score_value))] = probabilities[:, class_index]
+            fold_df[_score_probability_column_name(float(score_value))] = probabilities[
+                :, class_index
+            ]
         predictions.append(fold_df)
 
         fold_metrics.append(
@@ -889,11 +951,28 @@ def evaluate_embedding_table(embedding_df: pd.DataFrame, output_dir: Path, n_spl
                 'fold': fold_index,
                 'num_examples': int(len(test_idx)),
                 'mae': float(mean_absolute_error(true_score, pred_score)),
-                'accuracy': float(accuracy_score(y[test_idx], pred_class)),
-                'within_one_bin_accuracy': float(np.mean(np.abs(y[test_idx] - pred_class) <= 1)),
-                'quadratic_weighted_kappa': float(
-                    cohen_kappa_score(y[test_idx], pred_class, weights='quadratic')
+                'accuracy': float(accuracy_score(y_test, pred_class)),
+                'within_one_bin_accuracy': float(
+                    np.mean(np.abs(y_test - pred_class) <= 1)
                 ),
+                'quadratic_weighted_kappa': float(
+                    cohen_kappa_score(y_test, pred_class, weights='quadratic')
+                ),
+            }
+        )
+        fold_warning_messages.append(
+            {
+                'fold': int(fold_index),
+                'messages': model.warning_messages_,
+                'train_class_counts': model.training_class_counts_,
+                'test_class_counts': {
+                    str(int(class_index)): int(np.sum(y_test == class_index))
+                    for class_index in class_indices
+                },
+                'train_threshold_positive_counts': {
+                    f'>{int(class_index)}': int(np.sum(y_train > class_index))
+                    for class_index in class_indices[:-1]
+                },
             }
         )
 
@@ -928,12 +1007,25 @@ def evaluate_embedding_table(embedding_df: pd.DataFrame, output_dir: Path, n_spl
         'n_splits': int(split_count),
         'fold_metrics': fold_metrics,
         'overall': {
-            'mae': float(mean_absolute_error(predictions_df['score'], predictions_df['predicted_score'])),
+            'mae': float(
+                mean_absolute_error(
+                    predictions_df['score'], predictions_df['predicted_score']
+                )
+            ),
             'accuracy': float(
-                accuracy_score(merged_predictions['score_class'], merged_predictions['predicted_class'])
+                accuracy_score(
+                    merged_predictions['score_class'],
+                    merged_predictions['predicted_class'],
+                )
             ),
             'within_one_bin_accuracy': float(
-                np.mean(np.abs(merged_predictions['score_class'] - merged_predictions['predicted_class']) <= 1)
+                np.mean(
+                    np.abs(
+                        merged_predictions['score_class']
+                        - merged_predictions['predicted_class']
+                    )
+                    <= 1
+                )
             ),
             'quadratic_weighted_kappa': float(
                 cohen_kappa_score(
@@ -944,10 +1036,45 @@ def evaluate_embedding_table(embedding_df: pd.DataFrame, output_dir: Path, n_spl
             ),
         },
     }
-    metrics_path = _save_json(summary, output_dir / 'ordinal_metrics.json')
 
     scaler = StandardScaler().fit(x)
-    final_model = OrdinalThresholdModel(n_classes=len(ALLOWED_SCORE_VALUES)).fit(scaler.transform(x), y)
+    final_model = CanonicalOrdinalClassifier(classes=class_indices).fit(
+        scaler.transform(x), y
+    )
+    combined_warning_messages = list(
+        dict.fromkeys(
+            [
+                *[
+                    message
+                    for fold_entry in fold_warning_messages
+                    for message in fold_entry['messages']
+                ],
+                *final_model.warning_messages_,
+            ]
+        )
+    )
+    full_target_class_support = all(
+        int(count) > 0 for count in cohort_profile['class_counts'].values()
+    )
+    certification_blockers: list[str] = []
+    if combined_warning_messages:
+        certification_blockers.append('numerical_instability')
+    if not full_target_class_support:
+        certification_blockers.append('missing_target_class_support')
+    summary['ordinal_model'] = final_model.metadata()
+    summary['cohort_profile'] = cohort_profile
+    summary['stability'] = {
+        'warning_patterns': list(NUMERICAL_INSTABILITY_PATTERNS),
+        'fold_warning_messages': fold_warning_messages,
+        'final_model_warning_messages': final_model.warning_messages_,
+        'zero_unresolved_warning_gate_passed': not combined_warning_messages,
+        'full_target_class_support': full_target_class_support,
+        'certification_status': (
+            'supported' if not certification_blockers else 'incomplete'
+        ),
+        'certification_blockers': certification_blockers,
+    }
+    metrics_path = _save_json(summary, output_dir / 'ordinal_metrics.json')
     model_path = output_dir / 'ordinal_embedding_model.pkl'
     with model_path.open('wb') as handle:
         pickle.dump(
@@ -956,6 +1083,7 @@ def evaluate_embedding_table(embedding_df: pd.DataFrame, output_dir: Path, n_spl
                 'embedding_columns': embedding_columns,
                 'scaler': scaler,
                 'model': final_model,
+                'model_metadata': final_model.metadata(),
             },
             handle,
         )
@@ -1021,9 +1149,13 @@ def run_contract_first_quantification(
             output_dir=output_dir / 'labelstudio_scores',
         )
         score_table = pd.read_csv(score_outputs['scores'])
-        validation_summary = json.loads(score_outputs['summary'].read_text(encoding='utf-8'))
+        validation_summary = json.loads(
+            score_outputs['summary'].read_text(encoding='utf-8')
+        )
         if validation_summary.get('join_status_counts', {}).get('ok', 0) == 0:
-            raise ContractPreparationError('No scored image/mask pairs joined successfully from the Label Studio export')
+            raise ContractPreparationError(
+                'No scored image/mask pairs joined successfully from the Label Studio export'
+            )
 
         scored_table = build_image_level_scored_example_table(
             project_dir=project_dir,
@@ -1037,10 +1169,14 @@ def run_contract_first_quantification(
                 'labelstudio_scores': score_outputs['scores'],
                 'labelstudio_summary': score_outputs['summary'],
                 'duplicate_annotations': score_outputs['duplicates'],
-                'scored_examples': output_dir / 'scored_examples' / 'scored_examples.csv',
+                'scored_examples': output_dir
+                / 'scored_examples'
+                / 'scored_examples.csv',
             }
 
-        roi_table = extract_image_level_roi_crops(scored_table, output_dir / 'roi_crops')
+        roi_table = extract_image_level_roi_crops(
+            scored_table, output_dir / 'roi_crops'
+        )
         if stop_after == 'roi':
             return {
                 'raw_inventory': inventory_path,
@@ -1067,7 +1203,9 @@ def run_contract_first_quantification(
                 'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
             }
 
-        model_artifacts = evaluate_embedding_table(embedding_table, output_dir / 'ordinal_model')
+        model_artifacts = evaluate_embedding_table(
+            embedding_table, output_dir / 'ordinal_model'
+        )
         return {
             'raw_inventory': inventory_path,
             'mapping_template': mapping_template_path,
@@ -1087,11 +1225,12 @@ def run_contract_first_quantification(
     metadata_output_dir = output_dir / 'metadata'
     processor = MetadataProcessor()
     metadata_df = processor.process_glomeruli_scoring_matrix(
-        metadata_file,
-        output_path=metadata_output_dir / 'standardized_metadata.csv',
+        metadata_file, output_path=metadata_output_dir / 'standardized_metadata.csv'
     )
 
-    migration_plan = build_migration_plan(project_dir, metadata_df, mapping_file=mapping_file)
+    migration_plan = build_migration_plan(
+        project_dir, metadata_df, mapping_file=mapping_file
+    )
     migration_plan_path = output_dir / 'contract_migration_plan.csv'
     migration_plan.to_csv(migration_plan_path, index=False)
 
@@ -1100,8 +1239,12 @@ def run_contract_first_quantification(
         migration_plan_path = output_dir / 'contract_migration_applied.csv'
         migration_plan.to_csv(migration_plan_path, index=False)
 
-    validation_report = validate_project_contract(project_dir, metadata_df, require_canonical=True)
-    validation_path = save_contract_report(validation_report, output_dir / 'canonical_contract_validation.json')
+    validation_report = validate_project_contract(
+        project_dir, metadata_df, require_canonical=True
+    )
+    validation_path = save_contract_report(
+        validation_report, output_dir / 'canonical_contract_validation.json'
+    )
 
     if validation_report['overall_status'] != 'PASS':
         unresolved = migration_plan[
@@ -1115,14 +1258,22 @@ def run_contract_first_quantification(
                 }
             )
         ]
-        logger.error('Canonical contract validation failed; see %s and %s', migration_plan_path, validation_path)
+        logger.error(
+            'Canonical contract validation failed; see %s and %s',
+            migration_plan_path,
+            validation_path,
+        )
         if not unresolved.empty:
-            unresolved.to_csv(output_dir / 'canonical_contract_unresolved.csv', index=False)
+            unresolved.to_csv(
+                output_dir / 'canonical_contract_unresolved.csv', index=False
+            )
         raise ContractPreparationError(
             'Canonical contract validation failed. Review the migration report and unresolved rows before ROI extraction.'
         )
 
-    scored_table = build_scored_example_table(project_dir, metadata_df, output_dir / 'scored_examples')
+    scored_table = build_scored_example_table(
+        project_dir, metadata_df, output_dir / 'scored_examples'
+    )
     if stop_after == 'contract':
         return {
             'raw_inventory': inventory_path,
@@ -1160,7 +1311,9 @@ def run_contract_first_quantification(
             'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
         }
 
-    model_artifacts = evaluate_embedding_table(embedding_table, output_dir / 'ordinal_model')
+    model_artifacts = evaluate_embedding_table(
+        embedding_table, output_dir / 'ordinal_model'
+    )
     return {
         'raw_inventory': inventory_path,
         'mapping_template': mapping_template_path,
@@ -1219,9 +1372,7 @@ def prepare_quantification_contract(
         )
         score_table = pd.read_csv(score_outputs['scores'])
         scored_table = build_image_level_scored_example_table(
-            raw_project_dir,
-            score_table,
-            output_dir / 'scored_examples',
+            raw_project_dir, score_table, output_dir / 'scored_examples'
         )
         return {
             'raw_inventory': inventory_path,
@@ -1235,11 +1386,12 @@ def prepare_quantification_contract(
     metadata_output_dir = output_dir / 'metadata'
     processor = MetadataProcessor()
     metadata_df = processor.process_glomeruli_scoring_matrix(
-        metadata_path,
-        output_path=metadata_output_dir / 'standardized_metadata.csv',
+        metadata_path, output_path=metadata_output_dir / 'standardized_metadata.csv'
     )
 
-    migration_plan = build_migration_plan(raw_project_dir, metadata_df, mapping_file=mapping_file)
+    migration_plan = build_migration_plan(
+        raw_project_dir, metadata_df, mapping_file=mapping_file
+    )
     migration_plan_path = output_dir / 'contract_migration_plan.csv'
     migration_plan.to_csv(migration_plan_path, index=False)
 
@@ -1248,9 +1400,15 @@ def prepare_quantification_contract(
         migration_plan_path = output_dir / 'contract_migration_applied.csv'
         applied_plan.to_csv(migration_plan_path, index=False)
 
-    validation_report = validate_project_contract(raw_project_dir, metadata_df, require_canonical=True)
-    validation_path = save_contract_report(validation_report, output_dir / 'canonical_contract_validation.json')
-    scored_table = build_scored_example_table(raw_project_dir, metadata_df, output_dir / 'scored_examples')
+    validation_report = validate_project_contract(
+        raw_project_dir, metadata_df, require_canonical=True
+    )
+    validation_path = save_contract_report(
+        validation_report, output_dir / 'canonical_contract_validation.json'
+    )
+    scored_table = build_scored_example_table(
+        raw_project_dir, metadata_df, output_dir / 'scored_examples'
+    )
 
     outputs: Dict[str, Path] = {
         'raw_inventory': inventory_path,
@@ -1276,7 +1434,9 @@ def prepare_quantification_contract(
         unresolved.to_csv(unresolved_path, index=False)
         outputs['unresolved'] = unresolved_path
     if not scored_table.empty:
-        outputs['scored_examples'] = output_dir / 'scored_examples' / 'scored_examples.csv'
+        outputs['scored_examples'] = (
+            output_dir / 'scored_examples' / 'scored_examples.csv'
+        )
     return outputs
 
 
@@ -1305,13 +1465,17 @@ def run_endotheliosis_scoring_pipeline(
     )
 
     if 'validation' in contract_outputs:
-        validation = json.loads(Path(contract_outputs['validation']).read_text(encoding='utf-8'))
+        validation = json.loads(
+            Path(contract_outputs['validation']).read_text(encoding='utf-8')
+        )
         if validation.get('overall_status') != 'PASS':
             raise ContractPreparationError(
                 'Canonical contract validation failed. Review the migration plan, validation report, and unresolved rows first.'
             )
     elif 'labelstudio_summary' in contract_outputs:
-        summary = json.loads(Path(contract_outputs['labelstudio_summary']).read_text(encoding='utf-8'))
+        summary = json.loads(
+            Path(contract_outputs['labelstudio_summary']).read_text(encoding='utf-8')
+        )
         if summary.get('join_status_counts', {}).get('ok', 0) == 0:
             raise ContractPreparationError(
                 'Label Studio score recovery did not produce any joined scored image/mask pairs.'

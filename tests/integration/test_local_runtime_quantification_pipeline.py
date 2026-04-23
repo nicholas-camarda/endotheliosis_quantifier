@@ -102,7 +102,21 @@ def test_local_runtime_contract_first_quantification_pipeline(tmp_path: Path):
 
     metrics = json.loads(outputs['metrics'].read_text(encoding='utf-8'))
     assert metrics['n_examples'] == len(embeddings)
-    assert metrics['n_subject_groups'] >= 2
+    assert metrics['n_subject_groups'] == 8
+    assert metrics['ordinal_model']['estimator_class'] == 'CanonicalOrdinalClassifier'
+    assert metrics['cohort_profile']['n_examples'] == 88
+    assert metrics['cohort_profile']['embedding_dim'] == len(embedding_columns)
+    assert metrics['stability']['zero_unresolved_warning_gate_passed'] is True
+    assert metrics['stability']['full_target_class_support'] is False
+    assert metrics['stability']['certification_status'] == 'incomplete'
+    assert (
+        'missing_target_class_support' in metrics['stability']['certification_blockers']
+    )
+    assert metrics['stability']['final_model_warning_messages'] == []
+    assert all(
+        fold_entry['messages'] == []
+        for fold_entry in metrics['stability']['fold_warning_messages']
+    )
 
     review_examples = pd.read_csv(outputs['review_examples'])
     assert len(review_examples) > 0
