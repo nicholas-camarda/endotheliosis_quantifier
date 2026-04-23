@@ -37,10 +37,10 @@ The current branch baseline matches the main repository docs:
 
 For the higher-level repo orientation, see:
 
-- [README.md](/home/ncamarda/endotheliosis_quantifier/README.md)
-- [ONBOARDING_GUIDE.md](/home/ncamarda/endotheliosis_quantifier/docs/ONBOARDING_GUIDE.md)
-- [OUTPUT_STRUCTURE.md](/home/ncamarda/endotheliosis_quantifier/docs/OUTPUT_STRUCTURE.md)
-- [SEGMENTATION_ENGINEERING_GUIDE.md](/home/ncamarda/endotheliosis_quantifier/docs/SEGMENTATION_ENGINEERING_GUIDE.md)
+- [README.md](../README.md)
+- [ONBOARDING_GUIDE.md](ONBOARDING_GUIDE.md)
+- [OUTPUT_STRUCTURE.md](OUTPUT_STRUCTURE.md)
+- [SEGMENTATION_ENGINEERING_GUIDE.md](SEGMENTATION_ENGINEERING_GUIDE.md)
 
 ## Repository Layout
 
@@ -62,7 +62,7 @@ endotheliosis_quantifier/
 └── tests/
 ```
 
-Path defaults are defined in [`src/eq/utils/paths.py`](/home/ncamarda/endotheliosis_quantifier/src/eq/utils/paths.py):
+Path defaults are defined in [`src/eq/utils/paths.py`](../src/eq/utils/paths.py):
 
 - raw data: `data/raw_data`
 - derived data: `data/derived_data`
@@ -167,7 +167,7 @@ The current branch follows a consistent binary segmentation contract:
 - masks normalized to `0/1`
 - FastAI default loss selection retained for this output format
 
-This aligns with the engineering guidance in [SEGMENTATION_ENGINEERING_GUIDE.md](/home/ncamarda/endotheliosis_quantifier/docs/SEGMENTATION_ENGINEERING_GUIDE.md).
+This aligns with the engineering guidance in [SEGMENTATION_ENGINEERING_GUIDE.md](SEGMENTATION_ENGINEERING_GUIDE.md).
 
 ### Model Choice
 
@@ -339,7 +339,7 @@ eq metadata-process \
 
 ### What Exists
 
-The current `master` branch now contains a maintained baseline quantification path under [`src/eq/quantification/pipeline.py`](/home/ncamarda/endotheliosis_quantifier/src/eq/quantification/pipeline.py) plus supporting contract and score-recovery utilities.
+The current `master` branch now contains a maintained baseline quantification path under [`src/eq/quantification/pipeline.py`](../src/eq/quantification/pipeline.py) plus supporting contract and score-recovery utilities.
 
 What exists today:
 
@@ -351,7 +351,7 @@ What exists today:
 - grouped ordinal image-level endotheliosis prediction
 - prediction exports with class probabilities, expected score, top-two margin, and entropy
 - an HTML review artifact with selected example cases
-- the older openness heuristic in [`src/eq/evaluation/quantification_metrics.py`](/home/ncamarda/endotheliosis_quantifier/src/eq/evaluation/quantification_metrics.py), now best treated as an audit feature rather than the primary learned model
+- the older openness heuristic in [`src/eq/evaluation/quantification_metrics.py`](../src/eq/evaluation/quantification_metrics.py), now best treated as an audit feature rather than the primary learned model
 
 ### What Does Not Yet Exist As A Matured Workflow
 

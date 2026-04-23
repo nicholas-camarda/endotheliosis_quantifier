@@ -2,8 +2,8 @@
 
 Endotheliosis Quantifier (`eq`) is a FastAI/PyTorch project for binary segmentation workflows around glomeruli histology and mitochondria pretraining, plus a maintained Label Studio-first image-level endotheliosis scoring baseline. This repository is currently maintained as a WSL-first development environment with local GPU training, local data directories, and Git-tracked code/config only.
 
-If you want the friendlier long-form introduction and workflow explanation, see [docs/ONBOARDING_GUIDE.md](/home/ncamarda/endotheliosis_quantifier/docs/ONBOARDING_GUIDE.md).
-For the full curated documentation set, see [docs/README.md](/home/ncamarda/endotheliosis_quantifier/docs/README.md).
+If you want the friendlier long-form introduction and workflow explanation, see [docs/ONBOARDING_GUIDE.md](docs/ONBOARDING_GUIDE.md).
+For the full curated documentation set, see [docs/README.md](docs/README.md).
 
 ## Current Baseline
 

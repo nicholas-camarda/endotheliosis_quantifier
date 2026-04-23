@@ -1,0 +1,35 @@
+schema: spec-driven
+
+context: |
+  Endotheliosis Quantifier is a Python package under src/eq with the eq CLI as the supported interface.
+  Local development is WSL/CUDA-first, while this checkout may expose raw_data, derived_data, models, logs, and output as symlinks to OneDrive or ProjectsRuntime.
+  Git-tracked code and configs must stay separate from raw data, derived data, trained models, logs, and generated quantification outputs.
+  Path defaults and environment overrides are centralized in src/eq/utils/paths.py.
+  Quantification uses Label Studio image-level grades joined to image/mask pairs with full multi-component union ROI semantics.
+  Method changes must distinguish segmentation behavior, embedding/ordinal prediction behavior, and scientific interpretation.
+  Supported segmentation model artifacts must be current-namespace exports that load in the current certified environment without legacy pickle namespace shims.
+  Legacy FastAI pickle artifacts that reference removed project modules, old FastAI transform namespaces, or incompatible NumPy pickle namespaces are historical artifacts unless a separate compatibility change explicitly supports them.
+  Model artifact provenance must identify the training command, code version, package versions, data root, and training mode before an artifact is used as a supported runtime dependency.
+  MPS execution, model pickle loading, and contract-first pipeline completion are compatibility evidence only; they do not by themselves promote a segmentation model for scientific use.
+  Promoted glomeruli segmentation artifacts require a current-namespace model, training-data background/negative coverage, validation metrics, and non-degenerate prediction review evidence.
+
+rules:
+  proposal:
+    - Identify affected src/eq modules, CLI commands, configs, tests, and artifact directories.
+    - Call out changes to data contracts, path resolution, storage boundaries, or generated output schemas.
+    - Distinguish legacy model artifacts, compatibility artifacts, supported runtime artifacts, and scientifically promoted artifacts.
+    - Separate descriptive, associational, causal, and predictive/prognostic claims.
+    - State compatibility risks for existing local data, model files, and quantification outputs.
+  specs:
+    - Use current repository terminology for segmentation, Label Studio scores, union ROIs, embeddings, and ordinal outputs.
+    - Describe observable behavior in concrete repo, runtime-output, and published-artifact terms.
+    - Mark missing data, unverified assumptions, and external-validity limits explicitly.
+  design:
+    - Reuse existing path helpers, CLI loaders, data-contract utilities, and quantification modules before adding abstractions.
+    - Describe data flow and artifact flow across raw data, derived data, models, logs, and output.
+    - Do not make tests depend on legacy FastAI pickle artifacts unless the change is explicitly about legacy artifact compatibility.
+    - Include failure modes that could silently change labels, masks, ROI geometry, embeddings, metrics, or review artifacts.
+    - Treat positive-only patch sampling, all-foreground/all-background masks, flat validation curves, and degenerate prediction grids as model-promotion blockers.
+  tasks:
+    - Break work into small reviewable steps with implementation, tests, and docs/config updates when behavior changes.
+    - Include validation commands covering imports, relevant CLI paths, unit tests, and any changed OpenSpec artifacts.

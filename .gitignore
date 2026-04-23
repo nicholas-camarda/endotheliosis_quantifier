@@ -34,7 +34,7 @@ dist/
 *.spec
 
 # Project data and generated artifacts
-archive/
+/archive/
 backup*/
 data/
 derived_data/
@@ -68,3 +68,6 @@ htmlcov/
 
 # Built docs
 docs/_build/
+
+.codex/
+AGENTS.md

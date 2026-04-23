@@ -99,6 +99,8 @@ def get_y_patch(x):
     Naming patterns tried:
       - `mask_patches/<rel>/<stem>_mask<image_ext>`
       - `mask_patches/<rel>/<stem>_mask.png` (when the image is JPEG)
+      - `mask_patches/<rel>/<stem><image_ext>` for paired patch datasets
+        where image and mask filenames match exactly
       - Additional common raster extensions and analogous paths under `masks/`.
 
     Returns a Path or raises FileNotFoundError if no mask is found.
@@ -146,11 +148,14 @@ def get_y_patch(x):
     if str(rel) != "." and str(rel) != "":
         cand_dirs = [mask_root / rel, masks_alt / rel] + cand_dirs
 
+    name_patterns = [f"{stem}_mask", stem, stem.replace("img_", "mask_")]
+
     for d in cand_dirs:
-        for ext in exts:
-            p = d / f"{stem}_mask{ext}"
-            if p.exists():
-                return p
+        for name in name_patterns:
+            for ext in exts:
+                p = d / f"{name}{ext}"
+                if p.exists():
+                    return p
 
     # Fallback: search for any file that contains stem and 'mask'
     for d in cand_dirs:

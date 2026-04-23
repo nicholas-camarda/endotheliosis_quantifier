@@ -369,6 +369,7 @@ def main():
     parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Final network input size (output_size)')
     parser.add_argument('--crop-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Dynamic patching crop size before resizing')
     parser.add_argument('--use-dynamic-patching', action='store_true', default=True, help='Use dynamic patching')
+    parser.add_argument('--no-dynamic-patching', dest='use_dynamic_patching', action='store_false', help='Disable dynamic patching')
     parser.add_argument('--loss', type=str, default='', help='Loss to use: dice | bcedice | tversky (default: fastai/weighted)')
     parser.add_argument('--skip-lr-find', action='store_true', help='Skip lr_find and use provided learning rate for fine-tune')
     

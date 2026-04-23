@@ -57,9 +57,18 @@ def test_primary_backend_preference_order():
 def test_hardware_tier_classification():
     detector = HardwareDetector()
 
-    assert detector._classify_hardware_tier(4, 4.0, BackendType.CPU, None) == HardwareTier.BASIC
-    assert detector._classify_hardware_tier(4, 8.0, BackendType.CPU, None) == HardwareTier.STANDARD
-    assert detector._classify_hardware_tier(8, 16.0, BackendType.CUDA, 10.0) == HardwareTier.POWERFUL
+    assert (
+        detector._classify_hardware_tier(4, 4.0, BackendType.CPU, None)
+        == HardwareTier.BASIC
+    )
+    assert (
+        detector._classify_hardware_tier(4, 8.0, BackendType.CPU, None)
+        == HardwareTier.STANDARD
+    )
+    assert (
+        detector._classify_hardware_tier(8, 16.0, BackendType.CUDA, 10.0)
+        == HardwareTier.POWERFUL
+    )
 
 
 def test_device_recommendation_by_mode():
@@ -130,6 +139,27 @@ def test_capability_report_contains_expected_sections():
     assert 'NVIDIA GeForce RTX 3080' in report
 
 
+def test_capability_report_uses_mps_when_cuda_unavailable():
+    detector = HardwareDetector()
+    detector._capabilities = make_capabilities(
+        platform='Darwin',
+        architecture='arm64',
+        backend_type=BackendType.MPS,
+        gpu_name='Apple Silicon GPU',
+        gpu_memory_gb=19.2,
+        mps_available=True,
+        mps_built=True,
+        cuda_available=False,
+        cuda_device_count=0,
+    )
+
+    report = detector.get_capability_report()
+
+    assert 'MPS Available: True' in report
+    assert 'CUDA Available: False' in report
+    assert 'Type: MPS' in report
+
+
 @patch('eq.utils.hardware_detection.hardware_detector')
 def test_global_hardware_detection_wrappers(mock_detector: MagicMock):
     capabilities = make_capabilities()
@@ -146,7 +176,9 @@ def test_global_hardware_detection_wrappers(mock_detector: MagicMock):
 
 @patch('eq.utils.hardware_detection.get_hardware_capabilities')
 @patch('eq.utils.hardware_detection.get_device_recommendation')
-def test_get_device_info_respects_availability(mock_recommendation: MagicMock, mock_capabilities: MagicMock):
+def test_get_device_info_respects_availability(
+    mock_recommendation: MagicMock, mock_capabilities: MagicMock
+):
     mock_capabilities.return_value = make_capabilities()
     mock_recommendation.return_value = (BackendType.CUDA, 'best')
 
@@ -164,3 +196,27 @@ def test_get_device_info_respects_availability(mock_recommendation: MagicMock, m
     fallback_info = get_device_info('cuda')
     assert fallback_info['device'] == 'cpu'
     assert fallback_info['backend'] == 'cpu'
+
+
+@patch('eq.utils.hardware_detection.get_hardware_capabilities')
+@patch('eq.utils.hardware_detection.get_device_recommendation')
+def test_get_device_info_auto_can_select_mps_without_cuda(
+    mock_recommendation: MagicMock, mock_capabilities: MagicMock
+):
+    mock_capabilities.return_value = make_capabilities(
+        platform='Darwin',
+        architecture='arm64',
+        backend_type=BackendType.MPS,
+        gpu_name='Apple Silicon GPU',
+        gpu_memory_gb=19.2,
+        mps_available=True,
+        mps_built=True,
+        cuda_available=False,
+        cuda_device_count=0,
+    )
+    mock_recommendation.return_value = (BackendType.MPS, 'best')
+
+    auto_info = get_device_info()
+
+    assert auto_info['device'] == 'mps'
+    assert auto_info['backend'] == 'mps'

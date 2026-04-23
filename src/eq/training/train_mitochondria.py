@@ -103,7 +103,7 @@ def train_mitochondria_with_datablock(
     # Build DataLoaders using DataBlock approach
     if use_dynamic_patching:
         logger.info("🔧 Building DataLoaders with dynamic patching...")
-        dls, _ = build_segmentation_dls_dynamic_patching(
+        dls = build_segmentation_dls_dynamic_patching(
             data_dir,
             bs=batch_size,
             num_workers=0,
@@ -114,7 +114,7 @@ def train_mitochondria_with_datablock(
         )
     else:
         logger.info("🔧 Building DataLoaders with traditional patchification...")
-        dls, _ = build_segmentation_dls(data_dir, bs=batch_size, num_workers=0)
+        dls = build_segmentation_dls(data_dir, bs=batch_size, num_workers=0)
 
     # Mask validation handled centrally in datablock loader
 

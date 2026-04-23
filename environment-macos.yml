@@ -1,0 +1,44 @@
+name: eq-mac
+channels:
+  - conda-forge
+dependencies:
+  # macOS Apple Silicon local-development runtime
+  - python=3.10
+  - pip
+
+  # Core scientific computing
+  - numpy=2.2.6
+  - scipy=1.15.2
+  - scikit-learn=1.7.2
+  - scikit-image=0.25.2
+  - matplotlib
+  - pandas=2.3.3
+  - pyyaml=6.0.3
+
+  # Image processing
+  - pillow=12.0.0
+  - opencv=4.12.0
+  - tifffile=2025.5.10
+
+  # ML libraries
+  - lightgbm=4.0.0
+  - xgboost=1.7.6
+
+  # Development tools
+  - ipykernel
+  - jupyter
+  - mypy=1.17.1
+  - pytest=8.4.1
+  - ruff=0.12.9
+  - setuptools<81
+
+  # PyTorch and FastAI stack verified for FastAI DynamicUNet MPS training on macOS arm64.
+  - pytorch=2.10.0
+  - torchvision=0.26.0
+  - fastai=2.8.7
+  - pip:
+      - alive-progress==3.3.0
+      - albumentations==2.0.8
+      - scikit-optimize==0.9.0
+      - openpyxl==3.1.5
+      - -e .[dev]

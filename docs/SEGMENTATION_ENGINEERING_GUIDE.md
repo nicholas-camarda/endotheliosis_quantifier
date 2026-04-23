@@ -41,6 +41,33 @@ Recommended assumptions:
 - masks are converted into `0/1` targets in the loader path
 - loaders should fail early when expected image-mask pairs are missing
 
+## Model Artifact Compatibility Gate
+
+FastAI learner exports are executable Python pickle artifacts, not neutral model-weight files. A `.pkl` can depend on the exact project module paths, FastAI objects, NumPy pickle namespaces, and package versions that existed when it was exported.
+
+A supported segmentation model artifact requires:
+
+- export from the current `src/eq` namespace
+- loadability in the current certified environment without legacy module shims
+- recorded package versions for Python, PyTorch, torchvision, FastAI, and NumPy
+- recorded training command, data root, training mode, and code version
+- a current pipeline or inference test that depends on the supported artifact path
+
+Legacy `.pkl` artifacts that reference removed modules such as `eq.segmentation...`, old FastAI transform namespaces, or incompatible NumPy pickle namespaces are historical artifacts. Do not point new tests, specs, or default commands at them unless the work is explicitly a legacy-artifact compatibility change.
+
+## Model Promotion Gate
+
+Training completion, MPS execution, pickle loading, and successful pipeline execution are runtime compatibility checks. They do not establish that a segmentation model is ready for scientific use.
+
+A promoted glomeruli segmentation model requires:
+
+- a current-namespace exported model artifact
+- a training-data audit showing both foreground and background coverage
+- validation metrics that improve beyond a trivial foreground-only or background-only policy
+- prediction-review images showing non-degenerate masks across representative validation examples
+
+Static patch datasets that contain only foreground-positive glomeruli patches are not sufficient for promotion. A model trained on that data can pass runtime checks while learning all-positive predictions. Treat that as a data-contract failure, not as a usable segmentation model.
+
 ## Why Displayed Inputs Can Look Washed Out
 
 The model consumes normalized tensors based on ImageNet statistics. If those tensors are displayed directly, or after aggressive contrast stretching, they may appear desaturated compared with the raw RGB image.
@@ -131,4 +158,6 @@ When adding or reviewing segmentation code in this repo, prefer this checklist:
 3. item transforms handle geometry and resize
 4. batch transforms handle tensor conversion and normalization
 5. image-mask pairing is validated before training
-6. visualization paths distinguish raw images from model-space tensors
+6. training data includes foreground and background coverage
+7. validation predictions are not all foreground or all background
+8. visualization paths distinguish raw images from model-space tensors

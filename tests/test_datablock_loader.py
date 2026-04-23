@@ -3,13 +3,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
-
 from fastai.vision.all import PILMask
 
 from eq.data_management.datablock_loader import (
     build_segmentation_datablock,
+    build_segmentation_dls,
     default_get_y,
 )
+from eq.data_management.standard_getters import get_y_patch
 
 
 def _make_pair(tmp_path: Path, name: str, size: int = 96):
@@ -53,4 +54,31 @@ def test_build_datablock_and_dataloaders(tmp_path: Path):
     unique = np.unique(yb.cpu().numpy())
     assert set(unique.tolist()).issubset({0, 1})
 
+
+def test_static_patch_loader_accepts_matching_image_and_mask_filenames(tmp_path: Path):
+    image_patches = tmp_path / "image_patches"
+    mask_patches = tmp_path / "mask_patches"
+    image_patches.mkdir()
+    mask_patches.mkdir()
+
+    for i in range(8):
+        img = np.zeros((96, 96, 3), dtype=np.uint8)
+        img[20:60, 20:60, :] = 180
+        image_path = image_patches / f"training_{i}_patch_0.jpg"
+        cv2.imwrite(str(image_path), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+
+        mask = np.zeros((96, 96), dtype=np.uint8)
+        mask[25:55, 25:55] = 255
+        mask_path = mask_patches / image_path.name
+        cv2.imwrite(str(mask_path), mask)
+
+    first_image = next(image_patches.iterdir())
+    assert get_y_patch(first_image) == mask_patches / first_image.name
+
+    dls = build_segmentation_dls(tmp_path, bs=4, num_workers=0)
+    xb, yb = dls.one_batch()
+
+    assert xb.ndim == 4
+    assert yb.ndim == 3
+    assert xb.shape[0] == yb.shape[0]
 

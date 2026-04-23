@@ -1,6 +1,6 @@
 # Endotheliosis Quantifier Onboarding Guide
 
-This guide keeps the more explanatory, beginner-friendly walkthrough for the project. The main `README.md` stays focused on the current WSL/CUDA operating baseline, while this document is meant to help non-technical collaborators, future-you, or anyone returning to the repo after a long break.
+This guide keeps the more explanatory, beginner-friendly walkthrough for the project. The main [`README.md`](../README.md) stays focused on the current WSL/CUDA operating baseline, while this document is meant to help non-technical collaborators, future-you, or anyone returning to the repo after a long break.
 
 ## What This Project Is
 
@@ -256,7 +256,7 @@ That split makes the repo much easier to maintain over time, especially when wor
 
 Start with this order:
 
-1. Read the main `README.md` for the current operational baseline.
+1. Read the main [`README.md`](../README.md) for the current operational baseline.
 2. Use this guide if you want the more explanatory version of the workflow.
 3. Run:
 

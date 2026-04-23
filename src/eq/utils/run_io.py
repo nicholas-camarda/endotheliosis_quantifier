@@ -11,7 +11,7 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, cast, Callable
+from typing import Any, Callable, Dict, List, Optional, Union, cast
 
 import torch
 from fastai.callback.tracker import SaveModelCallback
@@ -153,8 +153,8 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
 
     # Validation predictions plot
     try:
-        import numpy as np
         import matplotlib.pyplot as plt
+        import numpy as np
         
         # Get a few validation samples in a deterministic order
         val_dl = learn.dls.valid.new(shuffle=False, drop_last=False)
@@ -169,7 +169,9 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
         item_paths = getattr(learn.dls.valid_ds, 'items', None)
         # Try to import mask getter to resolve mask filenames alongside images
         try:
-            from eq.data_management.standard_getters import get_y as _get_mask_path
+            from eq.data_management.datablock_loader import (
+                default_get_y_path as _get_mask_path,
+            )
         except Exception:
             _get_mask_path = None
         

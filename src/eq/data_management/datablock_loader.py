@@ -11,35 +11,42 @@ This module provides two complementary DataBlock builders:
 """
 
 from pathlib import Path
-from typing import Callable, Optional, List, Any, Union
+from typing import Any, Callable, List, Optional, Union
 
-from fastai.data.block import DataBlock
-from fastai.data.transforms import RandomSplitter
-from fastai.vision.all import (
-    ImageBlock, MaskBlock, PILMask, get_image_files,
-    Resize, aug_transforms, RandomResizedCrop, FlipItem, Rotate,
-    Normalize, IntToFloatTensor, imagenet_stats
-)
-from fastai.data.transforms import Transform
 import numpy as np
 import torch
-
-from eq.data_management.standard_getters import get_y_full, get_y_patch
+from fastai.data.block import DataBlock
+from fastai.data.transforms import RandomSplitter, Transform
+from fastai.vision.all import (
+    FlipItem,
+    ImageBlock,
+    IntToFloatTensor,
+    MaskBlock,
+    Normalize,
+    PILMask,
+    RandomResizedCrop,
+    Resize,
+    Rotate,
+    aug_transforms,
+    get_image_files,
+    imagenet_stats,
+)
 
 from eq.core.constants import (
-    DEFAULT_VAL_RATIO,
-    DEFAULT_IMAGE_SIZE,
     DEFAULT_FLIP_VERT,
-    DEFAULT_MAX_ROTATE,
-    DEFAULT_MIN_ZOOM,
-    DEFAULT_MAX_ZOOM,
-    DEFAULT_MAX_WARP,
+    DEFAULT_IMAGE_SIZE,
     DEFAULT_MAX_LIGHTING,
-    DEFAULT_POSITIVE_FOCUS_P,
+    DEFAULT_MAX_ROTATE,
+    DEFAULT_MAX_WARP,
+    DEFAULT_MAX_ZOOM,
     DEFAULT_MIN_POS_PIXELS,
+    DEFAULT_MIN_ZOOM,
     DEFAULT_POS_CROP_ATTEMPTS,
     DEFAULT_POSITIVE_CROP_JITTER,
+    DEFAULT_POSITIVE_FOCUS_P,
+    DEFAULT_VAL_RATIO,
 )
+from eq.data_management.standard_getters import get_y_full, get_y_patch
 from eq.utils.logger import get_logger
 
 
@@ -169,12 +176,11 @@ def build_segmentation_dls(data_root: Union[str, Path], bs: int = 8, num_workers
             # Build expected mask paths map
             missing = []
             for p in img_paths[:10000]:  # cap to avoid extreme scans
-                expected = msk_dir / f"{p.stem}_mask{p.suffix}"
-                if not expected.exists():
-                    # Fallback transform like get_y_standard
-                    alt = Path(str(p).replace('.jpeg', '.png').replace('.jpg', '.png').replace('img_', 'mask_'))
-                    if not alt.exists():
-                        missing.append((p, expected))
+                try:
+                    get_y_patch(p)
+                except FileNotFoundError:
+                    expected = msk_dir / f"{p.stem}_mask{p.suffix}"
+                    missing.append((p, expected))
             if missing:
                 examples = "\n".join([f"- image: {im} -> expected mask: {em}" for im, em in missing[:10]])
                 raise ValueError(
@@ -193,9 +199,9 @@ def build_segmentation_dls(data_root: Union[str, Path], bs: int = 8, num_workers
                 some_positive = 0
                 for ip in sample_items:
                     ip = Path(ip)
-                    mp = msk_dir / f"{ip.stem}_mask{ip.suffix}"
-                    if not mp.exists():
-                        # already guarded above; skip content check
+                    try:
+                        mp = get_y_patch(ip)
+                    except FileNotFoundError:
                         continue
                     m = np.array(PILMask.create(mp))
                     if m.max() == 0:
