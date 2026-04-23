@@ -11,13 +11,9 @@ The trained mitochondria model serves as a pretrained base for transfer learning
 to glomeruli segmentation in the second stage.
 """
 
-import pickle
-from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
-import matplotlib.pyplot as plt
-import numpy as np
-import torch
 from fastai.callback.all import *
 from fastai.vision.all import *
 
@@ -28,9 +24,6 @@ from eq.utils.run_io import (
 )
 from eq.core.constants import (
     DEFAULT_IMAGE_SIZE, 
-    DEFAULT_MASK_THRESHOLD, 
-    DEFAULT_PREDICTION_THRESHOLD, 
-    DEFAULT_BATCH_SIZE, 
     DEFAULT_EPOCHS, 
     DEFAULT_LEARNING_RATE,
     DEFAULT_MITOCHONDRIA_MODEL_DIR,
@@ -38,9 +31,12 @@ from eq.core.constants import (
     DEFAULT_MIN_POS_PIXELS,
     DEFAULT_POS_CROP_ATTEMPTS,
 )
-from eq.data_management.datablock_loader import build_segmentation_dls, build_segmentation_dls_dynamic_patching
-from eq.data_management.standard_getters import get_y
-from fastai.losses import CrossEntropyLossFlat
+from eq.data_management.datablock_loader import (
+    TRAINING_MODE_DYNAMIC_FULL_IMAGE,
+    build_segmentation_dls_dynamic_patching,
+    validate_supported_segmentation_training_root,
+)
+from eq.utils.hardware_detection import get_segmentation_training_batch_size
 
 
 def _format_run_suffix(epochs, batch_size, learning_rate, image_size, tag=""):
@@ -59,12 +55,11 @@ def train_mitochondria_with_datablock(
     data_dir: str,
     output_dir: str,
     model_name: str,
-    batch_size: int = DEFAULT_BATCH_SIZE,
+    batch_size: Optional[int] = None,
     epochs: int = DEFAULT_EPOCHS,
     learning_rate: float = DEFAULT_LEARNING_RATE,
     image_size: int = DEFAULT_IMAGE_SIZE,
     config_path: Optional[str] = None,
-    use_dynamic_patching: bool = True,
     positive_focus_p: float = DEFAULT_POSITIVE_FOCUS_P,
     min_pos_pixels: int = DEFAULT_MIN_POS_PIXELS,
     pos_crop_attempts: int = DEFAULT_POS_CROP_ATTEMPTS,
@@ -73,7 +68,7 @@ def train_mitochondria_with_datablock(
     Train mitochondria segmentation model using FastAI v2 DataBlock approach.
     
     Args:
-        data_dir: Directory containing image_patches/ and mask_patches/
+        data_dir: Full-image training root containing images/ and masks/
         output_dir: Directory to save model and results
         model_name: Name for the model
         batch_size: Training batch size
@@ -86,6 +81,12 @@ def train_mitochondria_with_datablock(
     """
     logger = get_logger("eq.mitochondria_training")
     logger.info("🔬 Starting mitochondria model training with DataBlock...")
+    data_root = validate_supported_segmentation_training_root(data_dir, stage="mitochondria")
+    batch_size = get_segmentation_training_batch_size(
+        "mitochondria",
+        image_size=image_size,
+        requested_batch_size=batch_size,
+    )
     
     # Create output directory with descriptive model name
     model_tag = _format_run_suffix(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate, image_size=image_size, tag="pretrain")
@@ -95,32 +96,29 @@ def train_mitochondria_with_datablock(
     
     logger.info(f"📁 Output directory: {output_path}")
     logger.info(f"📊 Training parameters: epochs={epochs}, batch_size={batch_size}, lr={learning_rate}, image_size={image_size}")
-    logger.info(f"🔄 Dynamic patching: {use_dynamic_patching}")
-    if use_dynamic_patching:
-        logger.info(f"🎯 Positive-aware cropping: p={positive_focus_p}, min_pos={min_pos_pixels}, attempts={pos_crop_attempts}")
-    logger.info(f"📂 Loading data from: {data_dir}")
+    logger.info(f"🔄 Training mode: {TRAINING_MODE_DYNAMIC_FULL_IMAGE}")
+    logger.info(f"🎯 Positive-aware cropping: p={positive_focus_p}, min_pos={min_pos_pixels}, attempts={pos_crop_attempts}")
+    logger.info(f"📂 Loading data from: {data_root}")
     
-    # Build DataLoaders using DataBlock approach
-    if use_dynamic_patching:
-        logger.info("🔧 Building DataLoaders with dynamic patching...")
-        dls = build_segmentation_dls_dynamic_patching(
-            data_dir,
-            bs=batch_size,
-            num_workers=0,
-            crop_size=image_size,
-            positive_focus_p=positive_focus_p,
-            min_pos_pixels=min_pos_pixels,
-            pos_crop_attempts=pos_crop_attempts,
-        )
-    else:
-        logger.info("🔧 Building DataLoaders with traditional patchification...")
-        dls = build_segmentation_dls(data_dir, bs=batch_size, num_workers=0)
+    # Build DataLoaders from full images using dynamic patching.
+    logger.info("🔧 Building DataLoaders with dynamic patching...")
+    dls = build_segmentation_dls_dynamic_patching(
+        data_root,
+        bs=batch_size,
+        num_workers=0,
+        crop_size=image_size,
+        positive_focus_p=positive_focus_p,
+        min_pos_pixels=min_pos_pixels,
+        pos_crop_attempts=pos_crop_attempts,
+    )
 
     # Mask validation handled centrally in datablock loader
 
     # Save data splits manifest
     save_splits(output_path, model_folder_name, {
         "stage": "mitochondria",
+        "training_mode": TRAINING_MODE_DYNAMIC_FULL_IMAGE,
+        "data_root": str(data_root),
         "train_items": getattr(dls.train_ds, 'items', []),
         "valid_items": getattr(dls.valid_ds, 'items', [])
     })
@@ -159,7 +157,9 @@ def train_mitochondria_with_datablock(
         'batch_size': batch_size,
         'learning_rate': learning_rate,
         'image_size': image_size,
-        'training_approach': 'from_scratch'
+        'training_approach': 'from_scratch',
+        'training_mode': TRAINING_MODE_DYNAMIC_FULL_IMAGE,
+        'data_root': str(data_root),
     })
 
     # Generate training visualizations
@@ -199,7 +199,28 @@ def train_mitochondria_with_datablock(
     model_path = export_final_model(learn, output_path, model_folder_name)
     
     # Save run metadata
-    save_run_metadata(output_path, model_folder_name, config_path)
+    save_run_metadata(
+        output_path,
+        model_folder_name,
+        config_path,
+        extra_metadata={
+            "stage": "mitochondria",
+            "artifact_status": "supported_runtime",
+            "scientific_promotion_status": "not_evaluated",
+            "training_mode": TRAINING_MODE_DYNAMIC_FULL_IMAGE,
+            "data_root": str(data_root),
+            "model_path": str(model_path),
+            "invocation": {
+                "data_dir": str(data_root),
+                "output_dir": str(output_dir),
+                "model_name": model_name,
+                "epochs": epochs,
+                "batch_size": batch_size,
+                "learning_rate": learning_rate,
+                "image_size": image_size,
+            },
+        },
+    )
     
     # Return the learner for now (can be wrapped later if needed)
     return learn, model_path
@@ -211,15 +232,13 @@ def main():
     
     parser = argparse.ArgumentParser(description='Train mitochondria segmentation model')
     parser.add_argument('--config', help='Optional YAML config file to override defaults')
-    parser.add_argument('--data-dir', required=True, help='Directory containing image_patches/ and mask_patches/')
+    parser.add_argument('--data-dir', required=True, help='Full-image training root containing images/ and masks/')
     parser.add_argument('--model-dir', default=DEFAULT_MITOCHONDRIA_MODEL_DIR, help='Directory to save trained model')
     parser.add_argument('--model-name', default='mitochondria_model', help='Base name for saved model files')
     parser.add_argument('--epochs', type=int, default=DEFAULT_EPOCHS, help='Number of training epochs')
-    parser.add_argument('--batch-size', type=int, default=DEFAULT_BATCH_SIZE, help='Training batch size')
+    parser.add_argument('--batch-size', type=int, default=None, help='Training batch size (default: machine-aware recommendation)')
     parser.add_argument('--learning-rate', type=float, default=DEFAULT_LEARNING_RATE, help='Learning rate')
     parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Input image size')
-    parser.add_argument('--use-dynamic-patching', action='store_true', default=True, help='Use dynamic patching (default: True)')
-    parser.add_argument('--no-dynamic-patching', dest='use_dynamic_patching', action='store_false', help='Disable dynamic patching')
     
     args = parser.parse_args()
 
@@ -233,11 +252,11 @@ def main():
             # training hyperparams
             model_cfg = cfg_yaml.get('model', {}) if isinstance(cfg_yaml.get('model'), dict) else {}
             training_cfg = model_cfg.get('training', {}) if isinstance(model_cfg.get('training'), dict) else {}
-            if 'epochs' in training_cfg and not parser.get_default('epochs') == args.epochs:
+            if 'epochs' in training_cfg and parser.get_default('epochs') == args.epochs:
                 args.epochs = int(training_cfg['epochs'])
-            if 'batch_size' in training_cfg and not parser.get_default('batch_size') == args.batch_size:
+            if 'batch_size' in training_cfg and args.batch_size is None:
                 args.batch_size = int(training_cfg['batch_size'])
-            if 'learning_rate' in training_cfg and not parser.get_default('learning_rate') == args.learning_rate:
+            if 'learning_rate' in training_cfg and parser.get_default('learning_rate') == args.learning_rate:
                 args.learning_rate = float(training_cfg['learning_rate'])
             # output model dir from checkpoint_path
             if 'checkpoint_path' in cfg_yaml.get('model', {}):
@@ -254,6 +273,11 @@ def main():
     try:
         from eq.utils.logger import setup_logging
         logger = setup_logging(verbose=True)
+        args.batch_size = get_segmentation_training_batch_size(
+            "mitochondria",
+            image_size=args.image_size,
+            requested_batch_size=args.batch_size,
+        )
         logger.info("🚀 Starting mitochondria model training...")
         logger.info(f"📁 Data directory: {args.data_dir}")
         logger.info(f"📁 Model directory: {args.model_dir}")
@@ -261,7 +285,7 @@ def main():
         logger.info(f"⚙️  Epochs: {args.epochs}, Batch size: {args.batch_size}")
         logger.info(f"🎯 Learning rate: {args.learning_rate}")
         logger.info(f"📐 Image size: {args.image_size}")
-        logger.info(f"🔄 Dynamic patching: {args.use_dynamic_patching}")
+        logger.info(f"🔄 Training mode: {TRAINING_MODE_DYNAMIC_FULL_IMAGE}")
         
         # Train the model using DataBlock approach
         model, model_path = train_mitochondria_with_datablock(
@@ -273,7 +297,6 @@ def main():
             learning_rate=args.learning_rate,
             image_size=args.image_size,
             config_path=config_path,
-            use_dynamic_patching=args.use_dynamic_patching,
         )
         
         logger.info("🎉 Mitochondria training completed successfully!")

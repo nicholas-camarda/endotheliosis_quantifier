@@ -7,7 +7,7 @@ description: "Fine-tune mitochondria-pretrained U-Net on glomeruli segmentation 
 
 # Transfer Learning Configuration
 pretrained_model:
-  path: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model-e50_b16.pkl"  # Using standardized path
+  path: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model.pkl"
   description: "Mitochondria-pretrained U-Net model"
   freeze_encoder: false  # Allow full fine-tuning
 
@@ -26,12 +26,15 @@ data:
     json_file: "data/raw_data/preeclampsia_project/annotations/annotations.json"  # Path to Label Studio export - will be copied to data/derived_data/cache
     processor: "load_annotations_from_json"  # Function from data_loader.py
     
-  # Processed data structure
+  # Curated training root.
+  # Training consumes paired full-image images/ and masks/ directly, so the canonical
+  # trainable root lives under raw_data rather than derived_data.
   processed:
-    train_dir: "data/derived_data/glomeruli_data/training/image_patches"
-    train_mask_dir: "data/derived_data/glomeruli_data/training/mask_patches"
-    test_dir: "data/derived_data/glomeruli_data/testing/image_patches"
+    train_dir: "data/raw_data/preeclampsia_project/training_pairs"
+    train_image_dir: "data/raw_data/preeclampsia_project/training_pairs/images"
+    train_mask_dir: "data/raw_data/preeclampsia_project/training_pairs/masks"
     cache_dir: "data/derived_data/glomeruli_data/cache"
+    training_mode: "dynamic_full_image_patching"
     
   # Image preprocessing
   preprocessing:
@@ -57,7 +60,7 @@ model:
   # Fine-tuning parameters
   training:
     epochs: 30  # Optimized for transfer learning efficiency
-    batch_size: 16
+    batch_size: 12
     learning_rate: 5e-4  # Increased for faster domain adaptation
     weight_decay: 1e-4
     scheduler: "cosine_annealing"
@@ -66,7 +69,7 @@ model:
       monitor: "val_dice"
       
   # Output model path
-  checkpoint_path: "models/segmentation/glomeruli/glom_dynamic_unet_seg_model-e50_b16.pkl"  # Using standardized path
+  checkpoint_path: "models/segmentation/glomeruli/glom_dynamic_unet_seg_model.pkl"
 
 # Label Studio Integration
 label_studio:

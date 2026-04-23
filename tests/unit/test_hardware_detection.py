@@ -10,6 +10,7 @@ from eq.utils.hardware_detection import (
     get_device_recommendation,
     get_hardware_capabilities,
     get_optimal_batch_size,
+    get_segmentation_training_batch_size,
 )
 
 
@@ -128,6 +129,54 @@ def test_optimal_batch_size_uses_backend_and_memory():
     assert detector.get_optimal_batch_size('production') == 2
 
 
+def test_segmentation_training_batch_size_uses_powerful_mps_stage_defaults():
+    detector = HardwareDetector()
+    detector._capabilities = make_capabilities(
+        platform='Darwin',
+        architecture='arm64',
+        backend_type=BackendType.MPS,
+        gpu_name='Apple Silicon GPU',
+        gpu_memory_gb=19.2,
+        total_memory_gb=64.0,
+        mps_available=True,
+        mps_built=True,
+        cuda_available=False,
+        cuda_device_count=0,
+    )
+
+    assert detector.get_segmentation_training_batch_size(
+        'mitochondria',
+        image_size=256,
+    ) == 24
+    assert detector.get_segmentation_training_batch_size(
+        'glomeruli',
+        image_size=256,
+        crop_size=512,
+    ) == 12
+
+
+def test_segmentation_training_batch_size_respects_explicit_override():
+    detector = HardwareDetector()
+    detector._capabilities = make_capabilities(
+        platform='Darwin',
+        architecture='arm64',
+        backend_type=BackendType.MPS,
+        gpu_name='Apple Silicon GPU',
+        gpu_memory_gb=19.2,
+        total_memory_gb=64.0,
+        mps_available=True,
+        mps_built=True,
+        cuda_available=False,
+        cuda_device_count=0,
+    )
+
+    assert detector.get_segmentation_training_batch_size(
+        'mitochondria',
+        image_size=256,
+        requested_batch_size=32,
+    ) == 32
+
+
 def test_capability_report_contains_expected_sections():
     detector = HardwareDetector()
     detector._capabilities = make_capabilities()
@@ -167,11 +216,13 @@ def test_global_hardware_detection_wrappers(mock_detector: MagicMock):
     mock_detector.get_device_recommendation.return_value = (BackendType.CUDA, 'ok')
     mock_detector.get_capability_report.return_value = 'report'
     mock_detector.get_optimal_batch_size.return_value = 16
+    mock_detector.get_segmentation_training_batch_size.return_value = 24
 
     assert get_hardware_capabilities() == capabilities
     assert get_device_recommendation('production') == (BackendType.CUDA, 'ok')
     assert get_capability_report() == 'report'
     assert get_optimal_batch_size('production') == 16
+    assert get_segmentation_training_batch_size('mitochondria', image_size=256) == 24
 
 
 @patch('eq.utils.hardware_detection.get_hardware_capabilities')

@@ -10,7 +10,7 @@ scattered across multiple folders:
 Provides unified training infrastructure for mitochondria and glomeruli models.
 """
 
-from eq.core.constants import DEFAULT_BATCH_SIZE, DEFAULT_EPOCHS, DEFAULT_LEARNING_RATE
+from eq.core.constants import DEFAULT_EPOCHS, DEFAULT_LEARNING_RATE
 
 # Create wrapper functions with expected names
 def train_mitochondria(data_dir, model_dir, epochs=None, batch_size=None, **kwargs):
@@ -32,8 +32,6 @@ def train_mitochondria(data_dir, model_dir, epochs=None, batch_size=None, **kwar
     
     # Use constants defaults if not provided
     epochs = epochs or DEFAULT_EPOCHS
-    batch_size = batch_size or DEFAULT_BATCH_SIZE
-    
     # For now, assume data_dir contains cached pickle files
     return train_mitochondria_with_datablock(
         data_dir=data_dir,
@@ -65,8 +63,6 @@ def train_glomeruli(data_dir, model_dir, base_model=None, epochs=None, batch_siz
     
     # Use constants defaults if not provided
     epochs = epochs or DEFAULT_EPOCHS
-    batch_size = batch_size or DEFAULT_BATCH_SIZE
-    
     # Forward parameters to the concrete implementation
     return train_glomeruli_with_transfer_learning(
         data_dir=data_dir,

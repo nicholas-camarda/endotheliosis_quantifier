@@ -77,7 +77,6 @@ The project remains oriented around automated analysis of glomerular histology f
 What the current branch supports directly:
 
 - binary segmentation of mitochondria or glomeruli
-- preparation of raw image and mask data into derived patch datasets
 - dynamic patching from full images
 - metadata standardization for glomeruli scoring spreadsheets
 - mask-pair auditing and visualization
@@ -90,24 +89,7 @@ What it does **not** currently support as a completed, production-ready workflow
 
 ## Data Model And Input Layouts
 
-Two dataset layouts are supported by the loader stack.
-
-### 1. Static Patch Datasets
-
-For pre-generated patches:
-
-```text
-<data_root>/
-├── image_patches/
-├── mask_patches/
-└── cache/
-```
-
-This is the layout expected after `eq process-data` runs on a raw project directory.
-
-### 2. Dynamic Patching From Full Images
-
-For on-the-fly cropping:
+The supported segmentation training layout is a full-image root:
 
 ```text
 <data_root>/
@@ -115,7 +97,21 @@ For on-the-fly cropping:
 └── masks/
 ```
 
-In this mode, full images are loaded directly and crops are sampled during training.
+Full images are loaded directly and crops are sampled during training.
+
+For mitochondria, the installed full-image layout uses separate physical roots:
+
+```text
+data/derived_data/mitochondria_data/
+├── training/
+│   ├── images/
+│   └── masks/
+└── testing/
+    ├── images/
+    └── masks/
+```
+
+The `training/` root is the training input; the dynamic dataloader creates the train/validation split internally. The `testing/` root is held out for explicit evaluation.
 
 ## Data Preparation Workflow
 
@@ -142,16 +138,16 @@ eq extract-images \
 The main derived-data builder is:
 
 ```bash
-eq process-data \
-  --input-dir data/raw_data/<project> \
-  --output-dir data/derived_data/<project>
+eq organize-lucchi \
+  --input-dir data/raw_data/lucchi \
+  --output-dir data/derived_data/mitochondria_data
 ```
 
-Current behavior of `process-data`:
+Current behavior of `organize-lucchi`:
 
-- creates `image_patches/`, `mask_patches/`, and `cache/`
-- calls the unified `patchify_dataset(...)` path
-- writes `processing_metadata.json`
+- creates `training/images`, `training/masks`, `testing/images`, and `testing/masks`
+- preserves the physical held-out `testing/` root for explicit evaluation
+- produces the mitochondria full-image training root used by the training examples
 
 The checked-in branch does **not** use the older bare repo-root `derived_data/` convention as its primary documentation target.
 
@@ -195,10 +191,10 @@ Primary entrypoint:
 
 ```bash
 python -m eq.training.train_mitochondria \
-  --data-dir data/derived_data/mito \
+  --data-dir data/derived_data/mitochondria_data/training \
   --model-dir models/segmentation/mitochondria \
   --epochs 50 \
-  --batch-size 16 \
+  --batch-size 24 \
   --learning-rate 1e-3 \
   --image-size 256
 ```
@@ -206,10 +202,10 @@ python -m eq.training.train_mitochondria \
 Current defaults in the training module:
 
 - epochs: `50`
-- batch size: `8` at the shared constant level, but README and config examples commonly use `16` for mitochondria
+- batch size: machine-aware; currently `24` on the powerful Apple Silicon MPS machine class when using `256x256` crops
 - learning rate: `1e-3`
 - image size: `256`
-- dynamic patching: enabled by default
+- training mode: `dynamic_full_image_patching`
 
 ### Stage 2: Glomeruli Training
 
@@ -217,20 +213,22 @@ Primary entrypoint:
 
 ```bash
 python -m eq.training.train_glomeruli \
-  --data-dir data/raw_data/<your_glomeruli_project> \
+  --data-dir data/raw_data/<your_glomeruli_project>/training_pairs \
   --model-dir models/segmentation/glomeruli \
   --epochs 50 \
-  --batch-size 8 \
+  --batch-size 12 \
   --learning-rate 1e-3 \
   --image-size 256 \
   --crop-size 512
 ```
 
+The glomeruli training root must contain paired full-image `images/` and `masks/` directories under `raw_data`. Raw project backups are source material; curate paired files into `training_pairs` before running model training. Generated manifests, audits, caches, and metrics belong under `derived_data`.
+
 Important nuance:
 
 - the README example above is the recommended workflow documentation
-- the `train_glomeruli.py` module itself currently defaults to transfer-learning-oriented values of `epochs=30`, `batch_size=16`, and `learning_rate=1e-3`
-- `configs/glomeruli_finetuning_config.yaml` documents `epochs=30`, `batch_size=16`, and `learning_rate=5e-4`
+- the `train_glomeruli.py` module resolves a machine-aware default batch size and currently starts at `12` on the powerful Apple Silicon MPS machine class when using `512x512` crops
+- `configs/glomeruli_finetuning_config.yaml` documents `epochs=30`, `batch_size=12`, and `learning_rate=5e-4`
 
 So there is still some configuration drift inside `master`, and the notebook should not claim a single universal glomeruli default beyond what each entrypoint actually sets.
 
@@ -257,10 +255,10 @@ Current loader behavior is stricter than the older notebook described.
 
 Implemented validation includes:
 
-- early image-mask pairing checks for static patch datasets
+- early image-mask pairing checks for full-image dynamic training roots
 - failure when expected masks are missing
 - basic sampled mask-content sanity checks on validation items
-- support for both static patch and full-image layouts
+- static patch loaders retained only for legacy audit/conversion inspection
 
 This is one of the more mature parts of the current branch.
 

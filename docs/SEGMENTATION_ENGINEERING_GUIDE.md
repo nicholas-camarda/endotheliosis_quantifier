@@ -41,6 +41,31 @@ Recommended assumptions:
 - masks are converted into `0/1` targets in the loader path
 - loaders should fail early when expected image-mask pairs are missing
 
+Supported training roots contain full-image `images/` and `masks/` directories. The dataloader performs dynamic patching from that selected root. Do not train supported mitochondria or glomeruli models from `image_patches/` or `mask_patches/`.
+
+For mitochondria, keep the installed physical split explicit:
+
+- `derived_data/mitochondria_data/training` is the dynamic training root
+- `derived_data/mitochondria_data/testing` is held out for explicit evaluation
+
+The physical `testing/` root is not the FastAI validation split. Training-time validation is created inside the selected `training/` root.
+
+For glomeruli, train from a curated paired full-image root under `raw_data`, such as `raw_data/preeclampsia_project/training_pairs`. Raw project backup trees are source material and may contain images without masks; they should not be passed directly to training unless every image has a matching mask.
+
+Path contract:
+
+- `raw_data/...`: source images, source masks, curated paired training roots
+- `derived_data/...`: generated manifests, audits, caches, metrics, evaluation artifacts
+
+The current mitochondria runtime under `derived_data/mitochondria_data/{training,testing}` is a Lucchi-installed exception, not the generic naming rule for curated glomeruli training pairs.
+
+Local Apple Silicon starting points on the powerful MPS machine class:
+
+- mitochondria: `batch_size=24` with `256x256` crops
+- glomeruli: `batch_size=12` with `512x512` crops
+
+These are throughput/stability starting points, not scientific constants. Override them if actual MPS performance or stability requires it.
+
 ## Model Artifact Compatibility Gate
 
 FastAI learner exports are executable Python pickle artifacts, not neutral model-weight files. A `.pkl` can depend on the exact project module paths, FastAI objects, NumPy pickle namespaces, and package versions that existed when it was exported.
@@ -65,8 +90,19 @@ A promoted glomeruli segmentation model requires:
 - a training-data audit showing both foreground and background coverage
 - validation metrics that improve beyond a trivial foreground-only or background-only policy
 - prediction-review images showing non-degenerate masks across representative validation examples
+- deterministic validation examples covering positive, boundary, and background crops
 
 Static patch datasets that contain only foreground-positive glomeruli patches are not sufficient for promotion. A model trained on that data can pass runtime checks while learning all-positive predictions. Treat that as a data-contract failure, not as a usable segmentation model.
+
+The 2026-04-22 static-patch glomeruli artifact illustrates the failure mode:
+
+- `3766 / 3766` static training patches contained foreground pixels
+- validation contained no empty/background-only masks
+- validation foreground fraction was high: median `29.7%`, 75th percentile `65.9%`, 95th percentile `98.2%`
+- all-foreground validation baseline was approximately `dice=0.5659`, `jaccard=0.3946`
+- the trained artifact reported `dice=0.5560`, `jaccard=0.3851`, effectively matching the all-foreground baseline
+
+Promotion review must compare candidate predictions against all-background and all-foreground baselines and block all-foreground or all-background prediction panels.
 
 ## Why Displayed Inputs Can Look Washed Out
 

@@ -18,7 +18,7 @@ from eq.data_management.standard_getters import get_y
 from eq.core.constants import DEFAULT_IMAGE_SIZE
 from fastai.vision.all import PILImage, PILMask
 
-def test_crop_transform_with_real_data(data_root, num_tests=5):
+def check_crop_transform_with_real_data(data_root, num_tests=5):
     """Test CropTransform with real data to identify issues."""
     print("Testing CropTransform with real data...")
     
@@ -155,7 +155,7 @@ def main():
     # Test with real data if path provided
     data_root = input("\nEnter path to your data directory (or press Enter to skip): ").strip()
     if data_root and Path(data_root).exists():
-        test_crop_transform_with_real_data(data_root)
+        check_crop_transform_with_real_data(data_root)
     else:
         print("Skipping real data tests")
 

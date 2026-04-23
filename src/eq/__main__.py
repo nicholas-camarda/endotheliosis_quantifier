@@ -160,7 +160,6 @@ def get_glom_y(o):
 
 # from eq.models.feature_extractor import run_feature_extraction
 # from eq.pipeline.quantify_endotheliosis import run_endotheliosis_quantification
-# from eq.models.train_segmenter_fastai import train_segmentation_model
 
 
 @log_function_call
@@ -194,15 +193,12 @@ def pipeline_orchestrator_command(args):
     
     print()
     print("Available pipeline stages:")
-    print("  1. Segmentation Training (seg) - Train model to find glomeruli")
-    print("  2. Quantification Training (quant-endo) - Run the Label Studio-first ordinal endotheliosis baseline") 
-    print("  3. Production Inference (production) - End-to-end inference using pre-trained models")
+    print("  1. Quantification Training (quant-endo) - Run the Label Studio-first ordinal endotheliosis baseline") 
+    print("  2. Production Inference (production) - End-to-end inference using pre-trained models")
     print()
     print("Usage:")
-    print("  python -m eq seg                    # Train segmentation model")
     print("  python -m eq quant-endo             # Run quantification contract + embedding baseline")
     print("  python -m eq production             # Run production inference")
-    print("  QUICK_TEST=true python -m eq seg    # Quick test segmentation training")
     print("  QUICK_TEST=true python -m eq production  # Quick test production inference")
     print()
     print("❌ No interactive input required. Use specific commands above.")
@@ -374,9 +370,10 @@ def validate_naming_command(args):
 
 
 def process_data_command(args):
-    """Process raw data into derived_data."""
+    """Legacy static patch conversion for audit or historical workflows."""
     logger = get_logger("eq.process_data")
-    logger.info("🔄 Starting data processing pipeline...")
+    logger.info("🔄 Starting legacy static patch conversion pipeline...")
+    logger.warning("Static patch outputs are legacy audit/conversion artifacts, not supported segmentation training inputs.")
 
     from pathlib import Path
     import os
@@ -395,7 +392,7 @@ def process_data_command(args):
     
     # Show expected processing info
     logger.info(f"📏 Expected input image dimensions: {EXPECTED_INPUT_WIDTH}x{EXPECTED_INPUT_HEIGHT}")
-    logger.info(f"✂️  Creating {args.patch_size}x{args.patch_size} patches")
+    logger.info(f"✂️  Creating {args.patch_size}x{args.patch_size} legacy static patches")
     logger.info(f"📊 Expected patches per image: ~{EXPECTED_PATCHES_PER_IMAGE}")
     
     # Create output directory structure
@@ -447,8 +444,8 @@ def process_data_command(args):
     with open(metadata_file, 'w') as f:
         json.dump(metadata, f, indent=2, default=str)
     
-    progress.complete("Data processing")
-    logger.info(f"🎉 Data processing completed successfully!")
+    progress.complete("Legacy static patch conversion")
+    logger.info(f"🎉 Legacy static patch conversion completed successfully!")
     logger.info(f"📊 Generated {image_count} image patches from {subjects_count} subjects")
     if mask_count > 0:
         logger.info(f"📊 Generated {mask_count} mask patches")
@@ -505,7 +502,7 @@ def _validate_mode_for_command(mode_manager: ModeManager, command: str) -> None:
         logger.warning(f"Mode validation failed for command '{command}': {reason}")
         
         # For production commands, be more strict
-        if command in ['train-segmenter', 'pipeline'] and mode_manager.current_mode == EnvironmentMode.PRODUCTION:
+        if command == 'pipeline' and mode_manager.current_mode == EnvironmentMode.PRODUCTION:
             print(f"❌ Production mode validation failed: {reason}")
             print(f"💡 Suggested mode: {mode_manager.get_suggested_mode().value}")
             print("💡 Use 'eq mode --set development' to switch to development mode")
@@ -563,33 +560,6 @@ def _handle_mode_specific_errors(e: Exception, mode_manager: ModeManager, comman
         print(f"❌ Unexpected error: {e}")
         if mode_manager.current_mode == EnvironmentMode.PRODUCTION:
             print("💡 Consider switching to development mode for debugging")
-
-
-@log_function_call
-def train_segmenter_command(args):
-    """Train a segmentation model."""
-    logger = get_logger("eq.train_segmenter")
-    logger.info("🔄 Starting segmentation model training...")
-    
-    # Get mode manager and validate mode
-    mode_manager = ModeManager()
-    _validate_mode_for_command(mode_manager, "train-segmenter")
-    
-    # Get mode-aware batch size
-    batch_size = _get_mode_aware_batch_size(mode_manager, args.batch_size)
-    logger.info(f"📋 Training parameters: batch_size={batch_size}, epochs={args.epochs}")
-    logger.info(f"🔧 Mode: {mode_manager.current_mode.value}")
-    
-    print("Note: This command is not yet implemented due to import issues.")
-    # train_segmentation_model(
-    #     base_model_path=args.base_model_path,
-    #     cache_dir=args.cache_dir,
-    #     output_dir=args.output_dir,
-    #     model_name=args.model_name,
-    #     batch_size=batch_size,
-    #     epochs=args.epochs
-    # )
-    logger.info("✅ Segmentation training complete!")
 
 
 @log_function_call
@@ -686,9 +656,9 @@ def metadata_process_command(args):
         sys.exit(1)
 
 
-# === Derived data audit (images/masks) ===
+# === Legacy derived static patch audit ===
 def audit_derived_command(args):
-    """Audit derived_data directory for 1:1 pairs, size match, and binary masks.
+    """Audit legacy static patch directory for 1:1 pairs, size match, and binary masks.
 
     Writes a JSON report under <data_dir>/cache/audit_masks.json
     """
@@ -865,71 +835,6 @@ def pipeline_command(args):
 
 
 @log_function_call
-def seg_command(args):
-    """Train segmentation model to find glomeruli."""
-    logger = get_logger("eq.seg")
-    logger.info("🔄 Starting segmentation model training...")
-    
-    # Get mode manager and validate mode
-    mode_manager = ModeManager()
-    _validate_mode_for_command(mode_manager, "seg")
-    
-    # Check for QUICK_TEST mode
-    import os
-    is_quick_test = os.getenv('QUICK_TEST') == 'true'
-    if is_quick_test:
-        print("🔍 QUICK_TEST mode detected - using fast validation settings")
-        args.epochs = 5  # Force 5 epochs for quick testing
-        args.batch_size = min(args.batch_size, 4)  # Smaller batch size for quick testing
-    
-    # Get mode-aware batch size
-    batch_size = _get_mode_aware_batch_size(mode_manager, args.batch_size)
-    logger.info(f"📋 Training parameters: batch_size={batch_size}, epochs={args.epochs}")
-    logger.info(f"🔧 Mode: {mode_manager.current_mode.value}")
-    
-    # Auto-determine cache and output directories
-    data_dir = args.data_dir
-    cache_dir = f"{data_dir}/cache"
-    output_dir = "output"  # Always use the output directory in project root
-    
-    print("🚀 === SEGMENTATION TRAINING ===")
-    print("Training segmentation model to find glomeruli...")
-    print(f"Data directory: {data_dir}")
-    print(f"Cache directory: {cache_dir} (auto-detected)")
-    print(f"Output directory: {output_dir} (auto-detected)")
-    print(f"Epochs: {args.epochs}")
-    print(f"Batch size: {batch_size}")
-    print(f"Quick test: {is_quick_test}")
-    
-    try:
-        # Use the actual working pipeline for segmentation training with proper data paths
-        from eq.pipeline.run_production_pipeline import run_pipeline
-
-        success = run_pipeline(
-            epochs=args.epochs,
-            run_type="development" if is_quick_test else "production",
-            use_existing_models=False,  # Force training new models
-            data_dir=data_dir,
-            cache_dir=cache_dir
-        )
-
-        if success:
-            logger.info("✅ Segmentation training complete!")
-            print("🎉 Segmentation training completed successfully!")
-        else:
-            logger.error("❌ Segmentation training failed!")
-            print("❌ Segmentation training failed!")
-            sys.exit(1)
-
-    except Exception as e:
-        logger.error(f"❌ Segmentation training failed: {e}")
-        print(f"❌ Segmentation training failed: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-
-@log_function_call
 def quant_endo_command(args):
     """Train quantification model for endotheliosis scoring."""
     logger = get_logger("eq.quant_endo")
@@ -1030,7 +935,6 @@ def main():
         epilog="""
 Examples:
   eq data-load --data-dir data/train --test-data-dir data/test
-  eq train-segmenter --cache-dir data/cache --output-dir output
   eq extract-features --cache-dir data/cache --output-dir output
   eq quantify --cache-dir data/cache --output-dir output
   eq pipeline --data-dir data/train --test-data-dir data/test --output-dir output
@@ -1071,12 +975,12 @@ Examples:
     data_parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Image size for processing')
     data_parser.set_defaults(func=data_load_command)
 
-    # Data processing command (NEW - direct processing to data/derived_data)
-    process_parser = subparsers.add_parser('process-data', help='Process raw data into data/derived_data with auto-detection')
+    # Legacy static patch conversion command
+    process_parser = subparsers.add_parser('process-data', help='Legacy static patch conversion for audit/historical workflows')
     process_parser.add_argument('--input-dir', required=True, help='Input directory with raw images (supports nested images/ and masks/ subdirs)')
     process_parser.add_argument('--output-dir', default='data/derived_data', help='Output directory (default: data/derived_data)')
     from eq.core.constants import DEFAULT_PATCH_SIZE, EXPECTED_PATCHES_PER_IMAGE
-    process_parser.add_argument('--patch-size', type=int, default=DEFAULT_PATCH_SIZE, help=f'Patch size for processing (default: {DEFAULT_PATCH_SIZE}, expected ~{EXPECTED_PATCHES_PER_IMAGE} patches per image)')
+    process_parser.add_argument('--patch-size', type=int, default=DEFAULT_PATCH_SIZE, help=f'Legacy static patch size (default: {DEFAULT_PATCH_SIZE}, expected ~{EXPECTED_PATCHES_PER_IMAGE} patches per image)')
     from eq.core.constants import DEFAULT_PATCH_OVERLAP
     process_parser.add_argument('--overlap', type=float, default=DEFAULT_PATCH_OVERLAP, help=f'Overlap between patches (default: {DEFAULT_PATCH_OVERLAP})')
     # auto-detect masks; no explicit flag needed
@@ -1091,7 +995,11 @@ Examples:
     # Lucchi dataset organization command
     lucchi_parser = subparsers.add_parser('organize-lucchi', help='Organize Lucchi img/ and label/ stacks into train/test folders')
     lucchi_parser.add_argument('--input-dir', required=True, help='Input directory containing Lucchi img/ and label/ folders')
-    lucchi_parser.add_argument('--output-dir', default='data/derived_data/mito', help='Output directory for organized Lucchi data')
+    lucchi_parser.add_argument(
+        '--output-dir',
+        default='data/derived_data/mitochondria_data',
+        help='Output directory for organized Lucchi data (default: %(default)s)',
+    )
     lucchi_parser.set_defaults(func=organize_lucchi_command)
 
     # Validate naming command
@@ -1099,25 +1007,6 @@ Examples:
     validate_parser.add_argument('--data-dir', required=True, help='Data directory containing images/ and masks/ subdirectories')
     validate_parser.add_argument('--strict', action='store_true', help='Exit with error code if any invalid files are found')
     validate_parser.set_defaults(func=validate_naming_command)
-    
-    # Training command
-    train_parser = subparsers.add_parser('train-segmenter', help='Train segmentation model')
-    train_parser.add_argument('--base-model-path', required=True, help='Path to base model')
-    train_parser.add_argument('--cache-dir', required=True, help='Cache directory')
-    train_parser.add_argument('--output-dir', required=True, help='Output directory')
-    train_parser.add_argument('--model-name', default='glomerulus_segmenter', help='Model name')
-    train_parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
-    train_parser.add_argument('--epochs', type=int, default=50, help='Number of epochs')
-    train_parser.set_defaults(func=train_segmenter_command)
-    
-    # Segmentation training command
-    seg_parser = subparsers.add_parser('seg', help='Train segmentation model to find glomeruli')
-    seg_parser.add_argument('--data-dir', required=True, help='Training data directory')
-    seg_parser.add_argument('--annotation-file', help='Annotation JSON file')
-    seg_parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Image size for processing')
-    seg_parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
-    seg_parser.add_argument('--epochs', type=int, default=50, help='Number of epochs')
-    seg_parser.set_defaults(func=seg_command)
     
     # Quantification training command
     quant_parser = subparsers.add_parser('quant-endo', help='Run the current endotheliosis quantification baseline')
@@ -1204,8 +1093,8 @@ Examples:
     production_parser.set_defaults(func=pipeline_command)
 
     # Derived data audit command
-    audit_parser = subparsers.add_parser('audit-derived', help='Audit derived_data image/mask pairs for binary masks and mapping')
-    audit_parser.add_argument('--data-dir', required=True, help='Path to a derived_data project folder (with image_patches/ and mask_patches/)')
+    audit_parser = subparsers.add_parser('audit-derived', help='Audit legacy static patch image/mask pairs for binary masks and mapping')
+    audit_parser.add_argument('--data-dir', required=True, help='Path to a legacy static patch folder with image_patches/ and mask_patches/')
     audit_parser.set_defaults(func=audit_derived_command)
     
     # Visualization command

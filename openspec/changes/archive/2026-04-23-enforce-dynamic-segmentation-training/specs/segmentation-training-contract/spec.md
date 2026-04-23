@@ -15,6 +15,23 @@ Supported segmentation training SHALL use data roots that contain full-image `im
 - **WHEN** supported segmentation training is started with a data root that does not contain both `images/` and `masks/`
 - **THEN** training fails before model construction with an error that identifies the missing full-image training contract
 
+### Requirement: Curated trainable image-mask roots use the raw-data contract
+When segmentation training consumes paired image/mask files directly, those curated trainable roots SHALL be treated as `raw_data` assets rather than `derived_data` artifacts.
+
+#### Scenario: Glomeruli curated training root is defined
+- **WHEN** glomeruli full-image pairs are curated for supported training
+- **THEN** the canonical root lives under `raw_data/.../training_pairs` or an equivalent paired-root name
+- **AND** that root contains only trainable paired `images/` and `masks/`
+
+#### Scenario: Raw backup source tree contains unpaired files
+- **WHEN** a raw backup tree such as `clean_backup` contains images without matching masks
+- **THEN** it is treated as source material to curate from, not as the canonical supported training root
+
+#### Scenario: Derived data contract is inspected
+- **WHEN** manifests, audits, caches, metrics, or evaluation artifacts are produced from segmentation training data
+- **THEN** those generated outputs live under `derived_data/...`
+- **AND** they are not presented as the canonical trainable glomeruli image/mask root
+
 ### Requirement: Physical installed splits remain distinct from dynamic train/validation splits
 Supported segmentation training SHALL preserve existing physical full-image `training/` and `testing/` layouts, while dynamic patching creates the internal train/validation split from the selected training root.
 
@@ -33,10 +50,15 @@ Supported segmentation training SHALL preserve existing physical full-image `tra
 - **THEN** it uses `/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/derived_data/mitochondria_data/testing` only through an explicit evaluation path
 - **AND** held-out testing examples do not affect training-time validation metrics
 
-#### Scenario: Glomeruli single-root training splits internally
-- **WHEN** glomeruli training uses the active full-image clean backup root
-- **THEN** dynamic patching may create an internal train/validation split from that root
+#### Scenario: Glomeruli curated paired root splits internally
+- **WHEN** glomeruli training uses a curated paired full-image root under `raw_data`
+- **THEN** dynamic patching may create an internal train/validation split from that selected root
 - **AND** this does not imply that retired static `training/`, `testing/`, or `prediction/` patch directories are active model-training inputs
+
+#### Scenario: Mitochondria installed runtime remains an exception
+- **WHEN** the current Lucchi-derived mitochondria runtime is inspected
+- **THEN** its installed full-image `training/` and `testing/` roots may remain under `derived_data/mitochondria_data`
+- **AND** that installed runtime exception does not redefine the generic raw-data contract for curated glomeruli training pairs
 
 ### Requirement: Static patch roots are not supported training inputs
 Supported segmentation training SHALL NOT accept pre-generated `image_patches/` and `mask_patches/` directories as training inputs.
@@ -67,6 +89,23 @@ The segmentation training CLIs and configs SHALL NOT expose a supported option t
 #### Scenario: Transfer learning creates glomeruli dataloaders
 - **WHEN** glomeruli transfer learning builds target dataloaders
 - **THEN** it uses full-image dynamic patching and does not silently fall back to static patch dataloaders
+
+### Requirement: Powerful Apple Silicon MPS uses higher starting batch defaults
+On powerful Apple Silicon systems using MPS, local segmentation training SHALL use machine-aware starting batch defaults while keeping explicit overrides available.
+
+#### Scenario: Mitochondria local training starts on a powerful Apple Silicon MPS machine
+- **WHEN** mitochondria training starts with `256x256` crops on the certified powerful Apple Silicon MPS machine class
+- **THEN** the default starting batch size is `24`
+- **AND** CLI or config overrides may still change the batch size
+
+#### Scenario: Glomeruli local training starts on a powerful Apple Silicon MPS machine
+- **WHEN** glomeruli training starts with `512x512` crops on the certified powerful Apple Silicon MPS machine class
+- **THEN** the default starting batch size is `12`
+- **AND** CLI or config overrides may still change the batch size
+
+#### Scenario: Throughput or stability requires a different batch
+- **WHEN** MPS throughput, memory pressure, or stability indicates the machine-aware starting batch should change
+- **THEN** the operator may override the batch size without changing the underlying training contract
 
 ### Requirement: Static patch datasets are retired from active runtime training locations
 Active ProjectsRuntime segmentation training directories SHALL NOT contain static patch directories for supported training.
@@ -168,3 +207,21 @@ Glomeruli model promotion SHALL include quantitative and visual prediction-revie
 #### Scenario: Degenerate prediction review is detected
 - **WHEN** prediction review shows all-foreground or all-background behavior on representative validation examples
 - **THEN** the candidate is blocked from scientific promotion even if aggregate metrics appear acceptable
+
+### Requirement: The updated contract must run end to end
+This change SHALL NOT be considered complete until the repository can run the intended pipeline from the beginning under the updated contract and complete end to end.
+
+#### Scenario: End-to-end validation is executed
+- **WHEN** final validation for this change is performed
+- **THEN** the operator runs the whole pipeline from the beginning using the updated path contract, dynamic training contract, and current local hardware defaults
+- **AND** the run covers the real entrypoints needed to prove the updated workflow is executable rather than only isolated smoke tests
+
+#### Scenario: End-to-end run finds a blocker
+- **WHEN** the full pipeline fails at any step during final validation
+- **THEN** the blocker is treated as a required issue to fix for this change rather than a deferred note
+- **AND** validation is rerun from the beginning after the fix until the pipeline completes end to end
+
+#### Scenario: End-to-end iteration is documented
+- **WHEN** the full pipeline has been iterated to completion
+- **THEN** the implementation records the executed path, every issue discovered during iteration, the fix applied for each issue, and any remaining residual limitations that do not block completion
+- **AND** that record lives inside this OpenSpec change's artifacts rather than in separate implementation notes, side documents, or external logs

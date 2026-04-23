@@ -23,7 +23,7 @@ project_root/
 │   │       │   └── annotations.json
 │   │       └── subject_metadata.xlsx
 │   └── derived_data/
-│       ├── mito/
+│       ├── mitochondria_data/
 │       └── <project_name>/
 ├── logs/
 ├── models/
@@ -37,10 +37,44 @@ project_root/
 ## Purpose Of Each Directory
 
 - `data/raw_data/`
-  Original source datasets and annotations. For the current preeclampsia quantification baseline, this includes image/mask pairs plus a Label Studio JSON export.
+  Original source datasets and annotations. For the current preeclampsia quantification baseline, this includes image/mask pairs plus a Label Studio JSON export. When segmentation training consumes paired image/mask files directly, the canonical curated trainable roots also live under `raw_data`, for example:
+
+  ```text
+  data/raw_data/preeclampsia_project/
+  ├── clean_backup/
+  ├── training_pairs/
+  │   ├── images/
+  │   └── masks/
+  ├── annotations/
+  └── subject_metadata.xlsx
+  ```
 
 - `data/derived_data/`
-  Processed outputs such as extracted images, metadata exports, or cached intermediates. Static patch datasets are legacy support rather than the intended long-term glomeruli contract.
+  Processed outputs such as extracted images, metadata exports, manifests, audits, caches, metrics, or cached intermediates. Do not use `derived_data` as the canonical location for curated glomeruli training pairs.
+
+Current mitochondria training data uses:
+
+  ```text
+  data/derived_data/mitochondria_data/
+  ├── training/
+  │   ├── images/
+  │   └── masks/
+  └── testing/
+      ├── images/
+      └── masks/
+  ```
+
+  The `training/` root is used for dynamic training and its internal train/validation split. The `testing/` root is held out for explicit evaluation.
+
+  This mitochondria layout is an installed Lucchi exception to the general rule above: curated glomeruli training pairs belong under `raw_data`, while generated artifacts belong under `derived_data`.
+
+  Static patch datasets are retired runtime artifacts under the configured runtime `_retired/` directory, not active training inputs:
+
+  ```text
+  <runtime_root>/_retired/
+  ├── glomeruli_static_patch_datasets_2026-04-22/
+  └── mitochondria_static_patch_datasets_2026-04-22/
+  ```
 
 - `models/segmentation/mitochondria/`
   Trained mitochondria segmentation models and associated training artifacts.

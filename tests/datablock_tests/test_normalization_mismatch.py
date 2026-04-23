@@ -6,6 +6,13 @@ Test the normalization mismatch hypothesis.
 import sys
 from pathlib import Path
 
+import pytest
+
+pytest.skip(
+    "Legacy static-vs-dynamic analysis script; static patches are not supported training inputs.",
+    allow_module_level=True,
+)
+
 # Add src to path
 sys.path.append(str(Path(__file__).parent / "src"))
 

@@ -176,6 +176,20 @@ data/raw_data/your_project/
 └── masks/
 ```
 
+For mitochondria data installed with physical training and testing roots, keep those roots separate:
+
+```text
+data/derived_data/mitochondria_data/
+├── training/
+│   ├── images/
+│   └── masks/
+└── testing/
+    ├── images/
+    └── masks/
+```
+
+Training uses the `training/` root and creates its internal dynamic train/validation split there. The `testing/` root is held out for explicit evaluation.
+
 For quantification, the current contract is also intentionally simple:
 
 - one scored example per image/mask pair
@@ -188,35 +202,41 @@ For quantification, the current contract is also intentionally simple:
 ### 1. Prepare Lucchi Images
 
 ```bash
-eq extract-images \
+eq organize-lucchi \
   --input-dir data/raw_data/lucchi \
-  --output-dir data/derived_data/mito
+  --output-dir data/derived_data/mitochondria_data
 ```
 
 ### 2. Train The Mitochondria Model
 
 ```bash
 python -m eq.training.train_mitochondria \
-  --data-dir data/derived_data/mito \
+  --data-dir data/derived_data/mitochondria_data/training \
   --model-dir models/segmentation/mitochondria \
   --epochs 50 \
-  --batch-size 16 \
+  --batch-size 24 \
   --learning-rate 1e-3 \
   --image-size 256
 ```
+
+On the powerful Apple Silicon MPS machine class, `24` is the current starting batch-size recommendation for `256x256` mitochondria training. Override it when throughput or stability requires a different value.
 
 ### 3. Train The Glomeruli Model
 
 ```bash
 python -m eq.training.train_glomeruli \
-  --data-dir data/raw_data/your_project \
+  --data-dir data/raw_data/your_project/training_pairs \
   --model-dir models/segmentation/glomeruli \
   --epochs 50 \
-  --batch-size 8 \
+  --batch-size 12 \
   --learning-rate 1e-3 \
   --image-size 256 \
   --crop-size 512
 ```
+
+On the powerful Apple Silicon MPS machine class, `12` is the current starting batch-size recommendation for `512x512` glomeruli crops. Override it when throughput or stability requires a different value.
+
+The glomeruli training root must contain paired full-image `images/` and `masks/` directories under `raw_data`. Raw project backups are source material; curate paired files into `training_pairs` before running model training. Generated manifests, audits, caches, and metrics belong under `derived_data`.
 
 ### 4. Run The Current Quantification Baseline
 

@@ -31,7 +31,8 @@ from eq.processing.preprocessing import (
 from eq.processing.image_mask_preprocessing import (
     patchify_dataset,
 )
-from eq.data_management.datablock_loader import build_segmentation_dls, build_segmentation_datablock
+from eq.data_management.datablock_loader import build_segmentation_dls_dynamic_patching
+from eq.core.constants import DEFAULT_IMAGE_SIZE, LARGE_IMAGE_SIZE
 
 
 class TestDataProcessingComponents:
@@ -99,15 +100,21 @@ class TestDataProcessingComponents:
             try:
                 # Test resize_image_standard
                 resized_std = resize_image_standard(str(img_path))
-                assert resized_std.size == (224, 224), f"Standard resize should be 224x224, got {resized_std.size}"
+                assert resized_std.size == (DEFAULT_IMAGE_SIZE, DEFAULT_IMAGE_SIZE), (
+                    f"Standard resize should be {DEFAULT_IMAGE_SIZE}x{DEFAULT_IMAGE_SIZE}, got {resized_std.size}"
+                )
                 
                 # Test resize_image_large
                 resized_large = resize_image_large(str(img_path))
-                assert resized_large.size == (512, 512), f"Large resize should be 512x512, got {resized_large.size}"
+                assert resized_large.size == (LARGE_IMAGE_SIZE, LARGE_IMAGE_SIZE), (
+                    f"Large resize should be {LARGE_IMAGE_SIZE}x{LARGE_IMAGE_SIZE}, got {resized_large.size}"
+                )
                 
                 # Test preprocess_image_for_model
                 processed = preprocess_image_for_model(str(img_path), use_large_size=False)
-                assert processed.size == (224, 224), f"Model preprocessing should be 224x224, got {processed.size}"
+                assert processed.size == (DEFAULT_IMAGE_SIZE, DEFAULT_IMAGE_SIZE), (
+                    f"Model preprocessing should be {DEFAULT_IMAGE_SIZE}x{DEFAULT_IMAGE_SIZE}, got {processed.size}"
+                )
                 
                 print(f"✅ Successfully preprocessed {img_path.name}")
                 
@@ -160,7 +167,7 @@ class TestDataProcessingComponents:
             )
             
             # Check that patches were created under image_patches/
-            patch_files = list((patches_root / "image_patches").glob("*.jpg"))
+            patch_files = list((patches_root / "image_patches").glob("*.png"))
             assert len(patch_files) > 0, "Should create patches from large image"
             
             # Verify patch dimensions
@@ -179,16 +186,19 @@ class TestDataProcessingComponents:
         
         # Create a larger test mask in a separate input directory
         input_dir = Path(temp_dir) / "input_masks"
-        input_dir.mkdir()
+        images_dir = input_dir / "images"
+        masks_dir = input_dir / "masks"
+        images_dir.mkdir(parents=True)
+        masks_dir.mkdir(parents=True)
         
         # Create a test image (required for the function to work)
         large_img = np.random.randint(0, 255, (400, 400, 3), dtype=np.uint8)
-        large_img_path = input_dir / "large_test_image.jpg"
+        large_img_path = images_dir / "large_test_image.jpg"
         cv2.imwrite(str(large_img_path), large_img)
         
         # Create a test mask with the correct naming convention
         large_mask = np.random.randint(0, 2, (400, 400), dtype=np.uint8) * 255
-        large_mask_path = input_dir / "large_test_image_mask.png"
+        large_mask_path = masks_dir / "large_test_image_mask.png"
         cv2.imwrite(str(large_mask_path), large_mask)
         
         # Output root for derived data
@@ -203,8 +213,8 @@ class TestDataProcessingComponents:
                 patch_size=224,
             )
             
-            image_patch_files = list((patches_root / "image_patches").glob("*.jpg"))
-            mask_patch_files = list((patches_root / "mask_patches").glob("*_mask.jpg"))
+            image_patch_files = list((patches_root / "image_patches").glob("*.png"))
+            mask_patch_files = list((patches_root / "mask_patches").glob("*_mask.png"))
             
             assert len(image_patch_files) > 0, "Should create image patches"
             assert len(mask_patch_files) > 0, "Should create mask patches"
@@ -214,38 +224,29 @@ class TestDataProcessingComponents:
         except Exception as e:
             pytest.fail(f"Failed to create mask patches: {e}")
 
-    def test_data_loader_initialization(self):
-        """Test that data loader can be initialized."""
+    def test_data_loader_initialization(self, temp_dir):
+        """Test that supported dynamic full-image data loader can be initialized."""
         print(f"\nTesting data loader initialization...")
         
         try:
-            config = build_segmentation_datablock()
-            # Use centralized path management and discover actual project structure
-            from eq.utils.config_manager import ConfigManager
-            config_manager = ConfigManager()
-            data_path = config_manager.global_config.data_path
-            raw_data_dir = Path(data_path)
+            root = Path(temp_dir)
+            images_dir = root / "images"
+            masks_dir = root / "masks"
+            images_dir.mkdir()
+            masks_dir.mkdir()
+            for i in range(8):
+                image = np.zeros((96, 96, 3), dtype=np.uint8)
+                image[20:60, 20:60, :] = 180
+                cv2.imwrite(str(images_dir / f"sample_{i}.jpg"), image)
+                mask = np.zeros((96, 96), dtype=np.uint8)
+                mask[24:56, 24:56] = 255
+                cv2.imwrite(str(masks_dir / f"sample_{i}_mask.png"), mask)
+
+            dls = build_segmentation_dls_dynamic_patching(root, bs=4, num_workers=0, crop_size=64)
             
-            if not raw_data_dir.exists():
-                pytest.skip(f"Raw data directory not found: {raw_data_dir}")
-            
-            # Find the first available project directory with a 'data' subdirectory
-            project_data_path = None
-            for project_dir in raw_data_dir.iterdir():
-                if project_dir.is_dir():
-                    candidate_data_path = project_dir / "data"
-                    if candidate_data_path.exists():
-                        project_data_path = candidate_data_path
-                        break
-            
-            if project_data_path is None:
-                pytest.skip(f"No project with 'data' subdirectory found in: {raw_data_dir}")
-            
-            loader, _ = build_segmentation_dls(data_root=str(project_data_path), bs=4, num_workers=0)
-            
-            assert loader is not None, "Data loader should be created"
-            assert loader.config is not None, "Config should be accessible"
-            assert loader.transforms is not None, "Transforms should be created"
+            assert dls is not None, "Data loader should be created"
+            xb, yb = dls.one_batch()
+            assert xb.shape[0] == yb.shape[0]
             
             print("✅ Successfully initialized SegmentationDataLoader")
             

@@ -8,6 +8,8 @@ ensuring consistent directory structure and file naming across all training scri
 
 import csv
 import json
+import platform
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +29,8 @@ def save_splits(output_dir: Path, model_folder_name: str, data_info: Dict[str, A
     try:
         split_manifest = {
             "stage": data_info.get("stage", "unknown"),
+            "training_mode": data_info.get("training_mode"),
+            "data_root": data_info.get("data_root"),
             "generated_at": datetime.now().isoformat(),
             "train_images": [str(p) for p in data_info.get("train_items", [])],
             "valid_images": [str(p) for p in data_info.get("valid_items", [])],
@@ -37,6 +41,7 @@ def save_splits(output_dir: Path, model_folder_name: str, data_info: Dict[str, A
         }
         
         splits_file = output_dir / f"{model_folder_name}_splits.json"
+        split_manifest = {k: v for k, v in split_manifest.items() if v is not None}
         with open(splits_file, 'w') as f:
             json.dump(split_manifest, f, indent=2)
         logger.info(f"Wrote split manifest to {splits_file}")
@@ -511,37 +516,135 @@ def save_training_history(learn: Learner, output_dir: Path, model_folder_name: s
         logger.warning(f"Could not save training history: {e}")
 
 
-def save_run_metadata(output_dir: Path, model_folder_name: str, config_path: Optional[str] = None) -> None:
-    """Save run metadata and optionally copy config file."""
+def _package_version(package_name: str) -> Optional[str]:
     try:
-        # Save version info
-        metadata_file = output_dir / f"{model_folder_name}_run_metadata.txt"
-        
-        with open(metadata_file, 'w') as f:
-            f.write(f"Run generated at: {datetime.now().isoformat()}\n")
-            f.write(f"Python version: {sys.version}\n")
-            f.write(f"PyTorch version: {torch.__version__}\n")
-            
-            try:
-                import fastai
-                f.write(f"FastAI version: {fastai.__version__}\n")
-            except ImportError:
-                f.write("FastAI version: Not available\n")
-            
-            if config_path:
-                f.write(f"Config file: {config_path}\n")
-        
-        logger.info(f"Run metadata saved to: {metadata_file}")
-        
-        # Copy config file if provided
-        if config_path and Path(config_path).exists():
-            config_file = output_dir / f"{model_folder_name}_config.yaml"
-            import shutil
-            shutil.copy2(config_path, config_file)
-            logger.info(f"Config file copied to: {config_file}")
-            
-    except Exception as e:
-        logger.warning(f"Could not save run metadata: {e}")
+        module = __import__(package_name)
+        return str(getattr(module, "__version__", "unknown"))
+    except Exception:
+        return None
+
+
+def _git_state() -> Dict[str, Any]:
+    repo_root = Path(__file__).resolve().parents[3]
+    state: Dict[str, Any] = {"repo_root": str(repo_root)}
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        state["commit"] = commit
+    except Exception:
+        state["commit"] = None
+    try:
+        dirty = subprocess.check_output(
+            ["git", "status", "--porcelain"],
+            cwd=repo_root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        state["dirty"] = bool(dirty.strip())
+    except Exception:
+        state["dirty"] = None
+    return state
+
+
+def _build_run_metadata(config_path: Optional[str], extra_metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    package_versions = {
+        "torch": torch.__version__,
+        "torchvision": _package_version("torchvision"),
+        "fastai": _package_version("fastai"),
+        "numpy": _package_version("numpy"),
+    }
+    metadata: Dict[str, Any] = {
+        "generated_at": datetime.now().isoformat(),
+        "command": " ".join(sys.argv),
+        "python": {
+            "version": sys.version,
+            "executable": sys.executable,
+            "platform": platform.platform(),
+        },
+        "package_versions": package_versions,
+        "code": _git_state(),
+    }
+    if config_path:
+        metadata["config_path"] = str(config_path)
+    if extra_metadata:
+        metadata.update(extra_metadata)
+    return metadata
+
+
+def save_run_metadata(
+    output_dir: Path,
+    model_folder_name: str,
+    config_path: Optional[str] = None,
+    extra_metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Save run metadata and optionally copy config file."""
+    metadata = _build_run_metadata(config_path, extra_metadata)
+    metadata_file = output_dir / f"{model_folder_name}_run_metadata.txt"
+
+    with open(metadata_file, 'w') as f:
+        f.write(f"Run generated at: {metadata['generated_at']}\n")
+        f.write(f"Command: {metadata['command']}\n")
+        f.write(f"Training mode: {metadata.get('training_mode', 'unknown')}\n")
+        f.write(f"Data root: {metadata.get('data_root', 'unknown')}\n")
+        f.write(f"Python version: {metadata['python']['version']}\n")
+        f.write(f"PyTorch version: {metadata['package_versions']['torch']}\n")
+        f.write(f"Torchvision version: {metadata['package_versions'].get('torchvision') or 'Not available'}\n")
+        f.write(f"FastAI version: {metadata['package_versions'].get('fastai') or 'Not available'}\n")
+        f.write(f"NumPy version: {metadata['package_versions'].get('numpy') or 'Not available'}\n")
+        f.write(f"Git commit: {metadata['code'].get('commit') or 'unknown'}\n")
+        f.write(f"Git dirty: {metadata['code'].get('dirty')}\n")
+        if config_path:
+            f.write(f"Config file: {config_path}\n")
+        if "model_path" in metadata:
+            f.write(f"Model path: {metadata['model_path']}\n")
+
+    metadata_json_file = output_dir / f"{model_folder_name}_run_metadata.json"
+    with open(metadata_json_file, "w") as f:
+        json.dump(metadata, f, indent=2, sort_keys=True)
+
+    if not metadata_json_file.exists():
+        raise RuntimeError(f"Required run metadata was not written: {metadata_json_file}")
+
+    logger.info(f"Run metadata saved to: {metadata_file}")
+    logger.info(f"Run metadata JSON saved to: {metadata_json_file}")
+
+    # Copy config file if provided
+    if config_path and Path(config_path).exists():
+        config_file = output_dir / f"{model_folder_name}_config.yaml"
+        import shutil
+        shutil.copy2(config_path, config_file)
+        logger.info(f"Config file copied to: {config_file}")
+
+
+def metadata_path_for_model(model_path: Union[str, Path]) -> Path:
+    """Return the adjacent metadata JSON path for an exported model artifact."""
+    path = Path(model_path)
+    return path.with_name(f"{path.stem}_run_metadata.json")
+
+
+def load_supported_segmentation_artifact_metadata(model_path: Union[str, Path]) -> Dict[str, Any]:
+    """Load and validate metadata for a supported segmentation artifact."""
+    metadata_path = metadata_path_for_model(model_path)
+    if not metadata_path.exists():
+        raise ValueError(f"Missing required segmentation artifact metadata: {metadata_path}")
+    with open(metadata_path) as f:
+        metadata = json.load(f)
+    if metadata.get("training_mode") != "dynamic_full_image_patching":
+        raise ValueError(
+            f"Unsupported segmentation artifact training mode for {model_path}: "
+            f"{metadata.get('training_mode')!r}"
+        )
+    if metadata.get("artifact_status") == "compatibility_only":
+        raise ValueError(f"Compatibility-only segmentation artifact is not supported for transfer: {model_path}")
+    required = ["command", "code", "package_versions", "data_root", "model_path"]
+    missing = [key for key in required if key not in metadata]
+    if missing:
+        raise ValueError(f"Segmentation artifact metadata missing required keys: {', '.join(missing)}")
+    return metadata
 
 
 def export_final_model(learn: Learner, output_dir: Path, model_folder_name: str) -> Path:

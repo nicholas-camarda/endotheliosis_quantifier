@@ -302,6 +302,39 @@ class HardwareDetector:
             # CPU batch size
             return 2
 
+    def get_segmentation_training_batch_size(
+        self,
+        stage: str,
+        *,
+        image_size: Optional[int] = None,
+        crop_size: Optional[int] = None,
+        requested_batch_size: Optional[int] = None,
+        mode: str = "production",
+    ) -> int:
+        """
+        Get a stage-aware batch-size recommendation for segmentation training.
+
+        This keeps explicit user/config overrides intact while allowing stronger
+        defaults on powerful Apple Silicon MPS hardware.
+        """
+        if requested_batch_size is not None and requested_batch_size > 0:
+            return requested_batch_size
+
+        capabilities = self.detect_capabilities()
+        normalized_stage = stage.strip().lower()
+        resolved_crop_size = crop_size or image_size
+
+        if (
+            capabilities.backend_type == BackendType.MPS
+            and capabilities.hardware_tier == HardwareTier.POWERFUL
+        ):
+            if normalized_stage == "mitochondria" and image_size == 256:
+                return 24
+            if normalized_stage.startswith("glomeruli") and resolved_crop_size == 512:
+                return 12
+
+        return self.get_optimal_batch_size(mode)
+
 
 # Global instance for convenience
 hardware_detector = HardwareDetector()
@@ -325,6 +358,24 @@ def get_capability_report() -> str:
 def get_optimal_batch_size(mode: str = "auto") -> int:
     """Get optimal batch size using the global detector."""
     return hardware_detector.get_optimal_batch_size(mode)
+
+
+def get_segmentation_training_batch_size(
+    stage: str,
+    *,
+    image_size: Optional[int] = None,
+    crop_size: Optional[int] = None,
+    requested_batch_size: Optional[int] = None,
+    mode: str = "production",
+) -> int:
+    """Get a stage-aware segmentation training batch size using the global detector."""
+    return hardware_detector.get_segmentation_training_batch_size(
+        stage,
+        image_size=image_size,
+        crop_size=crop_size,
+        requested_batch_size=requested_batch_size,
+        mode=mode,
+    )
 
 
 def get_device_info(device: Optional[str] = None) -> dict:

@@ -1,13 +1,9 @@
 """
 FastAI v2 DataBlock loader for binary segmentation.
 
-This module provides two complementary DataBlock builders:
-- build_segmentation_datablock: for pre-generated patch datasets using
-  `image_patches/` and `mask_patches/` (static patching). Uses
-  `get_items_patches` and `get_y_patch`.
-- build_segmentation_datablock_dynamic_patching: for training on full images
-  in `images/` with on-the-fly cropping (dynamic patching). Uses
-  `get_items_full_images` and `get_y_full`.
+Supported segmentation training uses full-image `images/` and `masks/`
+directories with on-the-fly dynamic patching. Static patch helpers remain here
+only for legacy audit, conversion, and historical artifact inspection.
 """
 
 from pathlib import Path
@@ -50,6 +46,61 @@ from eq.data_management.standard_getters import get_y_full, get_y_patch
 from eq.utils.logger import get_logger
 
 
+TRAINING_MODE_DYNAMIC_FULL_IMAGE = "dynamic_full_image_patching"
+STATIC_PATCH_DIR_NAMES = (
+    "image_patches",
+    "mask_patches",
+    "image_patch_validation",
+    "mask_patch_validation",
+)
+GLOMERULI_TRAINING_STAGES = {"glomeruli", "glomeruli_transfer"}
+
+
+def validate_supported_segmentation_training_root(data_root: Union[str, Path], *, stage: str = "segmentation") -> Path:
+    """Validate the supported full-image dynamic-patching training contract."""
+    root = Path(data_root).expanduser()
+    static_dirs = [name for name in STATIC_PATCH_DIR_NAMES if (root / name).exists()]
+    has_images = (root / "images").is_dir()
+    has_masks = (root / "masks").is_dir()
+
+    if static_dirs:
+        static_text = ", ".join(static_dirs)
+        raise ValueError(
+            f"Unsupported static patch training root for {stage}: {root}. "
+            f"Found retired static patch directories: {static_text}. "
+            "Supported segmentation training requires a full-image root with "
+            "`images/` and `masks/` directories. Use static patch data only for "
+            "legacy audit, conversion, or historical inspection workflows."
+        )
+
+    missing = []
+    if not has_images:
+        missing.append("images/")
+    if not has_masks:
+        missing.append("masks/")
+    if missing:
+        missing_text = ", ".join(missing)
+        raise ValueError(
+            f"Unsupported segmentation training root for {stage}: {root}. "
+            f"Missing required full-image directories: {missing_text}. "
+            "Supported segmentation training uses full-image `images/` and "
+            "`masks/` with dynamic patching."
+        )
+
+    if stage in GLOMERULI_TRAINING_STAGES:
+        parts = set(root.parts)
+        if "raw_data" not in parts or root.name != "training_pairs":
+            raise ValueError(
+                f"Unsupported glomeruli training root for {stage}: {root}. "
+                "Canonical supported glomeruli training uses a curated paired "
+                "root under `raw_data/.../training_pairs` containing `images/` "
+                "and `masks/`. Raw backup trees such as `clean_backup` are "
+                "source material, not direct training roots."
+            )
+
+    return root
+
+
 def default_get_y_path(x):
     """Resolve a mask path for either patch datasets or full-image datasets."""
     try:
@@ -64,7 +115,7 @@ def default_get_y(x):
 
 
 def get_items_standard(path: Path) -> List[Any]:
-    """Support either image_patches/mask_patches or images/masks layouts."""
+    """Legacy flexible item resolver retained for audit/conversion utilities."""
     root = Path(path)
     if (root / 'image_patches').exists():
         return get_items_patches(root)
@@ -85,9 +136,11 @@ def build_segmentation_datablock(
     batch_tfms: Optional[List] = None,
 ):
     """
-    Create a DataBlock for binary segmentation over pre-generated patches.
+    Create a legacy DataBlock for binary segmentation over pre-generated patches.
 
-    Intended for datasets with `image_patches/` and `mask_patches/` directories.
+    This is not a supported model-training builder. It is retained for legacy
+    audit, conversion, and historical artifact inspection where static patch
+    datasets must still be read.
     By default, this builder:
     - enumerates items via `get_items_patches` (images under `image_patches/`),
     - resolves masks via `get_y_patch` (under `mask_patches/`, with sensible fallbacks),
@@ -106,7 +159,7 @@ def build_segmentation_datablock(
         codes = [0, 1]
     
     if get_items is None:
-        get_items = get_items_standard
+        get_items = get_items_patches
 
     if splitter is None:
         splitter = RandomSplitter(valid_pct=DEFAULT_VAL_RATIO, seed=42)
@@ -152,10 +205,13 @@ def build_segmentation_datablock(
 
 def build_segmentation_dls(data_root: Union[str, Path], bs: int = 8, num_workers: int = 0):
     """
-    Create DataLoaders for binary segmentation using static patches.
+    Create legacy DataLoaders for binary segmentation using static patches.
+
+    This is not a supported model-training entrypoint. Supported training uses
+    `build_segmentation_dls_dynamic_patching` with a validated full-image root.
     
     Args:
-        data_root: Path to data directory with image_patches/ and mask_patches/ subdirectories
+        data_root: Path to legacy data directory with image_patches/ and mask_patches/
         bs: Batch size
         num_workers: Number of workers for data loading
         
@@ -407,13 +463,15 @@ def get_items_full_images(path: Path) -> List[Any]:
                 skipped_samples.append(Path(img_path).name)
             logger.debug(f"Skipping image {Path(img_path).name} - no corresponding mask found")
     
-    if skipped_count > 0 and skipped_samples:
-        logger.warning(
-            f"DataBlock (dynamic patching): Found {len(valid_images)} valid pairs, "
-            f"skipped {skipped_count}. Examples: {', '.join(skipped_samples)}"
+    if skipped_count > 0:
+        examples = ", ".join(skipped_samples)
+        raise ValueError(
+            f"Unpaired full-image training root: found {skipped_count} image(s) without masks "
+            f"under {images_dir}. Examples: {examples}. Supported training requires an explicit "
+            "image/mask pair contract before model construction."
         )
-    else:
-        logger.info(f"DataBlock (dynamic patching): Found {len(valid_images)} valid image-mask pairs, skipped {skipped_count} images without masks")
+
+    logger.info(f"DataBlock (dynamic patching): Found {len(valid_images)} valid image-mask pairs")
     return valid_images
 
 
@@ -535,15 +593,16 @@ def build_segmentation_dls_dynamic_patching(
     Returns:
         DataLoaders object
     """
+    root = validate_supported_segmentation_training_root(data_root)
+
     # Preflight: ensure we have at least one valid image-mask pair
-    prelim_items = get_items_full_images(Path(data_root))
+    prelim_items = get_items_full_images(root)
     if len(prelim_items) == 0:
         raise ValueError(
             (
                 "No valid image-mask pairs found for dynamic patching. "
                 "Ensure `<data_root>/images/` exists and corresponding masks reside under `masks/` "
-                "(or `mask_patches/`) using patterns `<stem>_mask<ext>` or `mask_<stem><ext>`. "
-                "If your dataset consists of pre-generated patches, use the static patching DLS builder instead."
+                "using patterns `<stem>_mask<ext>` or `mask_<stem><ext>`."
             )
         )
 
@@ -566,7 +625,7 @@ def build_segmentation_dls_dynamic_patching(
     )
     
     # Create DataLoaders
-    dls = db.dataloaders(Path(data_root), bs=bs, num_workers=num_workers)
+    dls = db.dataloaders(root, bs=bs, num_workers=num_workers)
     
     logger = get_logger("eq.datablock_loader")
     logger.info("✅ Dynamic patching DataLoaders created - positive-aware cropping enabled" if positive_focus_p > 0 else "✅ Dynamic patching DataLoaders created")

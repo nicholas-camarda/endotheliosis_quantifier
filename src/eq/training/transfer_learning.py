@@ -14,12 +14,19 @@ from fastai.vision.all import *
 # BCEWithLogitsLossFlat import removed - using FastAI v2 automatic loss selection
 
 from eq.data_management.standard_getters import get_y
+from eq.data_management.datablock_loader import (
+    TRAINING_MODE_DYNAMIC_FULL_IMAGE,
+    build_segmentation_dls_dynamic_patching,
+    validate_supported_segmentation_training_root,
+)
 from eq.training.losses import make_loss
 from eq.utils.logger import get_logger
 from eq.utils.run_io import (
     save_splits, attach_best_model_callback, save_plots, 
-    save_training_history, save_run_metadata, export_final_model
+    save_training_history, save_run_metadata, export_final_model,
+    load_supported_segmentation_artifact_metadata,
 )
+from eq.utils.hardware_detection import get_segmentation_training_batch_size
 
 logger = get_logger("eq.transfer_learning")
 
@@ -83,10 +90,9 @@ def load_model_for_transfer_learning(
     target_data_dir: Union[str, Path],
     image_size: int = 256,
     crop_size: Optional[int] = None,
-    batch_size: int = 8,
+    batch_size: Optional[int] = None,
     num_workers: int = 0,
     output_path: Optional[Union[str, Path]] = None,
-    use_dynamic_patching: bool = True,
     loss_name: Optional[str] = None,
     positive_focus_p: float = 0.6,
     min_pos_pixels: int = 64,
@@ -102,7 +108,7 @@ def load_model_for_transfer_learning(
     
     Args:
         model_path: Path to the pretrained model (.pkl file)
-        target_data_dir: Directory containing target task data
+        target_data_dir: Full-image target root containing images/ and masks/
         batch_size: Batch size for new data loaders
         num_workers: Number of workers for data loading
         
@@ -110,6 +116,17 @@ def load_model_for_transfer_learning(
         Learner: New learner ready for transfer learning
     """
     logger.info(f"Loading pretrained model from: {model_path}")
+    base_metadata = load_supported_segmentation_artifact_metadata(model_path)
+    logger.info(f"Base model metadata accepted: {base_metadata.get('training_mode')}")
+    target_root = validate_supported_segmentation_training_root(target_data_dir, stage="glomeruli_transfer")
+    batch_size = get_segmentation_training_batch_size(
+        "glomeruli_transfer",
+        image_size=image_size,
+        crop_size=crop_size if crop_size is not None else image_size,
+        requested_batch_size=batch_size,
+    )
+    logger.info(f"Target data root: {target_root}")
+    logger.info(f"Training mode: {TRAINING_MODE_DYNAMIC_FULL_IMAGE}")
     
     # Make get_y function available in global namespace for model loading
     import sys
@@ -119,25 +136,17 @@ def load_model_for_transfer_learning(
         # Expose getter for FastAI's pickled learner; silence type checker
         setattr(current_module, 'get_y', get_y)  # type: ignore[attr-defined]
     
-    # Create new data loaders for target task with positive-aware cropping
-    from eq.data_management.datablock_loader import build_segmentation_dls, build_segmentation_dls_dynamic_patching
-    if use_dynamic_patching:
-        target_dls = build_segmentation_dls_dynamic_patching(
-            target_data_dir, 
-            bs=batch_size, 
-            num_workers=num_workers,
-            crop_size=(crop_size if crop_size is not None else image_size),
-            output_size=image_size,
-            positive_focus_p=positive_focus_p,
-            min_pos_pixels=min_pos_pixels,
-            pos_crop_attempts=pos_crop_attempts,
-        )
-    else:
-        target_dls = build_segmentation_dls(
-            target_data_dir, 
-            bs=batch_size, 
-            num_workers=num_workers
-        )
+    # Create new data loaders for target task with positive-aware dynamic cropping.
+    target_dls = build_segmentation_dls_dynamic_patching(
+        target_root,
+        bs=batch_size,
+        num_workers=num_workers,
+        crop_size=(crop_size if crop_size is not None else image_size),
+        output_size=image_size,
+        positive_focus_p=positive_focus_p,
+        min_pos_pixels=min_pos_pixels,
+        pos_crop_attempts=pos_crop_attempts,
+    )
     
     logger.info(f"Created target data loaders: {len(target_dls.train_ds)} train, {len(target_dls.valid_ds)} val")
     
@@ -316,7 +325,7 @@ def transfer_learn_glomeruli(
     output_dir: Union[str, Path],
     model_name: str = "glomeruli_transfer_model",
     epochs: int = 30,  # Total epochs (stage1 + stage2)
-    batch_size: int = 16,  # Increased from 8 for more stable gradients
+    batch_size: Optional[int] = None,
     learning_rate: float = 1e-3,  # Reduced from 5e-4 for proper transfer learning
     freeze_encoder: bool = False,  # Will be handled by two-stage approach
     image_size: int = 256,
@@ -326,7 +335,6 @@ def transfer_learn_glomeruli(
     stage2_lr: Optional[float] = None,  # New: lower LR for fine-tuning
     use_lr_find: bool = True,
     config_path: Optional[str] = None,
-    use_dynamic_patching: bool = True,
     positive_focus_p: float = 0.6,
     min_pos_pixels: int = 64,
     pos_crop_attempts: int = 10,
@@ -344,7 +352,7 @@ def transfer_learn_glomeruli(
     
     Args:
         base_model_path: Path to pretrained mitochondria model
-        glomeruli_data_dir: Directory containing glomeruli data
+        glomeruli_data_dir: Full-image glomeruli root containing images/ and masks/
         output_dir: Directory to save the trained model
         model_name: Name for the output model
         epochs: Total training epochs (stage1 + stage2)
@@ -375,7 +383,15 @@ def transfer_learn_glomeruli(
         stage1_epochs = max(1, epochs - 1)  # Leave at least 1 epoch for stage 2
         stage2_epochs = epochs - stage1_epochs
     
+    data_root = validate_supported_segmentation_training_root(glomeruli_data_dir, stage="glomeruli_transfer")
+    batch_size = get_segmentation_training_batch_size(
+        "glomeruli_transfer",
+        image_size=image_size,
+        crop_size=crop_size if crop_size is not None else image_size,
+        requested_batch_size=batch_size,
+    )
     logger.info(f"Training schedule: {stage1_epochs} epochs (frozen) + {stage2_epochs} epochs (unfrozen) = {epochs} total")
+    logger.info(f"Training mode: {TRAINING_MODE_DYNAMIC_FULL_IMAGE}")
     
     # Create transfer learning output directory with descriptive model name
     # Include loss in tag for traceability (e.g., transfer_loss-dice)
@@ -410,12 +426,11 @@ def transfer_learn_glomeruli(
     
     learn = load_model_for_transfer_learning(
         base_model_path, 
-        glomeruli_data_dir, 
+        data_root,
         image_size=image_size,
         crop_size=crop_size,
         batch_size=batch_size,
         output_path=output_path,
-        use_dynamic_patching=use_dynamic_patching,
         loss_name=loss_name,
         positive_focus_p=positive_focus_p,
         min_pos_pixels=min_pos_pixels,
@@ -427,6 +442,8 @@ def transfer_learn_glomeruli(
     # Save data splits manifest
     save_splits(output_path, model_folder_name, {
         "stage": "glomeruli_transfer",
+        "training_mode": TRAINING_MODE_DYNAMIC_FULL_IMAGE,
+        "data_root": str(data_root),
         "train_items": getattr(learn.dls.train_ds, 'items', []),
         "valid_items": getattr(learn.dls.valid_ds, 'items', [])
     })
@@ -491,7 +508,9 @@ def transfer_learn_glomeruli(
         'crop_size': int(crop_size) if crop_size is not None else int(image_size),
         'output_size': int(image_size),
         'base_model_path': str(base_model_path),
-        'training_approach': 'two_stage_transfer_learning'
+        'training_approach': 'two_stage_transfer_learning',
+        'training_mode': TRAINING_MODE_DYNAMIC_FULL_IMAGE,
+        'data_root': str(data_root),
     })
     
     # Generate training visualizations (may call get_preds etc.)
@@ -502,7 +521,32 @@ def transfer_learn_glomeruli(
     model_path = export_final_model(learn, output_path, model_folder_name)
     
     # Save run metadata
-    save_run_metadata(output_path, model_folder_name, config_path)
+    save_run_metadata(
+        output_path,
+        model_folder_name,
+        config_path,
+        extra_metadata={
+            "stage": "glomeruli_transfer",
+            "artifact_status": "supported_runtime",
+            "scientific_promotion_status": "not_evaluated",
+            "training_mode": TRAINING_MODE_DYNAMIC_FULL_IMAGE,
+            "data_root": str(data_root),
+            "model_path": str(model_path),
+            "base_model_path": str(base_model_path),
+            "invocation": {
+                "base_model_path": str(base_model_path),
+                "glomeruli_data_dir": str(data_root),
+                "output_dir": str(output_dir),
+                "model_name": model_name,
+                "epochs": epochs,
+                "batch_size": batch_size,
+                "learning_rate": learning_rate,
+                "image_size": image_size,
+                "stage1_epochs": stage1_epochs,
+                "stage2_epochs": stage2_epochs,
+            },
+        },
+    )
     
     # Also save a small text file with the LR used for quick inspection
     try:

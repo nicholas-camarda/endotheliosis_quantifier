@@ -91,35 +91,41 @@ eq validate-naming --data-dir data/raw_data/<your_glomeruli_project>
 ### 3. Prepare Lucchi mitochondria images
 
 ```bash
-eq extract-images \
+eq organize-lucchi \
   --input-dir data/raw_data/lucchi \
-  --output-dir data/derived_data/mito
+  --output-dir data/derived_data/mitochondria_data
 ```
 
 ### 4. Train mitochondria model
 
 ```bash
 python -m eq.training.train_mitochondria \
-  --data-dir data/derived_data/mito \
+  --data-dir data/derived_data/mitochondria_data/training \
   --model-dir models/segmentation/mitochondria \
   --epochs 50 \
-  --batch-size 16 \
+  --batch-size 24 \
   --learning-rate 1e-3 \
   --image-size 256
 ```
+
+On the powerful Apple Silicon MPS machine class, `24` is the current starting batch-size recommendation for `256x256` mitochondria training. Override it when throughput or stability requires a different value.
 
 ### 5. Train glomeruli model
 
 ```bash
 python -m eq.training.train_glomeruli \
-  --data-dir data/raw_data/<your_glomeruli_project> \
+  --data-dir data/raw_data/<your_glomeruli_project>/training_pairs \
   --model-dir models/segmentation/glomeruli \
   --epochs 50 \
-  --batch-size 8 \
+  --batch-size 12 \
   --learning-rate 1e-3 \
   --image-size 256 \
   --crop-size 512
 ```
+
+On the powerful Apple Silicon MPS machine class, `12` is the current starting batch-size recommendation for `512x512` glomeruli crops. Override it when throughput or stability requires a different value.
+
+The glomeruli training root must contain paired full-image `images/` and `masks/` directories under `raw_data`. Raw project backups such as `clean_backup` are source material; curate paired files into `training_pairs` before running model training. Generated manifests, audits, caches, and metrics belong under `derived_data`.
 
 For heavy training runs, the dedicated training modules above are the safest entrypoints. The `eq` CLI is still useful for validation, inspection, capabilities, and utility commands.
 

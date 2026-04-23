@@ -26,7 +26,7 @@ def extract_tif_stack(tif_path: Path, output_dir: Path, prefix: str) -> int:
     return count
 
 
-def organize_lucchi_dataset(input_dir: str, output_dir: str = 'data/derived_data/mito') -> Path:
+def organize_lucchi_dataset(input_dir: str, output_dir: str = 'data/derived_data/mitochondria_data') -> Path:
     """Convert Lucchi train/test TIF stacks into training/testing image directories."""
     input_path = Path(input_dir)
     output_path = Path(output_dir)
@@ -73,7 +73,7 @@ def organize_lucchi_dataset(input_dir: str, output_dir: str = 'data/derived_data
                 '',
                 'Structure:',
                 '```text',
-                'mito/',
+                'mitochondria_data/',
                 '├── training/',
                 '│   ├── images/',
                 '│   └── masks/',
@@ -98,8 +98,8 @@ def main() -> None:
     parser.add_argument('--input-dir', required=True, help='Directory containing Lucchi img/ and label/ folders.')
     parser.add_argument(
         '--output-dir',
-        default='data/derived_data/mito',
-        help='Output directory for the organized dataset.',
+        default='data/derived_data/mitochondria_data',
+        help='Output directory for the organized dataset (default: %(default)s).',
     )
     args = parser.parse_args()
 

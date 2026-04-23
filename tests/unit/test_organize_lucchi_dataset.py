@@ -33,4 +33,6 @@ def test_organize_lucchi_dataset(tmp_path: Path):
     assert sorted((output_dir / 'testing' / 'images').glob('*.tif'))
     assert sorted((output_dir / 'testing' / 'masks').glob('*.tif'))
     assert (output_dir / 'cache').exists()
-    assert (output_dir / 'README.md').exists()
+    readme_path = output_dir / 'README.md'
+    assert readme_path.exists()
+    assert 'mitochondria_data/' in readme_path.read_text(encoding='utf-8')

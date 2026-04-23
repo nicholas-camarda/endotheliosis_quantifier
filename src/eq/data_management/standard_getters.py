@@ -15,13 +15,24 @@ from typing import List
 from eq.utils.logger import get_logger
 
 
+def _mask_matches_image_stem(mask_path: Path, image_stem: str) -> bool:
+    """Check mask/image pairing by exact normalized stem match."""
+    mask_stem = mask_path.stem
+    candidates = {
+        mask_stem,
+        mask_stem.removesuffix("_mask"),
+        mask_stem.removeprefix("mask_"),
+    }
+    return image_stem in candidates
+
+
 def get_y_full(x):
     """
     Resolve full-sized mask for a given image under data_root/images/ → data_root/masks/.
 
     Directory assumptions:
       - Image under `<data_root>/images/...`.
-      - Mask under `<data_root>/masks/...` (or `<data_root>/mask_patches/...` as a flexible fallback).
+      - Mask under `<data_root>/masks/...`.
 
     Naming patterns tried (preserving subdirectories when present):
       - `<stem>_mask<ext>`
@@ -45,18 +56,25 @@ def get_y_full(x):
         # Fallback to two levels up (Txx -> images -> root) for typical layout
         data_root = img_path.parent.parent.parent
     masks_root = data_root / "masks"
-    alt_masks_root = data_root / "mask_patches"
 
-    cand_dirs: List[Path] = [masks_root, alt_masks_root]
+    cand_dirs: List[Path] = [masks_root]
     # Attempt to mirror substructure under images/
     try:
         rel = img_path.parent.relative_to(data_root / "images")
-        cand_dirs += [masks_root / rel, alt_masks_root / rel]
+        cand_dirs += [masks_root / rel]
     except Exception:
         pass
 
     stem = img_path.stem
-    names = [f"{stem}_mask", f"mask_{stem}", stem.replace("img_", "mask_")]
+    names = [
+        f"{stem}_mask",
+        f"mask_{stem}",
+        stem.replace("img_", "mask_"),
+        stem.replace("training_", "training_groundtruth_", 1),
+        stem.replace("testing_", "testing_groundtruth_", 1),
+        stem.replace("train_", "train_label_", 1),
+        stem.replace("test_", "test_label_", 1),
+    ]
 
     # Build extension candidates
     ext_candidates = [".png", img_path.suffix.lower(), ".jpg", ".jpeg", ".tif", ".tiff"]
@@ -76,15 +94,15 @@ def get_y_full(x):
                 if p.exists():
                     return p
 
-    # Fallback glob search
+    # Fallback exact normalized-stem search
     for d in cand_dirs:
         if d.exists():
-            hits = list(d.glob(f"*{stem}*mask*"))
-            if hits:
-                return hits[0]
+            for candidate in d.iterdir():
+                if candidate.is_file() and _mask_matches_image_stem(candidate, stem):
+                    return candidate
 
     raise FileNotFoundError(
-        f"❌ No mask found for {img_path.name}. Looked under 'masks/' and 'mask_patches/' with common patterns."
+        f"❌ No mask found for {img_path.name}. Looked under 'masks/' with common patterns."
     )
 
 
@@ -157,12 +175,12 @@ def get_y_patch(x):
                 if p.exists():
                     return p
 
-    # Fallback: search for any file that contains stem and 'mask'
+    # Fallback exact normalized-stem search
     for d in cand_dirs:
         if d.exists():
-            hits = list(d.glob(f"*{stem}*mask*"))
-            if hits:
-                return hits[0]
+            for candidate in d.iterdir():
+                if candidate.is_file() and _mask_matches_image_stem(candidate, stem):
+                    return candidate
 
     raise FileNotFoundError(
         f"❌ No patch mask found for {img_path.name}. Looked under 'mask_patches/' (and 'masks/') with common patterns."

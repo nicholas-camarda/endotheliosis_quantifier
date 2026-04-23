@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Simple glomeruli training test to prove the pipeline works."""
 
-from fastai.vision.all import *
-from eq.data_management.datablock_loader import build_segmentation_dls
-from eq.core.constants import DEFAULT_IMAGE_SIZE, DEFAULT_BATCH_SIZE, DEFAULT_EPOCHS, DEFAULT_LEARNING_RATE
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+from fastai.vision.all import Dice, resnet34, unet_learner
+
+from eq.data_management.datablock_loader import build_segmentation_dls_dynamic_patching
 
 def main():
     """Train glomeruli model from scratch to prove pipeline works."""
@@ -20,8 +22,8 @@ def main():
     
     print(f"📁 Loading data from: {data_dir}")
     
-    # Build DataLoaders using DataBlock approach
-    dls = build_segmentation_dls(data_dir, bs=4, num_workers=0)
+    # Build DataLoaders using the supported dynamic full-image approach
+    dls = build_segmentation_dls_dynamic_patching(data_dir, bs=4, num_workers=0)
     
     print(f"✅ Data loaded: {len(dls.train_ds)} train, {len(dls.valid_ds)} val samples")
     

@@ -24,7 +24,8 @@ def test_cli_help():
     assert result.returncode == 0
     assert 'Endotheliosis Quantifier Pipeline' in result.stdout
     assert 'data-load' in result.stdout
-    assert 'train-segmenter' in result.stdout
+    assert 'train-segmenter' not in result.stdout
+    assert 'seg' not in result.stdout
     assert 'capabilities' in result.stdout
     assert 'mode' in result.stdout
     assert 'organize-lucchi' in result.stdout
@@ -49,6 +50,7 @@ def test_cli_organize_lucchi_help():
     assert result.returncode == 0
     assert '--input-dir' in result.stdout
     assert '--output-dir' in result.stdout
+    assert 'data/derived_data/mitochondria_data' in result.stdout
 
 
 def test_cli_mode_show_runs():

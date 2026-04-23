@@ -246,12 +246,15 @@ def _process_directory_recursive(square_size, input_dir, output_dir):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
 
+    output_abs = Path(output_dir).resolve()
+
     total_patches = 0
     for filename in os.listdir(input_dir):
         input_path = os.path.join(input_dir, filename)
         if os.path.isdir(input_path):
-            # Skip if this is the output directory to prevent infinite recursion
-            if os.path.abspath(input_path) == os.path.abspath(output_dir):
+            input_abs = Path(input_path).resolve()
+            # Skip the generated output tree when output_root is inside input_root.
+            if input_abs == output_abs or output_abs.is_relative_to(input_abs) or input_abs.is_relative_to(output_abs):
                 continue
             # recursively process subdirectories
             output_subdir = os.path.join(output_dir, filename)

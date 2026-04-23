@@ -6,6 +6,7 @@ import pytest
 from fastai.vision.all import PILMask
 
 from eq.data_management.datablock_loader import (
+    build_segmentation_datablock_dynamic_patching,
     build_segmentation_datablock,
     build_segmentation_dls,
     default_get_y,
@@ -43,7 +44,7 @@ def test_build_datablock_and_dataloaders(tmp_path: Path):
     for i in range(8):
         _make_pair(tmp_path, f"s{i}")
 
-    db = build_segmentation_datablock()
+    db = build_segmentation_datablock_dynamic_patching(crop_size=64)
     dls = db.dataloaders(tmp_path, bs=4, num_workers=0)
 
     xb, yb = dls.one_batch()
@@ -81,4 +82,3 @@ def test_static_patch_loader_accepts_matching_image_and_mask_filenames(tmp_path:
     assert xb.ndim == 4
     assert yb.ndim == 3
     assert xb.shape[0] == yb.shape[0]
-

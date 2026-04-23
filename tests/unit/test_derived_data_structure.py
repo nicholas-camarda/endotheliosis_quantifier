@@ -17,48 +17,65 @@ def test_derived_data_root_exists():
     assert derived_data_root.is_dir()
 
 
-@pytest.mark.parametrize("dataset_name", ["mitochondria_data", "glomeruli_data"])
-def test_dataset_training_layout_if_present(dataset_name: str):
+def test_mitochondria_full_image_layout_if_present():
     derived_data_root = _get_derived_data_root()
-    dataset_dir = derived_data_root / dataset_name
+    dataset_dir = derived_data_root / "mitochondria_data"
     if not dataset_dir.exists():
         pytest.skip(f"Dataset not present: {dataset_dir}")
 
-    training_dir = dataset_dir / "training"
-    assert training_dir.is_dir()
-    assert (training_dir / "image_patches").is_dir()
-    assert (training_dir / "mask_patches").is_dir()
+    for split in ("training", "testing"):
+        split_dir = dataset_dir / split
+        assert split_dir.is_dir()
+        assert (split_dir / "images").is_dir()
+        assert (split_dir / "masks").is_dir()
+        assert not (split_dir / "image_patches").exists()
+        assert not (split_dir / "mask_patches").exists()
+        assert not (split_dir / "image_patch_validation").exists()
+        assert not (split_dir / "mask_patch_validation").exists()
 
 
-def test_any_patch_dataset_has_consistent_patch_counts():
+def test_segmentation_static_patch_dirs_are_not_active_if_present():
     derived_data_root = _get_derived_data_root()
-    candidates = []
+    forbidden_names = {
+        "image_patches",
+        "mask_patches",
+        "image_patch_validation",
+        "mask_patch_validation",
+    }
 
-    for dataset_dir in derived_data_root.iterdir():
-        if not dataset_dir.is_dir():
+    for dataset_name in ("mitochondria_data", "glomeruli_data"):
+        dataset_dir = derived_data_root / dataset_name
+        if not dataset_dir.exists():
             continue
+        active_static_dirs = [
+            path
+            for path in dataset_dir.rglob("*")
+            if path.is_dir() and path.name in forbidden_names
+        ]
+        assert active_static_dirs == []
 
-        direct_images = dataset_dir / "image_patches"
-        direct_masks = dataset_dir / "mask_patches"
-        if direct_images.is_dir() and direct_masks.is_dir():
-            candidates.append((direct_images, direct_masks))
 
-        nested_training = dataset_dir / "training"
-        nested_images = nested_training / "image_patches"
-        nested_masks = nested_training / "mask_patches"
-        if nested_images.is_dir() and nested_masks.is_dir():
-            candidates.append((nested_images, nested_masks))
+def test_projects_runtime_segmentation_static_patch_dirs_are_retired_when_runtime_present():
+    runtime_root = Path.home() / "ProjectsRuntime" / "endotheliosis_quantifier" / "derived_data"
+    if not runtime_root.exists():
+        pytest.skip(f"ProjectsRuntime derived data root not present: {runtime_root}")
 
-    if not candidates:
-        pytest.skip(f"No patch dataset layouts found under {derived_data_root}")
-
-    image_patches_dir, mask_patches_dir = candidates[0]
-    image_patches = sorted(path for path in image_patches_dir.iterdir() if path.is_file())
-    mask_patches = sorted(path for path in mask_patches_dir.iterdir() if path.is_file())
-    if not image_patches or not mask_patches:
-        pytest.skip(f"No patch files present under {image_patches_dir.parent}")
-
-    assert len(mask_patches) == len(image_patches)
+    forbidden_names = {
+        "image_patches",
+        "mask_patches",
+        "image_patch_validation",
+        "mask_patch_validation",
+    }
+    for dataset_name in ("mitochondria_data", "glomeruli_data"):
+        dataset_dir = runtime_root / dataset_name
+        if not dataset_dir.exists():
+            continue
+        active_static_dirs = [
+            path
+            for path in dataset_dir.rglob("*")
+            if path.is_dir() and path.name in forbidden_names
+        ]
+        assert active_static_dirs == []
 
 
 def test_cache_directories_are_directories_when_present():
