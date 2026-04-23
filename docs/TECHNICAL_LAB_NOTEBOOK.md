@@ -1,6 +1,6 @@
 # Technical Lab Notebook: Endotheliosis Quantifier
 
-**Updated**: April 2, 2026  
+**Updated**: April 23, 2026  
 **Branch**: `master`  
 **Project**: Endotheliosis Quantifier (`eq`)  
 **Purpose**: Technical status notebook for the checked-in `master` branch
@@ -153,6 +153,131 @@ The checked-in branch does **not** use the older bare repo-root `derived_data/` 
 
 ## Segmentation Architecture
 
+### Neural Network Concept Walkthrough
+
+This section is intentionally conceptual. It explains the maintained segmentation model path.
+
+#### What The Model Is
+
+The maintained segmentation path is a pixel-wise classifier built with FastAI and PyTorch:
+
+- training entrypoints: `src/eq/training/train_mitochondria.py` and `src/eq/training/train_glomeruli.py`
+- model builder: `unet_learner(...)`
+- encoder backbone: `resnet34`
+- output contract: `n_out=2` for background vs foreground segmentation
+
+In practical terms, the network takes an image crop and decides, for each pixel, whether that location belongs to the target structure or to background.
+
+#### How Data Moves Through The Network
+
+```mermaid
+flowchart LR
+    A["Full image + mask pair"] --> B["Dynamic crop sampler"]
+    B --> C["ResNet34 encoder"]
+    C --> D["Low-resolution feature maps"]
+    D --> E["U-Net decoder"]
+    C --> F["Skip connections"]
+    F --> E
+    E --> G["Two-channel pixel logits"]
+    G --> H["Foreground vs background mask"]
+    H --> I["Dice / Jaccard review and saved prediction panels"]
+```
+
+The main idea is:
+
+1. the loader starts from full `images/` and `masks/` roots
+2. dynamic patching samples crops during training instead of relying on retired static patch datasets
+3. the encoder compresses the image into feature maps that retain increasingly abstract spatial patterns
+4. the decoder upsamples those features back toward image space
+5. skip connections re-introduce fine spatial detail so the model can place boundaries more precisely
+6. the final layer emits two scores per pixel, one for background and one for foreground
+
+#### What The Encoder And Decoder Are Doing
+
+- The `resnet34` encoder acts as a feature extractor. Early layers respond to edges, contrast changes, and local texture; deeper layers combine those into larger shape and context patterns.
+- The U-Net decoder turns those coarse features back into a dense mask. That matters because segmentation needs location, not just image-level classification.
+- Skip connections matter because the deepest features are semantically richer but spatially blurrier. Reusing earlier higher-resolution features helps the model recover structure boundaries.
+
+#### What Training Is Optimizing
+
+The current training scripts construct a binary segmentation learner with:
+
+- `n_out=2`
+- FastAI default loss behavior for two-class segmentation
+- metrics including `Dice` and `JaccardCoeff()`
+
+Conceptually, each training step does this:
+
+1. sample an image crop and its aligned mask
+2. run the crop through the network to produce per-pixel logits
+3. compare predicted foreground/background structure against the mask
+4. backpropagate the error signal through decoder and encoder weights
+5. update parameters so future crops produce masks closer to the training target
+
+#### Why Dynamic Patching Exists
+
+The maintained segmentation loaders use full-image dynamic patching rather than fixed pre-generated patches.
+
+That changes what the network sees during training:
+
+- the model is not locked to one frozen patch export
+- positive-aware sampling can revisit sparse target regions more often
+- train/validation splits are tracked while still preserving full-image source provenance
+
+In this repo, that behavior is controlled in `src/eq/data_management/datablock_loader.py` through dynamic patching and positive-aware crop settings such as `positive_focus_p`, `min_pos_pixels`, and `pos_crop_attempts`.
+
+#### Concept Images
+
+These images are included to illustrate the concept of the maintained segmentation workflow. They show examples of training outputs and validation predictions from this repository. They do **not** by themselves establish that a model is scientifically valid, generalizable, or promoted for use.
+
+##### Example Validation Predictions
+
+Mitochondria example:
+
+![Mitochondria validation predictions](../assets/mitochondria/validation_predictions.png)
+
+Glomeruli transfer-learning example:
+
+![Glomeruli transfer validation predictions](../assets/glomeruli/transfer/validation_predictions.png)
+
+These panels are useful because they make the task concrete: the network is not producing one global score first. It is producing a spatial mask, and those masks are then visually compared against held-out targets.
+
+##### Example Training Curves
+
+Mitochondria training-loss example:
+
+![Mitochondria training loss](../assets/mitochondria/training_loss.png)
+
+Glomeruli transfer training-loss example:
+
+![Glomeruli transfer training loss](../assets/glomeruli/transfer/training_loss.png)
+
+These curves illustrate optimization progress, not scientific validity. A smoother or lower loss curve can still correspond to leakage, bad labels, missing negatives, or degenerate predictions, which is why the repo keeps promotion and audit language separate from simple training completion.
+
+#### What The Pictures Support And What They Do Not
+
+What they support directly:
+
+- the code is training a segmentation network rather than a pure image-level classifier
+- the network emits spatial predictions that can be visually inspected
+- the training stack saves review artifacts that expose optimization behavior and example masks
+
+What they do not support on their own:
+
+- that the model learned the intended biological signal
+- that the model is robust across sites, stains, scanners, or cohorts
+- that high overlap on a small validation split is clinically meaningful
+- that an exported artifact is eligible for promotion without the required audit evidence
+
+#### Transfer Learning In This Repo
+
+The two-stage conceptual story in this codebase is:
+
+1. train a mitochondria segmentation model from scratch
+2. reuse that learned representation as the starting point for glomeruli training
+
+The intuition is that the encoder may already have useful low-level and mid-level visual features, so glomeruli training does not start from random weights. That is an implementation choice and an efficiency hypothesis. It still needs empirical comparison against a scratch baseline, which is why the repo has explicit candidate-comparison and promotion-gate surfaces instead of assuming transfer is automatically better.
+
 ### Core Contract
 
 The current branch follows a consistent binary segmentation contract:
@@ -215,11 +340,13 @@ Primary entrypoint:
 python -m eq.training.train_glomeruli \
   --data-dir data/raw_data/<your_glomeruli_project>/training_pairs \
   --model-dir models/segmentation/glomeruli \
-  --epochs 50 \
+  --base-model models/segmentation/mitochondria/<your_mito_model>.pkl \
+  --epochs 30 \
   --batch-size 12 \
   --learning-rate 1e-3 \
   --image-size 256 \
-  --crop-size 512
+  --crop-size 512 \
+  --seed 42
 ```
 
 The glomeruli training root must contain paired full-image `images/` and `masks/` directories under `raw_data`. Raw project backups are source material; curate paired files into `training_pairs` before running model training. Generated manifests, audits, caches, and metrics belong under `derived_data`.
@@ -228,9 +355,10 @@ Important nuance:
 
 - the README example above is the recommended workflow documentation
 - the `train_glomeruli.py` module resolves a machine-aware default batch size and currently starts at `12` on the powerful Apple Silicon MPS machine class when using `512x512` crops
-- `configs/glomeruli_finetuning_config.yaml` documents `epochs=30`, `batch_size=12`, and `learning_rate=5e-4`
+- the canonical control surface is the dedicated training module CLI with explicit `--base-model` or `--from-scratch`
+- `configs/glomeruli_finetuning_config.yaml` is an optional overlay and engineering reference, not the authoritative promotion-workflow contract
 
-So there is still some configuration drift inside `master`, and the notebook should not claim a single universal glomeruli default beyond what each entrypoint actually sets.
+So the notebook should describe the explicit CLI path as canonical and treat YAML only as optional overlay material.
 
 ### Dynamic Patching
 
