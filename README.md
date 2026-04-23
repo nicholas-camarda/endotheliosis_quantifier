@@ -56,7 +56,7 @@ endotheliosis_quantifier/
 ├── data/
 │   ├── raw_data/
 │   │   ├── lucchi/
-│   │   └── <your_glomeruli_project>/
+│   │   └── my_glomeruli_project/
 │   │       ├── images/
 │   │       ├── masks/
 │   │       ├── annotations/
@@ -73,6 +73,42 @@ endotheliosis_quantifier/
 
 Everything under `data/`, `models/`, `logs/`, and `output/` is intentionally local-only and should stay out of Git.
 
+## Set These Once
+
+The workflow below is much easier if you choose your project name and model names once, up front, and then reuse shell variables instead of retyping placeholder fragments.
+
+```bash
+export GLOMERULI_PROJECT="my_glomeruli_project"
+export GLOMERULI_ROOT="data/raw_data/$GLOMERULI_PROJECT"
+export GLOMERULI_TRAIN_ROOT="$GLOMERULI_ROOT/training_pairs"
+export GLOMERULI_ANNOTATIONS="$GLOMERULI_ROOT/annotations/annotations.json"
+
+export MITO_MODEL_DIR="models/segmentation/mitochondria"
+export GLOMERULI_MODEL_DIR="models/segmentation/glomeruli"
+
+export MITO_MODEL_NAME="mitochondria_baseline"
+export MITO_RUN="${MITO_MODEL_NAME}-pretrain_e50_b24_lr1e-3_sz256"
+export MITO_BASE_MODEL="$MITO_MODEL_DIR/$MITO_RUN/$MITO_RUN.pkl"
+
+export GLOMERULI_TRANSFER_MODEL_NAME="glomeruli_transfer_baseline"
+export GLOMERULI_TRANSFER_RUN="${GLOMERULI_TRANSFER_MODEL_NAME}-transfer_s1lr1e-3_s2lr_lrfind_e30_b12_lr1e-3_sz256"
+export GLOMERULI_TRANSFER_MODEL="$GLOMERULI_MODEL_DIR/transfer/$GLOMERULI_TRANSFER_RUN/$GLOMERULI_TRANSFER_RUN.pkl"
+
+export GLOMERULI_SCRATCH_MODEL_NAME="glomeruli_scratch_baseline"
+export GLOMERULI_SCRATCH_RUN="${GLOMERULI_SCRATCH_MODEL_NAME}-scratch_e50_b12_lr1e-3_sz256"
+export GLOMERULI_SCRATCH_MODEL="$GLOMERULI_MODEL_DIR/scratch/$GLOMERULI_SCRATCH_RUN/$GLOMERULI_SCRATCH_RUN.pkl"
+```
+
+What these mean:
+
+- `GLOMERULI_PROJECT` is your raw-data project folder under `data/raw_data/`
+- `MITO_BASE_MODEL` is the supported mitochondria `.pkl` produced in step 4
+- `GLOMERULI_TRANSFER_MODEL` is the transfer candidate `.pkl` produced in step 5
+- `GLOMERULI_SCRATCH_MODEL` is the scratch candidate `.pkl` produced in step 5
+
+Define them at shell startup even if the later files do not exist yet. The point is that the paths become predictable and the later commands stay copy-pasteable.
+If you change `--model-name`, `--epochs`, `--batch-size`, `--learning-rate`, or `--image-size`, update the corresponding `*_RUN` variable so it still matches the artifact name the training code will write.
+
 ## Workflow
 
 ### 1. Inspect hardware and mode
@@ -85,7 +121,7 @@ eq mode --show
 ### 2. Validate raw glomeruli naming
 
 ```bash
-eq validate-naming --data-dir data/raw_data/<your_glomeruli_project>
+eq validate-naming --data-dir "$GLOMERULI_ROOT"
 ```
 
 ### 3. Prepare Lucchi mitochondria images
@@ -101,7 +137,8 @@ eq organize-lucchi \
 ```bash
 python -m eq.training.train_mitochondria \
   --data-dir data/derived_data/mitochondria_data/training \
-  --model-dir models/segmentation/mitochondria \
+  --model-dir "$MITO_MODEL_DIR" \
+  --model-name "$MITO_MODEL_NAME" \
   --epochs 50 \
   --batch-size 24 \
   --learning-rate 1e-3 \
@@ -116,9 +153,10 @@ Transfer candidate:
 
 ```bash
 python -m eq.training.train_glomeruli \
-  --data-dir /absolute/path/to/raw_data/project/training_pairs \
-  --model-dir /absolute/path/to/glomeruli_models \
-  --base-model /absolute/path/to/mito_supported_base.pkl \
+  --data-dir "$GLOMERULI_TRAIN_ROOT" \
+  --model-dir "$GLOMERULI_MODEL_DIR" \
+  --model-name "$GLOMERULI_TRANSFER_MODEL_NAME" \
+  --base-model "$MITO_BASE_MODEL" \
   --epochs 30 \
   --batch-size 12 \
   --learning-rate 1e-3 \
@@ -131,8 +169,9 @@ Scratch candidate:
 
 ```bash
 python -m eq.training.train_glomeruli \
-  --data-dir data/raw_data/<your_glomeruli_project>/training_pairs \
-  --model-dir models/segmentation/glomeruli \
+  --data-dir "$GLOMERULI_TRAIN_ROOT" \
+  --model-dir "$GLOMERULI_MODEL_DIR" \
+  --model-name "$GLOMERULI_SCRATCH_MODEL_NAME" \
   --from-scratch \
   --epochs 50 \
   --batch-size 12 \
@@ -154,8 +193,8 @@ The dedicated training module CLI is the canonical control surface for glomeruli
 
 ```bash
 python -m eq.training.compare_glomeruli_candidates \
-  --data-dir /absolute/path/to/raw_data/project/training_pairs \
-  --transfer-base-model /absolute/path/to/mito_supported_base.pkl \
+  --data-dir "$GLOMERULI_TRAIN_ROOT" \
+  --transfer-base-model "$MITO_BASE_MODEL" \
   --seed 42 \
   --crop-size 512
 ```
@@ -166,18 +205,20 @@ If `--output-dir` is omitted, this workflow writes its deterministic validation 
 
 ```bash
 eq prepare-quant-contract \
-  --data-dir data/raw_data/<your_glomeruli_project> \
-  --segmentation-model models/segmentation/glomeruli/<your_model>.pkl \
+  --data-dir "$GLOMERULI_ROOT" \
+  --segmentation-model "$GLOMERULI_TRANSFER_MODEL" \
   --score-source labelstudio \
-  --annotation-source data/raw_data/<your_glomeruli_project>/annotations/annotations.json
+  --annotation-source "$GLOMERULI_ANNOTATIONS"
 
 eq quant-endo \
-  --data-dir data/raw_data/<your_glomeruli_project> \
-  --segmentation-model models/segmentation/glomeruli/<your_model>.pkl \
+  --data-dir "$GLOMERULI_ROOT" \
+  --segmentation-model "$GLOMERULI_TRANSFER_MODEL" \
   --score-source labelstudio \
-  --annotation-source data/raw_data/<your_glomeruli_project>/annotations/annotations.json \
-  --output-dir output/quantification/<your_glomeruli_project>
+  --annotation-source "$GLOMERULI_ANNOTATIONS" \
+  --output-dir "output/quantification/$GLOMERULI_PROJECT"
 ```
+
+If you want to quantify with the scratch candidate instead, replace `"$GLOMERULI_TRANSFER_MODEL"` with `"$GLOMERULI_SCRATCH_MODEL"`.
 
 This path currently treats the Label Studio image-level grade as the supervised target for each image/mask pair. ROI extraction uses the full multi-component mask bounding box with context padding, then builds frozen segmentation-backbone embeddings and a canonical penalized multiclass ordinal baseline from `src/eq/quantification/ordinal.py`.
 
@@ -193,11 +234,11 @@ Current ordinal implementation surfaces:
 ## Useful Commands
 
 ```bash
-eq process-data --input-dir data/raw_data/<project> --output-dir data/derived_data/<project>
-eq metadata-process --input-file data/raw_data/<project>/subject_metadata.xlsx --output-dir data/derived_data/<project>/metadata
-eq prepare-quant-contract --data-dir data/raw_data/<project> --segmentation-model models/segmentation/glomeruli/<model>.pkl --score-source labelstudio
-eq quant-endo --data-dir data/raw_data/<project> --segmentation-model models/segmentation/glomeruli/<model>.pkl --score-source labelstudio
-eq audit-derived --data-dir data/derived_data/<project>
+eq process-data --input-dir "$GLOMERULI_ROOT" --output-dir "data/derived_data/$GLOMERULI_PROJECT"
+eq metadata-process --input-file "$GLOMERULI_ROOT/subject_metadata.xlsx" --output-dir "data/derived_data/$GLOMERULI_PROJECT/metadata"
+eq prepare-quant-contract --data-dir "$GLOMERULI_ROOT" --segmentation-model "$GLOMERULI_TRANSFER_MODEL" --score-source labelstudio --annotation-source "$GLOMERULI_ANNOTATIONS"
+eq quant-endo --data-dir "$GLOMERULI_ROOT" --segmentation-model "$GLOMERULI_TRANSFER_MODEL" --score-source labelstudio --annotation-source "$GLOMERULI_ANNOTATIONS"
+eq audit-derived --data-dir "data/derived_data/$GLOMERULI_PROJECT"
 eq visualize --mask path/to/mask.png --output output/mask_preview.png
 ```
 
