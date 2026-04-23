@@ -12,8 +12,10 @@ This is the second stage of the two-stage training pipeline.
 """
 
 import re
+import random
 import sys
 from pathlib import Path
+from typing import Optional
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
@@ -45,6 +47,23 @@ from eq.core.constants import (
 
 logger = get_logger("eq.retrain_glomeruli_original")
 
+
+def set_training_seed(seed: int) -> None:
+    """Set process-wide RNG seeds for bounded reproducible training runs."""
+    import numpy as np
+    import torch
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    try:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    except Exception:
+        pass
+
 def _format_run_suffix(epochs: int, batch_size: int, learning_rate: float, image_size: int, tag: str = "") -> str:
     """Create a concise, filesystem-safe suffix describing training params."""
     lr_str = (f"{learning_rate:.0e}" if learning_rate < 1e-2 else f"{learning_rate:.3f}").replace("-0", "-")
@@ -68,6 +87,7 @@ def train_glomeruli_with_transfer_learning(
     loss_name: Optional[str] = None,
     crop_size: Optional[int] = None,
     use_lr_find: bool = True,
+    seed: int = 42,
 ) -> Learner:
     """
     Train glomeruli model using transfer learning from mitochondria model.
@@ -86,6 +106,7 @@ def train_glomeruli_with_transfer_learning(
         Learner: Trained glomeruli model
     """
     logger.info("Starting glomeruli training with transfer learning")
+    set_training_seed(seed)
     batch_size = get_segmentation_training_batch_size(
         "glomeruli",
         image_size=image_size,
@@ -125,6 +146,7 @@ def train_glomeruli_with_transfer_learning(
         loss_name=loss_name,
         crop_size=crop_size,
         use_lr_find=use_lr_find,
+        seed=seed,
     )
     
     return learn
@@ -139,10 +161,12 @@ def train_glomeruli_with_datablock(
     epochs: int = DEFAULT_EPOCHS,
     learning_rate: float = DEFAULT_LEARNING_RATE,
     image_size: int = DEFAULT_IMAGE_SIZE,
+    crop_size: Optional[int] = None,
     config_path: Optional[str] = None,
     positive_focus_p: float = DEFAULT_POSITIVE_FOCUS_P,
     min_pos_pixels: int = DEFAULT_MIN_POS_PIXELS,
     pos_crop_attempts: int = DEFAULT_POS_CROP_ATTEMPTS,
+    seed: int = 42,
 ):
     """
     Train glomeruli segmentation model using FastAI v2 DataBlock approach with transfer learning.
@@ -156,17 +180,19 @@ def train_glomeruli_with_datablock(
         epochs: Number of training epochs
         learning_rate: Learning rate
         image_size: Input image size
+        crop_size: Dynamic crop size before resize to model input
         
     Returns:
         Trained learner
     """
     logger = get_logger("eq.glomeruli_training")
     logger.info("Starting glomeruli model training with DataBlock and transfer learning...")
+    set_training_seed(seed)
     data_root = validate_supported_segmentation_training_root(data_dir, stage="glomeruli")
     batch_size = get_segmentation_training_batch_size(
         "glomeruli",
         image_size=image_size,
-        crop_size=image_size,
+        crop_size=crop_size if crop_size is not None else image_size,
         requested_batch_size=batch_size,
     )
     
@@ -191,7 +217,8 @@ def train_glomeruli_with_datablock(
         data_root,
         bs=batch_size,
         num_workers=0,
-        crop_size=image_size,
+        crop_size=(crop_size if crop_size is not None else image_size),
+        output_size=image_size,
         positive_focus_p=positive_focus_p,
         min_pos_pixels=min_pos_pixels,
         pos_crop_attempts=pos_crop_attempts,
@@ -242,10 +269,13 @@ def train_glomeruli_with_datablock(
         'batch_size': batch_size,
         'learning_rate': learning_rate,
         'image_size': image_size,
+        'crop_size': int(crop_size) if crop_size is not None else int(image_size),
+        'output_size': int(image_size),
         'base_model_path': base_model_path or 'None (from scratch)',
         'training_approach': 'transfer_learning' if base_model_path else 'from_scratch',
         'training_mode': TRAINING_MODE_DYNAMIC_FULL_IMAGE,
         'data_root': str(data_root),
+        'seed': seed,
     })
 
     # Generate training visualizations
@@ -277,6 +307,9 @@ def train_glomeruli_with_datablock(
                 "batch_size": batch_size,
                 "learning_rate": learning_rate,
                 "image_size": image_size,
+                "crop_size": int(crop_size) if crop_size is not None else int(image_size),
+                "output_size": int(image_size),
+                "seed": seed,
             },
         },
     )
@@ -358,8 +391,9 @@ def main():
     parser.add_argument('--data-dir', required=True, help='Full-image training root containing images/ and masks/')
     parser.add_argument('--model-dir', default=DEFAULT_GLOMERULI_MODEL_DIR, help='Directory to save trained model')
     parser.add_argument('--model-name', default='glomeruli_model', help='Base name for saved model files')
-    parser.add_argument('--base-model', help='Path to base model for transfer learning (auto-detected by default)')
-    parser.add_argument('--from-scratch', action='store_true', help='Force training from scratch (bypass transfer learning)')
+    parser.add_argument('--base-model', help='Path to base model for explicit transfer learning')
+    parser.add_argument('--from-scratch', action='store_true', help='Train explicitly from scratch')
+    parser.add_argument('--allow-auto-base-model', action='store_true', help='Opt in to auto-detecting a mitochondria base artifact when --base-model is not provided')
     parser.add_argument('--epochs', type=int, default=DEFAULT_EPOCHS, help='Number of training epochs')
     parser.add_argument('--batch-size', type=int, default=None, help='Training batch size (default: machine-aware recommendation)')
     parser.add_argument('--learning-rate', type=float, default=DEFAULT_LEARNING_RATE, help='Learning rate')
@@ -367,6 +401,7 @@ def main():
     parser.add_argument('--crop-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Dynamic patching crop size before resizing')
     parser.add_argument('--loss', type=str, default='', help='Loss to use: dice | bcedice | tversky (default: fastai/weighted)')
     parser.add_argument('--skip-lr-find', action='store_true', help='Skip lr_find and use provided learning rate for fine-tune')
+    parser.add_argument('--seed', type=int, default=42, help='Explicit training seed to record in provenance and use for bounded comparisons')
     
     args = parser.parse_args()
 
@@ -424,25 +459,33 @@ def main():
         logger.info(f"📁 Model directory: {args.model_dir}")
         logger.info(f"🧾 Model name: {args.model_name}")
         logger.info(f"⚙️  Epochs: {args.epochs}, Batch size: {args.batch_size}")
-        
-        # AUTO-DETECT MITOCHONDRIA MODEL FOR TRANSFER LEARNING (PRIMARY APPROACH)
+
+        if args.from_scratch and args.base_model:
+            raise ValueError("Choose either --from-scratch or --base-model, not both.")
+
         if args.from_scratch:
-            logger.info("🔧 FROM SCRATCH (Forced): User requested training from scratch")
+            logger.info("🔧 FROM SCRATCH: explicit scratch training requested")
             args.base_model = None
-        elif not args.base_model:
-            # Try to auto-detect the best mitochondria model
-            auto_detected_model = find_best_mitochondria_model()
-            if auto_detected_model:
-                args.base_model = auto_detected_model
-                logger.info("🎯 TRANSFER LEARNING (Primary): Auto-detected mitochondria model")
-                logger.info(f"🔄 Using base model: {args.base_model}")
-            else:
-                logger.info("🔧 FROM SCRATCH (Fallback): No mitochondria model found")
-        else:
-            logger.info("🔄 TRANSFER LEARNING (Manual): Using provided base model")
+        elif args.base_model:
+            logger.info("🔄 TRANSFER LEARNING: explicit base model provided")
             logger.info(f"🔄 Using base model: {args.base_model}")
-        
-        # Train the model using transfer learning if base model provided, otherwise from scratch
+        elif args.allow_auto_base_model:
+            auto_detected_model = find_best_mitochondria_model()
+            if not auto_detected_model:
+                raise ValueError(
+                    "No supported mitochondria base artifact was auto-detected. "
+                    "Provide --base-model explicitly or choose --from-scratch."
+                )
+            args.base_model = auto_detected_model
+            logger.info("🔄 TRANSFER LEARNING: using auto-detected base model")
+            logger.info(f"🔄 Using base model: {args.base_model}")
+        else:
+            raise ValueError(
+                "Glomeruli training requires an explicit family selection. "
+                "Provide --base-model for transfer learning or --from-scratch for a scratch candidate. "
+                "Use --allow-auto-base-model only when you intentionally want auto-detection."
+            )
+
         if args.base_model:
             model = train_glomeruli_with_transfer_learning(
                 data_dir=args.data_dir,
@@ -456,7 +499,8 @@ def main():
                 loss_name=args.loss or None,
                 crop_size=args.crop_size,
                 # Skip lr_find if user asked to, or use provided LR directly
-                use_lr_find=(not args.skip_lr_find)
+                use_lr_find=(not args.skip_lr_find),
+                seed=args.seed,
             )
         else:
             model = train_glomeruli_with_datablock(
@@ -468,7 +512,9 @@ def main():
                 epochs=args.epochs,
                 learning_rate=args.learning_rate,
                 image_size=args.image_size,
+                crop_size=args.crop_size,
                 config_path=config_path,
+                seed=args.seed,
                 # TODO: implement loss_name
                 # loss_name=args.loss or None
             )

@@ -223,20 +223,41 @@ On the powerful Apple Silicon MPS machine class, `24` is the current starting ba
 
 ### 3. Train The Glomeruli Model
 
+Transfer candidate:
+
+```bash
+python -m eq.training.train_glomeruli \
+  --data-dir /absolute/path/to/raw_data/project/training_pairs \
+  --model-dir /absolute/path/to/glomeruli_models \
+  --base-model /absolute/path/to/mito_supported_base.pkl \
+  --epochs 30 \
+  --batch-size 12 \
+  --learning-rate 1e-3 \
+  --image-size 256 \
+  --crop-size 512 \
+  --seed 42
+```
+
+Scratch candidate:
+
 ```bash
 python -m eq.training.train_glomeruli \
   --data-dir data/raw_data/your_project/training_pairs \
   --model-dir models/segmentation/glomeruli \
+  --from-scratch \
   --epochs 50 \
   --batch-size 12 \
   --learning-rate 1e-3 \
   --image-size 256 \
-  --crop-size 512
+  --crop-size 512 \
+  --seed 42
 ```
 
 On the powerful Apple Silicon MPS machine class, `12` is the current starting batch-size recommendation for `512x512` glomeruli crops. Override it when throughput or stability requires a different value.
 
 The glomeruli training root must contain paired full-image `images/` and `masks/` directories under `raw_data`. Raw project backups are source material; curate paired files into `training_pairs` before running model training. Generated manifests, audits, caches, and metrics belong under `derived_data`.
+
+The dedicated training module CLI is the authoritative control surface. Optional YAML files are overlays, not the promotion contract.
 
 ### 4. Run The Current Quantification Baseline
 

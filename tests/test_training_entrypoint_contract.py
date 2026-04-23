@@ -42,6 +42,7 @@ class _FakeLearner:
         self.loss_func = "fake_loss"
         self.recorder = _FakeRecorder()
         self.fit_calls = []
+        self.fp16_called = False
 
     def fit_one_cycle(self, epochs, lr_max, cbs=None):
         self.fit_calls.append((epochs, lr_max, cbs))
@@ -51,6 +52,10 @@ class _FakeLearner:
 
     def unfreeze(self):
         return None
+
+    def to_fp16(self):
+        self.fp16_called = True
+        return self
 
 
 def _make_full_image_root(root: Path, count: int = 8) -> None:
@@ -87,10 +92,17 @@ def test_mitochondria_training_entrypoint_smoke_uses_dynamic_full_image_root(tmp
     output_root = tmp_path / "models"
     captured = {}
 
+    def fake_build_dls(root, **kwargs):
+        captured["dls_root"] = Path(root)
+        captured["dls_kwargs"] = kwargs
+        items = sorted((Path(root) / "images").glob("*.jpg"))
+        return _FakeDls(items)
+
     def fake_unet_learner(dls, *args, **kwargs):
         captured["dls"] = dls
         return _FakeLearner(dls)
 
+    monkeypatch.setattr(train_mitochondria, "build_segmentation_dls_dynamic_patching", fake_build_dls)
     monkeypatch.setattr(train_mitochondria, "unet_learner", fake_unet_learner)
     _patch_artifact_writers(monkeypatch, train_mitochondria)
 
@@ -106,6 +118,7 @@ def test_mitochondria_training_entrypoint_smoke_uses_dynamic_full_image_root(tmp
     assert model_path.exists()
     assert learn.fit_calls
     assert captured["dls"] is learn.dls
+    assert captured["dls_root"] == data_root
     metadata_files = list(output_root.glob("**/*_run_metadata.json"))
     assert metadata_files
     metadata = json.loads(metadata_files[0].read_text())
@@ -174,6 +187,73 @@ def test_glomeruli_transfer_training_smoke_validates_full_image_root(tmp_path, m
     assert metadata["base_model_path"] == str(base_model)
     assert metadata["package_versions"]["torch"]
     assert "model_path" in metadata
+
+
+def test_transfer_learning_enables_fp16_only_on_cuda(monkeypatch):
+    learn = _FakeLearner(_FakeDls([]))
+
+    monkeypatch.setattr(transfer_learning.torch.cuda, "is_available", lambda: False)
+    same = transfer_learning._maybe_enable_cuda_fp16(learn)
+    assert same is learn
+    assert learn.fp16_called is False
+
+    learn_cuda = _FakeLearner(_FakeDls([]))
+    monkeypatch.setattr(transfer_learning.torch.cuda, "is_available", lambda: True)
+    same_cuda = transfer_learning._maybe_enable_cuda_fp16(learn_cuda)
+    assert same_cuda is learn_cuda
+    assert learn_cuda.fp16_called is True
+
+
+def test_glomeruli_scratch_training_preserves_requested_crop_size(tmp_path, monkeypatch):
+    data_root = tmp_path / "raw_data" / "glomeruli" / "training_pairs"
+    _make_full_image_root(data_root)
+    output_root = tmp_path / "models"
+    captured = {}
+
+    def fake_batch_size(stage, *, image_size=None, crop_size=None, requested_batch_size=None, mode="production"):
+        captured["batch_size_call"] = {
+            "stage": stage,
+            "image_size": image_size,
+            "crop_size": crop_size,
+            "requested_batch_size": requested_batch_size,
+            "mode": mode,
+        }
+        return 2
+
+    def fake_build_dls(root, **kwargs):
+        captured["dls_call"] = {"root": Path(root), **kwargs}
+        items = sorted((Path(root) / "images").glob("*.jpg"))
+        return _FakeDls(items)
+
+    def fake_unet_learner(dls, *args, **kwargs):
+        captured["dls"] = dls
+        return _FakeLearner(dls)
+
+    monkeypatch.setattr(train_glomeruli, "get_segmentation_training_batch_size", fake_batch_size)
+    monkeypatch.setattr(train_glomeruli, "build_segmentation_dls_dynamic_patching", fake_build_dls)
+    monkeypatch.setattr(train_glomeruli, "unet_learner", fake_unet_learner)
+    _patch_artifact_writers(monkeypatch, train_glomeruli)
+
+    learn = train_glomeruli.train_glomeruli_with_datablock(
+        data_dir=str(data_root),
+        output_dir=str(output_root),
+        model_name="glom_scratch",
+        epochs=1,
+        batch_size=None,
+        image_size=64,
+        crop_size=96,
+        seed=42,
+    )
+
+    assert learn.fit_calls
+    assert captured["batch_size_call"]["crop_size"] == 96
+    assert captured["dls_call"]["crop_size"] == 96
+    assert captured["dls_call"]["output_size"] == 64
+    metadata_files = list(output_root.glob("**/*_run_metadata.json"))
+    assert metadata_files
+    metadata = json.loads(metadata_files[0].read_text())
+    assert metadata["invocation"]["crop_size"] == 96
+    assert metadata["invocation"]["output_size"] == 64
 
 
 def _make_static_patch_root(root: Path) -> None:

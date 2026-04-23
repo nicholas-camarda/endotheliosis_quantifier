@@ -21,6 +21,7 @@ from eq.training.promotion_gates import (
     deterministic_validation_manifest,
     evaluate_glomeruli_promotion_candidate,
     evaluate_prediction_degeneracy,
+    evaluate_prediction_review,
     trivial_baseline_metrics,
 )
 
@@ -138,6 +139,34 @@ def test_training_cli_help_does_not_expose_static_patch_toggle():
         assert "--no-dynamic-patching" not in result.stdout
         assert "--use-dynamic-patching" not in result.stdout
         assert "images/ and masks/" in result.stdout
+
+
+def test_glomeruli_training_cli_requires_explicit_family_selection(tmp_path: Path):
+    repo_root = Path(__file__).resolve().parents[1]
+    data_root = tmp_path / "raw_data" / "project" / "training_pairs"
+    _make_full_image_root(data_root)
+    script = repo_root / "src" / "eq" / "training" / "train_glomeruli.py"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(repo_root / "src")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--data-dir",
+            str(data_root),
+            "--model-dir",
+            str(tmp_path / "models"),
+            "--epochs",
+            "1",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode != 0
+    assert "explicit family selection" in (result.stderr + result.stdout)
 
 
 def test_package_cli_does_not_expose_unsupported_training_routes():
@@ -296,8 +325,35 @@ def test_deterministic_validation_manifest_has_required_categories(tmp_path: Pat
     assert first == second
     assert [item["category"] for item in first] == ["background", "boundary", "positive"]
     assert all(item["crop_box"] == [0, 0, 16, 16] for item in first)
+    assert all("image_path" in item for item in first)
     audit = audit_manifest_crops(first)
     assert audit["categories"] == {"background": 1, "boundary": 1, "positive": 1}
+
+
+def test_deterministic_validation_manifest_spreads_examples_across_images_when_available(tmp_path: Path):
+    paths = []
+    for name in ["T19_Image0", "T20_Image0", "T21_Image0"]:
+        mask = np.zeros((32, 32), dtype=np.uint8)
+        mask[0:4, 0:4] = 1
+        mask[14:18, 14:18] = 1
+        subject = name.split("_")[0]
+        mask_path = tmp_path / "masks" / subject / f"{name}_mask.png"
+        mask_path.parent.mkdir(parents=True, exist_ok=True)
+        image_path = tmp_path / "images" / subject / f"{name}.jpg"
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(np.zeros((32, 32, 3), dtype=np.uint8)).save(image_path)
+        _write_mask(mask_path, mask)
+        paths.append(mask_path)
+
+    manifest = deterministic_validation_manifest(paths, crop_size=8, examples_per_category=2)
+
+    positives = [item for item in manifest if item["category"] == "positive"]
+    boundaries = [item for item in manifest if item["category"] == "boundary"]
+    assert len({item["image_path"] for item in positives}) == 2
+    assert len({item["image_path"] for item in boundaries}) == 2
+    assert len({item["subject_id"] for item in positives}) == 2
+    assert len({item["subject_id"] for item in boundaries}) == 2
+    assert all(item["category"] in {"background", "boundary", "positive"} for item in manifest)
 
 
 def test_degenerate_all_foreground_predictions_block_promotion():
@@ -343,3 +399,22 @@ def test_glomeruli_promotion_candidate_report_blocks_missing_gate_evidence(tmp_p
     assert "manifest_missing_boundary_examples" in report["reasons"]
     assert "manifest_missing_positive_examples" in report["reasons"]
     assert "predictions_are_all_foreground" in report["reasons"]
+
+
+def test_prediction_review_blocks_undersegmented_positive_examples():
+    truth = np.zeros((16, 16), dtype=np.uint8)
+    truth[2:14, 2:14] = 1
+    pred = np.zeros((16, 16), dtype=np.uint8)
+    pred[7:9, 7:9] = 1
+
+    review = evaluate_prediction_review(
+        [truth],
+        [pred],
+        manifest=[{"category": "positive", "foreground_fraction": float(truth.mean())}],
+    )
+
+    assert review["blocked"] is True
+    assert (
+        "prediction_does_not_reasonably_cover_positive_glomerulus_examples"
+        in review["reasons"]
+    )

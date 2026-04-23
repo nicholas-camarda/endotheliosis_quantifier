@@ -8,6 +8,7 @@ specifically handling the namespace issues with custom functions.
 
 from pathlib import Path
 from typing import Optional, Union
+import random
 import torch
 import matplotlib.pyplot as plt
 from fastai.vision.all import *
@@ -29,6 +30,22 @@ from eq.utils.run_io import (
 from eq.utils.hardware_detection import get_segmentation_training_batch_size
 
 logger = get_logger("eq.transfer_learning")
+
+
+def set_transfer_learning_seed(seed: int) -> None:
+    """Set process-wide RNG seeds for bounded transfer-learning runs."""
+    import numpy as np
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    try:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    except Exception:
+        pass
 
 
 def _get_encoder_module(model: torch.nn.Module) -> Optional[torch.nn.Module]:
@@ -74,6 +91,20 @@ def _get_decoder_module(model: torch.nn.Module) -> Optional[torch.nn.Module]:
     except Exception:
         pass
     return None
+
+
+def _maybe_enable_cuda_fp16(learn):
+    """Enable FastAI fp16 only on CUDA-backed training runs."""
+    if not torch.cuda.is_available():
+        logger.info("CUDA fp16 is unavailable; proceeding in fp32")
+        return learn
+
+    try:
+        learn = learn.to_fp16()
+        logger.info("Enabled CUDA mixed-precision (fp16) training")
+    except Exception:
+        logger.warning("Could not enable CUDA mixed-precision; proceeding in fp32")
+    return learn
 
 def _format_run_suffix(epochs: int, batch_size: int, learning_rate: float, image_size: int, tag: str = "") -> str:
     """Format run parameters into a descriptive suffix (directory-safe)."""
@@ -173,12 +204,7 @@ def load_model_for_transfer_learning(
             loss_func=custom_loss if custom_loss else None
         )
     
-    # Enable mixed precision to significantly reduce VRAM usage
-    try:
-        learn = learn.to_fp16()
-        logger.info("Enabled mixed-precision (fp16) training for reduced GPU memory usage")
-    except Exception:
-        logger.warning("Could not enable mixed-precision; proceeding in fp32")
+    learn = _maybe_enable_cuda_fp16(learn)
 
     if custom_loss is not None:
         logger.info(f"Using custom loss: {custom_loss.__class__.__name__}")
@@ -342,6 +368,7 @@ def transfer_learn_glomeruli(
     crop_size: Optional[int] = None,
     encoder_only: bool = True,
     reinit_decoder: bool = True,
+    seed: int = 42,
 ) -> Learner:
     """
     Perform transfer learning from mitochondria to glomeruli segmentation using FastAI v2 best practices.
@@ -371,6 +398,7 @@ def transfer_learn_glomeruli(
     from eq.utils.logger import setup_logging
     logger = setup_logging(verbose=True)
     logger.info("Starting transfer learning from mitochondria to glomeruli")
+    set_transfer_learning_seed(seed)
     
     # Calculate stage epochs if not provided
     if stage1_epochs is None:
@@ -511,6 +539,7 @@ def transfer_learn_glomeruli(
         'training_approach': 'two_stage_transfer_learning',
         'training_mode': TRAINING_MODE_DYNAMIC_FULL_IMAGE,
         'data_root': str(data_root),
+        'seed': seed,
     })
     
     # Generate training visualizations (may call get_preds etc.)
@@ -544,6 +573,7 @@ def transfer_learn_glomeruli(
                 "image_size": image_size,
                 "stage1_epochs": stage1_epochs,
                 "stage2_epochs": stage2_epochs,
+                "seed": seed,
             },
         },
     )

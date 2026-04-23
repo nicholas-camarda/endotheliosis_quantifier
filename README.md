@@ -112,15 +112,34 @@ On the powerful Apple Silicon MPS machine class, `24` is the current starting ba
 
 ### 5. Train glomeruli model
 
+Transfer candidate:
+
+```bash
+python -m eq.training.train_glomeruli \
+  --data-dir /absolute/path/to/raw_data/project/training_pairs \
+  --model-dir /absolute/path/to/glomeruli_models \
+  --base-model /absolute/path/to/mito_supported_base.pkl \
+  --epochs 30 \
+  --batch-size 12 \
+  --learning-rate 1e-3 \
+  --image-size 256 \
+  --crop-size 512 \
+  --seed 42
+```
+
+Scratch candidate:
+
 ```bash
 python -m eq.training.train_glomeruli \
   --data-dir data/raw_data/<your_glomeruli_project>/training_pairs \
   --model-dir models/segmentation/glomeruli \
+  --from-scratch \
   --epochs 50 \
   --batch-size 12 \
   --learning-rate 1e-3 \
   --image-size 256 \
-  --crop-size 512
+  --crop-size 512 \
+  --seed 42
 ```
 
 On the powerful Apple Silicon MPS machine class, `12` is the current starting batch-size recommendation for `512x512` glomeruli crops. Override it when throughput or stability requires a different value.
@@ -129,7 +148,21 @@ The glomeruli training root must contain paired full-image `images/` and `masks/
 
 For heavy training runs, the dedicated training modules above are the safest entrypoints. The `eq` CLI is still useful for validation, inspection, capabilities, and utility commands.
 
-### 6. Run the Label Studio-first quantification baseline
+The dedicated training module CLI is the canonical control surface for glomeruli candidate work. Choose the family explicitly with `--base-model` or `--from-scratch`; optional YAML files are overlays, not the authoritative promotion contract.
+
+### 6. Compare glomeruli candidates
+
+```bash
+python -m eq.training.compare_glomeruli_candidates \
+  --data-dir /absolute/path/to/raw_data/project/training_pairs \
+  --transfer-base-model /absolute/path/to/mito_supported_base.pkl \
+  --seed 42 \
+  --crop-size 512
+```
+
+If `--output-dir` is omitted, this workflow writes its deterministic validation manifest, per-candidate metrics, review panels, and promotion report under the active runtime output root's `glomeruli_candidate_comparison/` subtree on this machine. The decision states remain explicit: `promoted`, `blocked`, or `insufficient_evidence`. If transfer and scratch are within the practical tie margin, neither becomes the sole promoted default and both remain explicit research-use comparators.
+
+### 7. Run the Label Studio-first quantification baseline
 
 ```bash
 eq prepare-quant-contract \
@@ -181,6 +214,8 @@ The main project configs live here:
 
 - `configs/mito_pretraining_config.yaml`
 - `configs/glomeruli_finetuning_config.yaml`
+
+These files are optional overlays and engineering references. They are not the canonical control surface for glomeruli promotion or candidate comparison; use the dedicated training-module CLI commands above for authoritative execution and provenance.
 
 Path defaults should stay relative to the repo root unless there is a strong reason to use environment overrides. Supported overrides include:
 

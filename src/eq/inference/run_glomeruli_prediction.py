@@ -1,225 +1,111 @@
 #!/usr/bin/env python3
-"""
-Glomeruli Prediction Pipeline
+"""Current glomeruli prediction utility for explicit model and data-root evaluation."""
 
-This module runs predictions using the exact same data augmentation and preprocessing
-as the original training, but adapted to the current data structure.
-"""
+from __future__ import annotations
 
-import sys
+import json
 from pathlib import Path
+from typing import Any
 
-import numpy as np
-
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
-
-from fastai.vision.all import PILMask  # type: ignore
-
+from eq.data_management.datablock_loader import validate_supported_segmentation_training_root
+from eq.data_management.standard_getters import get_y_full
+from eq.evaluation.evaluate_glomeruli_model import GlomeruliModelEvaluator
 from eq.utils.logger import get_logger
-from eq.utils.config_manager import ConfigManager
-from eq.core.constants import DEFAULT_MASK_THRESHOLD
+
 
 logger = get_logger("eq.glomeruli_prediction")
 
-# Define functions needed for loading the backup model
-def get_glom_y(o):
-    """Get glomeruli mask for a given image file."""
-    p2c = [0, 1]  # Default binary mask codes
-    return get_glom_mask_file(o, p2c)
 
-def get_glom_mask_file(o, p2c):
-    """Get glomeruli mask file with color mapping."""
-    import numpy as np
-    from PIL import Image
-
-    # Load the mask image
-    msk = np.array(Image.open(o))
-
-    # Apply threshold
-    thresh = DEFAULT_MASK_THRESHOLD
-    msk[msk <= thresh] = 0
-    msk[msk > thresh] = 1
-
-    # Apply color mapping
-    for i, val in enumerate(p2c):
-        msk[msk == p2c[i]] = val
-
-    from fastai.vision.core import PILMask
-    return PILMask.create(msk)
-
-def get_all_paths(directory_path):
-    """Get all file paths from a directory recursively."""
-    directory = Path(directory_path)
-    paths = []
-    for path in directory.glob('**/*'):
-        if path.is_file():
-            paths.append(path)
-    return paths
-
-def get_glom_mask_file_current(image_file, p2c, thresh=DEFAULT_MASK_THRESHOLD):
-    """Get glomeruli mask file for current data structure."""
-    # Current structure: image_patches/T19_Image0_10_10.jpg -> mask_patches/T19_Image0_10_10_mask.png
-    base_path = image_file.parent.parent
-    mask_dir = base_path / "mask_patches"
-    mask_name = image_file.stem + "_mask.png"
-    mask_path = mask_dir / mask_name
-    
-    # Convert to an array (mask)
-    msk = np.array(PILMask.create(mask_path))
-    # Convert the image to binary if it isn't already
-    msk[msk <= thresh] = 0
-    msk[msk > thresh] = 1
-    
-    # Find all the possible values in the mask (0,255)
-    for i, val in enumerate(p2c):
-        msk[msk == p2c[i]] = val
-    return PILMask.create(msk)
-
-def get_glom_y_current(o):
-    """Get glomeruli mask for current data structure."""
-    p2c = {0: 0, 1: 1}  # Binary mask codes
-    return get_glom_mask_file_current(o, p2c)
-
-def run_glomeruli_prediction(config_path: str = "configs/glomeruli_finetuning_config.yaml"):
-    """Run glomeruli prediction using fresh data loading approach."""
-    logger.info("🚀 Starting glomeruli prediction with fresh data approach")
-    
-    # Load configuration file (optional overrides)
+def _load_optional_config(config_path: str | None) -> dict[str, Any]:
+    if not config_path:
+        return {}
     import yaml
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
-    
-    logger.info(f"Configuration loaded: {config.get('name', 'Unknown')}")
-    
-    # Configure hardware settings using the proper backend management system
-    from eq.utils.backend_manager import BackendManager
 
-    # Initialize backend manager (automatically handles MPS fallback)
-    backend_manager = BackendManager()
-    logger.info(f"✅ Backend manager initialized: {backend_manager.current_backend.backend_type.value}")
-    
-    # Apply hardware configuration overrides if specified
-    hardware_config = config.get('hardware', {})
-    if hardware_config.get('force_cpu', False):
-        import os
-        os.environ['CUDA_VISIBLE_DEVICES'] = ''
-        logger.info("✅ Forced CPU usage")
-    
-    # Centralized paths via ConfigManager
-    cfg = ConfigManager()
-    derived_root = Path(cfg.global_config.output_path)
-    train_image_path = derived_root / 'glomeruli_data/training/image_patches'
-    train_mask_path = derived_root / 'glomeruli_data/training/mask_patches'
-    logger.info(f"📁 Image path: {train_image_path}")
-    logger.info(f"📁 Mask path: {train_mask_path}")
-    
-    # Load fresh data using the data loader
-    logger.info("📊 Loading glomeruli data...")
-    from eq.data_management.loaders import load_glomeruli_data
-    
-    # Expect processed paths from config manager; pass as strings
-    data = load_glomeruli_data(str(train_image_path.parent), cache_dir=str(derived_root / 'cache'))
-    
-    # Get validation data
-    val_images = data['val']['images']
-    val_masks = data['val']['masks']
-    
-    logger.info(f"✅ Validation data loaded: {val_images.shape}")
-    logger.info(f"✅ Validation masks loaded: {val_masks.shape}")
-    
-    # Load model path from config; fallback to historical backup path
-    model_path = Path(cfg.global_config.model_path) / 'segmentation/glomeruli/glomerulus_segmentation_model-dynamic_unet-e50_b16_s84.pkl'
-    if not model_path.exists():
-        model_path = Path('backups/glomerulus_segmentation_model-dynamic_unet-e50_b16_s84.pkl')
-    logger.info(f"🧠 Loading model: {model_path}")
-    
-    try:
-        from eq.data_management.model_loading import load_model_safely
-        learn = load_model_safely(str(model_path), model_type="glomeruli")
-        logger.info("✅ Successfully loaded backup glomeruli model")
-        model = learn
-    except Exception as e:
-        logger.error(f"❌ Failed to load model: {e}")
-        return
-    
-    # Test predictions on validation data 
-    logger.info("🔍 Testing predictions on validation data...")
-    
-    total_dice = 0
-    total_iou = 0
-    total_accuracy = 0
-    num_samples = min(10, len(val_images))  # Test on first 10 samples
-    
-    for i in range(num_samples):
-        logger.info(f"Processing sample {i+1}/{num_samples}")
-        
-        img = val_images[i]
-        true_mask = val_masks[i]
-        
-        # Use consolidated prediction core for image preparation and prediction
-        from eq.inference.prediction_core import create_prediction_core
-        core = create_prediction_core(224)  # Standard size for glomeruli models
-        
-        # Prepare image for prediction
-        img_pil = core.prepare_image_for_display(img)
-        
-        # Get prediction
-        pred_result = learn.predict(img_pil)
-        
-        # Extract prediction tensor using consolidated method
-        pred_tensor = core.extract_prediction_from_result(pred_result)
-        
-        # Convert to numpy using consolidated method
-        pred_mask = core.convert_tensor_to_numpy(pred_tensor)
-        
-        # Resize prediction to match ground truth size if needed
-        if pred_mask.shape != true_mask.shape:
-            pred_mask = core.resize_prediction_to_match(pred_mask, true_mask.shape)
-        
-        # Calculate metrics using consolidated functions
-        true_binary = (np.squeeze(true_mask) > 0.5).astype(np.float32)
-        pred_binary = (pred_mask > 0.5).astype(np.float32)
-        
-        # Use consolidated metric functions
-        from eq.evaluation.segmentation_metrics import dice_coefficient, iou_score
-        
-        dice = dice_coefficient(pred_binary, true_binary)
-        iou = iou_score(pred_binary, true_binary)
-        from eq.evaluation.segmentation_metrics import pixel_accuracy
-        accuracy = pixel_accuracy(pred_binary, true_binary)
-        
-        total_dice += dice
-        total_iou += iou
-        total_accuracy += accuracy
-        
-        logger.info(f"  Sample {i+1}: Dice={dice:.4f}, IoU={iou:.4f}, Acc={accuracy:.4f}")
-    
-    # Calculate averages
-    avg_dice = total_dice / num_samples
-    avg_iou = total_iou / num_samples
-    avg_accuracy = total_accuracy / num_samples
-    
-    logger.info("🎉 GLOMERULI PREDICTION COMPLETED SUCCESSFULLY!")
-    logger.info(f"📊 Dice Score: {avg_dice:.4f}")
-    logger.info(f"📊 IoU Score: {avg_iou:.4f}")
-    logger.info(f"📊 Pixel Accuracy: {avg_accuracy:.4f}")
-    
-    return {
-        'dice_score': avg_dice,
-        'iou_score': avg_iou,
-        'pixel_accuracy': avg_accuracy,
-        'num_samples': num_samples
+    with open(config_path, "r", encoding="utf-8") as handle:
+        cfg = yaml.safe_load(handle) or {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def run_glomeruli_prediction(
+    *,
+    model_path: str | None = None,
+    data_dir: str | None = None,
+    output_dir: str | None = None,
+    max_images: int = 10,
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    """Evaluate a glomeruli artifact on explicit image/mask pairs from a supported training root.
+
+    The dedicated training module CLI is the canonical control surface for glomeruli training.
+    This utility is only a small explicit evaluation helper. A YAML config may fill missing
+    values, but it is not the authoritative workflow contract.
+    """
+
+    cfg = _load_optional_config(config_path)
+    if not model_path:
+        model_path = cfg.get("model", {}).get("checkpoint_path")
+    if not data_dir:
+        data_dir = cfg.get("data", {}).get("processed", {}).get("train_dir")
+    if not model_path or not data_dir:
+        raise ValueError(
+            "run_glomeruli_prediction requires explicit model_path and data_dir, "
+            "either directly or via an optional overlay config."
+        )
+
+    training_root = validate_supported_segmentation_training_root(data_dir, stage="glomeruli")
+    image_paths = sorted((training_root / "images").rglob("*"))
+    image_paths = [path for path in image_paths if path.is_file()]
+    if not image_paths:
+        raise ValueError(f"No images found under {training_root / 'images'}")
+
+    output_path = Path(output_dir).expanduser() if output_dir else Path("output/glomeruli_prediction_eval")
+    evaluator = GlomeruliModelEvaluator(str(model_path), str(output_path))
+
+    rows: list[dict[str, Any]] = []
+    for image_path in image_paths[:max_images]:
+        mask_path = get_y_full(image_path)
+        result = evaluator.evaluate_single_image(str(image_path), str(mask_path))
+        result["image_path"] = str(image_path)
+        result["mask_path"] = str(mask_path)
+        rows.append(result)
+
+    if not rows:
+        raise RuntimeError("No evaluable image/mask pairs were found.")
+
+    summary = {
+        "model_path": str(model_path),
+        "data_dir": str(training_root),
+        "max_images": max_images,
+        "samples_evaluated": len(rows),
+        "mean_dice": float(sum(row.get("dice", 0.0) for row in rows) / len(rows)),
+        "mean_iou": float(sum(row.get("iou", 0.0) for row in rows) / len(rows)),
+        "mean_pixel_acc": float(sum(row.get("pixel_acc", 0.0) for row in rows) / len(rows)),
+        "config_path": str(config_path) if config_path else None,
     }
 
+    output_path.mkdir(parents=True, exist_ok=True)
+    (output_path / "glomeruli_prediction_summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    return {"summary": summary, "rows": rows}
+
+
 if __name__ == "__main__":
-    try:
-        metrics = run_glomeruli_prediction()
-        if metrics:
-            print("\n🎉 GLOMERULI PREDICTION COMPLETED SUCCESSFULLY!")
-            print(f"📊 Dice Score: {metrics['dice_score']:.4f}")
-            print(f"📊 IoU Score: {metrics['iou_score']:.4f}")
-            print(f"📊 Pixel Accuracy: {metrics['pixel_accuracy']:.4f}")
-    except Exception as e:
-        logger.error(f"❌ Prediction failed: {e}")
-        raise
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Evaluate a glomeruli artifact on a supported training root")
+    parser.add_argument("--model-path", help="Explicit glomeruli artifact path")
+    parser.add_argument("--data-dir", help="Supported raw_data/.../training_pairs root")
+    parser.add_argument("--output-dir", help="Directory for evaluation artifacts")
+    parser.add_argument("--max-images", type=int, default=10, help="Maximum number of paired images to evaluate")
+    parser.add_argument("--config", help="Optional YAML overlay for filling missing values only")
+    args = parser.parse_args()
+
+    run_glomeruli_prediction(
+        model_path=args.model_path,
+        data_dir=args.data_dir,
+        output_dir=args.output_dir,
+        max_images=args.max_images,
+        config_path=args.config,
+    )

@@ -338,9 +338,9 @@ Primary entrypoint:
 
 ```bash
 python -m eq.training.train_glomeruli \
-  --data-dir data/raw_data/<your_glomeruli_project>/training_pairs \
-  --model-dir models/segmentation/glomeruli \
-  --base-model models/segmentation/mitochondria/<your_mito_model>.pkl \
+  --data-dir /absolute/path/to/raw_data/project/training_pairs \
+  --model-dir /absolute/path/to/glomeruli_models \
+  --base-model /absolute/path/to/mito_supported_base.pkl \
   --epochs 30 \
   --batch-size 12 \
   --learning-rate 1e-3 \

@@ -12,6 +12,7 @@ context: |
   Model artifact provenance must identify the training command, code version, package versions, data root, and training mode before an artifact is used as a supported runtime dependency.
   MPS execution, model pickle loading, and contract-first pipeline completion are compatibility evidence only; they do not by themselves promote a segmentation model for scientific use.
   Promoted glomeruli segmentation artifacts require a current-namespace model, training-data background/negative coverage, validation metrics, and non-degenerate prediction review evidence.
+  Real eq-mac MPS validation should be treated as an unsandboxed macOS-terminal task when Metal access matters, because Codex sandbox behavior is not authoritative for actual MPS execution.
 
 rules:
   proposal:

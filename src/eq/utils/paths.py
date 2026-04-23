@@ -11,6 +11,9 @@ DEFAULT_OUTPUT_PATH = "data/derived_data"
 DEFAULT_CACHE_PATH = "data/derived_data/cache"
 DEFAULT_MODEL_PATH = "models"
 DEFAULT_LOGS_PATH = "logs"
+DEFAULT_RUNTIME_ROOT_ENV = "EQ_RUNTIME_ROOT"
+DEFAULT_RUNTIME_OUTPUT_ENV = "EQ_RUNTIME_OUTPUT_PATH"
+DEFAULT_RUNTIME_MODELS_ENV = "EQ_RUNTIME_MODEL_PATH"
 
 
 def get_repo_root() -> Path:
@@ -37,9 +40,30 @@ def get_data_path() -> Path:
     return _resolve_repo_path(os.getenv('EQ_DATA_PATH', DEFAULT_DATA_PATH))
 
 
+def get_active_runtime_root() -> Path:
+    """Return the active runtime root for local artifact-heavy workflows."""
+    runtime_override = os.getenv(DEFAULT_RUNTIME_ROOT_ENV)
+    if runtime_override:
+        return _resolve_repo_path(runtime_override)
+
+    runtime_candidate = Path.home() / "ProjectsRuntime" / get_repo_root().name
+    if runtime_candidate.exists():
+        return runtime_candidate
+
+    return get_repo_root()
+
+
 def get_output_path() -> Path:
     """Return the default derived-data/output directory."""
     return _resolve_repo_path(os.getenv('EQ_OUTPUT_PATH', DEFAULT_OUTPUT_PATH))
+
+
+def get_runtime_output_path() -> Path:
+    """Return the runtime output root, preferring the active runtime tree."""
+    output_override = os.getenv(DEFAULT_RUNTIME_OUTPUT_ENV)
+    if output_override:
+        return _resolve_repo_path(output_override)
+    return get_active_runtime_root() / "output"
 
 
 def get_cache_path() -> Path:
@@ -53,6 +77,14 @@ def get_cache_path() -> Path:
 def get_models_path() -> Path:
     """Return the default model directory."""
     return _resolve_repo_path(os.getenv('EQ_MODEL_PATH', DEFAULT_MODEL_PATH))
+
+
+def get_runtime_models_path() -> Path:
+    """Return the runtime model root, preferring the active runtime tree."""
+    model_override = os.getenv(DEFAULT_RUNTIME_MODELS_ENV)
+    if model_override:
+        return _resolve_repo_path(model_override)
+    return get_active_runtime_root() / "models"
 
 
 def get_logs_path() -> Path:

@@ -1,6 +1,8 @@
-# Glomeruli Fine-tuning Configuration  
-# This is Step 2 of the segmentation pipeline - fine-tuning on glomeruli data
-# Uses the mitochondria-pretrained model as starting point
+# Optional glomeruli fine-tuning overlay.
+# The dedicated `python -m eq.training.train_glomeruli` CLI is the authoritative
+# control surface for transfer/scratch candidate work and promotion provenance.
+# This file may fill in defaults when passed via `--config`, but it is not the
+# canonical promotion-workflow contract.
 
 name: "glomeruli_finetuning"
 description: "Fine-tune mitochondria-pretrained U-Net on glomeruli segmentation data"
@@ -9,7 +11,7 @@ description: "Fine-tune mitochondria-pretrained U-Net on glomeruli segmentation 
 pretrained_model:
   path: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model.pkl"
   description: "Mitochondria-pretrained U-Net model"
-  freeze_encoder: false  # Allow full fine-tuning
+  freeze_encoder: false  # Informational only; the live two-stage schedule is implemented in transfer_learning.py
 
 # Data Pipeline Configuration
 data:
@@ -61,7 +63,7 @@ model:
   training:
     epochs: 30  # Optimized for transfer learning efficiency
     batch_size: 12
-    learning_rate: 5e-4  # Increased for faster domain adaptation
+    learning_rate: 1e-3
     weight_decay: 1e-4
     scheduler: "cosine_annealing"
     early_stopping:
