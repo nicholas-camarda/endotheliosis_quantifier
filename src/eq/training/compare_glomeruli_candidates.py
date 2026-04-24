@@ -35,7 +35,7 @@ from eq.training.promotion_gates import (
     trivial_baseline_metrics,
 )
 from eq.utils.logger import get_logger
-from eq.utils.paths import get_runtime_segmentation_evaluation_path
+from eq.utils.paths import get_runtime_models_path, get_runtime_segmentation_evaluation_path
 from eq.utils.run_io import metadata_path_for_model
 
 
@@ -116,11 +116,11 @@ def _discover_model_path(family_dir: Path) -> Path:
     return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
-def _run_training_command(command: list[str], family: str, role: str, output_dir: Path, seed: int) -> CandidateRuntime:
+def _run_training_command(command: list[str], family: str, role: str, model_root: Path, seed: int) -> CandidateRuntime:
     try:
         logger.info("Running candidate training command: %s", " ".join(command))
         subprocess.run(command, check=True)
-        family_dir = output_dir / family
+        family_dir = model_root / family
         return CandidateRuntime(
             family=family,
             role=role,
@@ -657,8 +657,8 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
     run_id = str(args.run_id or _generated_run_id(args.seed))
     output_root = Path(args.output_dir).expanduser() / run_id
     output_root.mkdir(parents=True, exist_ok=True)
-    candidate_root = output_root / "candidates"
-    candidate_root.mkdir(parents=True, exist_ok=True)
+    model_root = Path(args.model_dir).expanduser()
+    model_root.mkdir(parents=True, exist_ok=True)
     asset_dir = output_root / "review_assets"
     asset_dir.mkdir(parents=True, exist_ok=True)
 
@@ -685,7 +685,7 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
         transfer_runtime = _run_training_command(
             _candidate_command(
                 data_dir=data_root,
-                model_dir=candidate_root,
+                model_dir=model_root,
                 model_name=args.transfer_model_name,
                 epochs=args.transfer_epochs,
                 learning_rate=args.learning_rate,
@@ -699,7 +699,7 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
             ),
             family="transfer",
             role="candidate",
-            output_dir=candidate_root,
+            model_root=model_root,
             seed=args.seed,
         )
 
@@ -717,7 +717,7 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
         scratch_runtime = _run_training_command(
             _candidate_command(
                 data_dir=data_root,
-                model_dir=candidate_root,
+                model_dir=model_root,
                 model_name=args.scratch_model_name,
                 epochs=args.scratch_epochs,
                 learning_rate=args.learning_rate,
@@ -730,7 +730,7 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
             ),
             family="scratch",
             role="candidate",
-            output_dir=candidate_root,
+            model_root=model_root,
             seed=args.seed,
         )
 
@@ -790,6 +790,7 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
         "decision": decision,
         "run_id": run_id,
         "output_dir": str(output_root),
+        "model_dir": str(model_root),
         "manifest_path": str(manifest_path),
         "manifest_audit": manifest_audit,
         "candidate_summaries": candidate_summaries,
@@ -833,6 +834,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--run-id", help="Run directory name to create under --output-dir")
+    parser.add_argument(
+        "--model-dir",
+        default=str(get_runtime_models_path() / "segmentation" / "glomeruli"),
+        help="Root model-artifact directory for trained candidates; train_glomeruli writes transfer/ and scratch/ underneath",
+    )
     parser.add_argument("--transfer-base-model", help="Explicit mitochondria base artifact for transfer training")
     parser.add_argument("--transfer-model-path", help="Existing transfer candidate artifact to evaluate instead of training")
     parser.add_argument("--scratch-model-path", help="Existing scratch candidate artifact to evaluate instead of training")

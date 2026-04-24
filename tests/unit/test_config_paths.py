@@ -141,9 +141,8 @@ def test_current_docs_and_configs_use_operation_specific_output_roots():
         Path("configs/segmentation_fixedloader_full_retrain.yaml"),
         Path("configs/glomeruli_finetuning_config.yaml"),
         Path("configs/mito_pretraining_config.yaml"),
-        Path("openspec/changes/expand-scored-only-quantification-cohort/proposal.md"),
-        Path("openspec/changes/expand-scored-only-quantification-cohort/design.md"),
-        Path("openspec/changes/expand-scored-only-quantification-cohort/specs/scored-only-quantification-cohort/spec.md"),
+        Path("openspec/specs/scored-only-quantification-cohort/spec.md"),
+        Path("openspec/specs/glomeruli-candidate-comparison/spec.md"),
     ]
     text = "\n".join(path.read_text(encoding="utf-8") for path in checked_paths)
 

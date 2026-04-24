@@ -7,8 +7,9 @@ import glob
 import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 import yaml
 
@@ -42,11 +43,43 @@ def _runtime_path(runtime_root: Path, raw_path: str) -> Path:
     return runtime_root / path
 
 
-def _run(command: list[str], env: dict[str, str], *, dry_run: bool) -> None:
-    print(" ".join(command), flush=True)
+def _emit(message: str, log_handle: TextIO | None = None) -> None:
+    print(message, flush=True)
+    if log_handle is not None:
+        log_handle.write(f"{message}\n")
+        log_handle.flush()
+
+
+def _run_config_log_path(runtime_root: Path, run_id: str, *, dry_run: bool) -> Path:
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    suffix = "_dry_run" if dry_run else ""
+    return runtime_root / "logs" / "run_config" / run_id / f"{timestamp}{suffix}.log"
+
+
+def _run(
+    command: list[str],
+    env: dict[str, str],
+    *,
+    dry_run: bool,
+    log_handle: TextIO | None = None,
+) -> None:
+    _emit(" ".join(command), log_handle)
     if dry_run:
         return
-    subprocess.run(command, check=True, env=env)
+    process = subprocess.Popen(
+        command,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        _emit(line.rstrip("\n"), log_handle)
+    return_code = process.wait()
+    if return_code:
+        raise subprocess.CalledProcessError(return_code, command)
 
 
 def _lr_token(learning_rate: Any) -> str:
@@ -82,6 +115,7 @@ def run_fixedloader_full(config_path: Path, *, dry_run: bool = False) -> Path:
     """Run manifest refresh, mitochondria base training, and candidate comparison."""
     config = _load_config(config_path)
     runtime_root = _runtime_root(config)
+    run_id = str(config["run"]["name"])
     paths = config["paths"]
     mito = config["mitochondria"]
     transfer = config["glomeruli_transfer"]
@@ -99,74 +133,88 @@ def run_fixedloader_full(config_path: Path, *, dry_run: bool = False) -> Path:
     if not Path(python).exists():
         raise FileNotFoundError(f"Configured Python does not exist: {python}")
 
-    _run([python, "-m", "eq", "cohort-manifest"], env, dry_run=dry_run)
+    log_path = _run_config_log_path(runtime_root, run_id, dry_run=dry_run)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if bool(mito.get("enabled", True)):
-        _run(
-            [
-                python,
-                "-m",
-                "eq.training.train_mitochondria",
-                "--data-dir",
-                str(_runtime_path(runtime_root, paths["mito_data_dir"])),
-                "--model-dir",
-                str(_runtime_path(runtime_root, paths["mito_model_dir"])),
-                "--model-name",
-                str(mito["model_name"]),
-                "--epochs",
-                str(mito["epochs"]),
-                "--batch-size",
-                str(mito["batch_size"]),
-                "--learning-rate",
-                str(mito["learning_rate"]),
-                "--image-size",
-                str(mito["image_size"]),
-            ],
-            env,
-            dry_run=dry_run,
-        )
+    with log_path.open("w", encoding="utf-8") as log_handle:
+        _emit(f"RUN_CONFIG_LOG={log_path}", log_handle)
+        _emit(f"CONFIG={config_path}", log_handle)
+        _emit(f"WORKFLOW={config['workflow']}", log_handle)
+        _emit(f"RUN_ID={run_id}", log_handle)
+        _emit(f"RUNTIME_ROOT={runtime_root}", log_handle)
 
-    mito_base_model = _runtime_path(runtime_root, "DRY_RUN_MITO_BASE.pkl") if dry_run else _latest_pkl(runtime_root, config)
-    print(f"MITO_BASE_MODEL={mito_base_model}", flush=True)
+        _run([python, "-m", "eq", "cohort-manifest"], env, dry_run=dry_run, log_handle=log_handle)
 
-    if bool(comparison.get("enabled", True)):
-        _run(
-            [
-                python,
-                "-m",
-                "eq.training.compare_glomeruli_candidates",
-                "--data-dir",
-                str(_runtime_path(runtime_root, paths["glomeruli_data_dir"])),
-                "--output-dir",
-                str(_runtime_path(runtime_root, paths["comparison_output_dir"])),
-                "--run-id",
-                str(config["run"]["name"]),
-                "--transfer-base-model",
-                str(mito_base_model),
-                "--seed",
-                str(config["run"]["seed"]),
-                "--transfer-epochs",
-                str(transfer["epochs"]),
-                "--scratch-epochs",
-                str(scratch["epochs"]),
-                "--batch-size",
-                str(candidate_training["batch_size"]),
-                "--learning-rate",
-                str(candidate_training["learning_rate"]),
-                "--image-size",
-                str(candidate_training["image_size"]),
-                "--crop-size",
-                str(candidate_training["crop_size"]),
-                "--examples-per-category",
-                str(comparison["examples_per_category"]),
-                "--transfer-model-name",
-                str(transfer["model_name"]),
-                "--scratch-model-name",
-                str(scratch["model_name"]),
-            ],
-            env,
-            dry_run=dry_run,
-        )
+        if bool(mito.get("enabled", True)):
+            _run(
+                [
+                    python,
+                    "-m",
+                    "eq.training.train_mitochondria",
+                    "--data-dir",
+                    str(_runtime_path(runtime_root, paths["mito_data_dir"])),
+                    "--model-dir",
+                    str(_runtime_path(runtime_root, paths["mito_model_dir"])),
+                    "--model-name",
+                    str(mito["model_name"]),
+                    "--epochs",
+                    str(mito["epochs"]),
+                    "--batch-size",
+                    str(mito["batch_size"]),
+                    "--learning-rate",
+                    str(mito["learning_rate"]),
+                    "--image-size",
+                    str(mito["image_size"]),
+                ],
+                env,
+                dry_run=dry_run,
+                log_handle=log_handle,
+            )
+
+        mito_base_model = _runtime_path(runtime_root, "DRY_RUN_MITO_BASE.pkl") if dry_run else _latest_pkl(runtime_root, config)
+        _emit(f"MITO_BASE_MODEL={mito_base_model}", log_handle)
+
+        if bool(comparison.get("enabled", True)):
+            _run(
+                [
+                    python,
+                    "-m",
+                    "eq.training.compare_glomeruli_candidates",
+                    "--data-dir",
+                    str(_runtime_path(runtime_root, paths["glomeruli_data_dir"])),
+                    "--output-dir",
+                    str(_runtime_path(runtime_root, paths["comparison_output_dir"])),
+                    "--model-dir",
+                    str(_runtime_path(runtime_root, paths["glomeruli_model_dir"])),
+                    "--run-id",
+                    run_id,
+                    "--transfer-base-model",
+                    str(mito_base_model),
+                    "--seed",
+                    str(config["run"]["seed"]),
+                    "--transfer-epochs",
+                    str(transfer["epochs"]),
+                    "--scratch-epochs",
+                    str(scratch["epochs"]),
+                    "--batch-size",
+                    str(candidate_training["batch_size"]),
+                    "--learning-rate",
+                    str(candidate_training["learning_rate"]),
+                    "--image-size",
+                    str(candidate_training["image_size"]),
+                    "--crop-size",
+                    str(candidate_training["crop_size"]),
+                    "--examples-per-category",
+                    str(comparison["examples_per_category"]),
+                    "--transfer-model-name",
+                    str(transfer["model_name"]),
+                    "--scratch-model-name",
+                    str(scratch["model_name"]),
+                ],
+                env,
+                dry_run=dry_run,
+                log_handle=log_handle,
+            )
 
     return mito_base_model
 

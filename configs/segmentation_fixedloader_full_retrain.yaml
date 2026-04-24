@@ -106,7 +106,6 @@ comparison:
 evidence:
   # These filenames are relative to paths.comparison_output_dir. Keeping them
   # relative avoids repeating the same output root in multiple places.
-  candidate_dir: candidates
   files:
     - candidate_summary.csv
     - candidate_predictions.csv

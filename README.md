@@ -152,7 +152,7 @@ The all-in-one segmentation run is:
 eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
 ```
 
-That command reads `configs/segmentation_fixedloader_full_retrain.yaml`, refreshes the cohort manifest, trains a fresh mitochondria base, uses that exported base artifact for glomeruli transfer, trains the no-mitochondria-base comparator, and writes comparison evidence under the configured runtime output tree.
+That command reads `configs/segmentation_fixedloader_full_retrain.yaml`, refreshes the cohort manifest, trains a fresh mitochondria base, uses that exported base artifact for glomeruli transfer, trains the no-mitochondria-base comparator, writes trained models under `$EQ_RUNTIME_ROOT/models/segmentation/`, writes comparison evidence under `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/`, and tees the workflow output to `$EQ_RUNTIME_ROOT/logs/run_config/<run_id>/`.
 
 Dry-run the resolved commands before launching training:
 

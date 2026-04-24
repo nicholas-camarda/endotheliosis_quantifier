@@ -32,8 +32,13 @@ The repository SHALL treat the dedicated glomeruli training module CLI as the au
 
 #### Scenario: Candidate comparison output location is not supplied
 - **WHEN** the glomeruli candidate-comparison workflow is executed without an explicit `--output-dir`
-- **THEN** it SHALL write promotion reports, review assets, and candidate-owned comparison artifacts under the active runtime output root's `glomeruli_candidate_comparison/` subtree on this machine
+- **THEN** it SHALL write promotion reports, review assets, deterministic manifests, and comparison metrics under the active runtime output root's `segmentation_evaluation/glomeruli_candidate_comparison/` subtree on this machine
 - **AND** the workflow MAY still accept an explicit caller-supplied override path when the user intentionally wants a different destination
+
+#### Scenario: Candidate comparison trains model artifacts
+- **WHEN** the glomeruli candidate-comparison workflow trains transfer or no-base candidates
+- **THEN** trained candidate model artifacts SHALL be written under the configured model root's `segmentation/glomeruli/{transfer,scratch}/` subtrees
+- **AND** the comparison output tree SHALL reference those model artifacts rather than duplicating them under the evaluation report directory
 
 ### Requirement: Candidate comparison produces a deterministic promotion report
 The glomeruli candidate-comparison workflow SHALL write a promotion report artifact that makes the comparison and decision auditable.

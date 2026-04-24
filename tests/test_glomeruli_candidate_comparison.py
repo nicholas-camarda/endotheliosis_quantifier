@@ -88,6 +88,7 @@ def test_compare_glomeruli_candidates_writes_reports_for_tied_candidates(tmp_pat
     training_root = tmp_path / "raw_data" / "project" / "training_pairs"
     _make_training_root(training_root)
     output_root = tmp_path / "comparison"
+    model_root = tmp_path / "models" / "segmentation" / "glomeruli"
     transfer_model = tmp_path / "transfer.pkl"
     scratch_model = tmp_path / "scratch.pkl"
     transfer_model.write_text("transfer")
@@ -139,6 +140,7 @@ def test_compare_glomeruli_candidates_writes_reports_for_tied_candidates(tmp_pat
         Namespace(
             data_dir=str(training_root),
             output_dir=str(output_root),
+            model_dir=str(model_root),
             transfer_base_model=None,
             transfer_model_path=str(transfer_model),
             scratch_model_path=str(scratch_model),
@@ -162,6 +164,7 @@ def test_compare_glomeruli_candidates_writes_reports_for_tied_candidates(tmp_pat
     assert payload["decision"]["decision_state"] == "insufficient_evidence"
     assert payload["run_id"] == "unit_test_run"
     assert payload["output_dir"] == str(run_output)
+    assert payload["model_dir"] == str(model_root)
     assert (run_output / "deterministic_validation_manifest.json").exists()
     assert (run_output / "candidate_summary.csv").exists()
     assert (run_output / "candidate_predictions.csv").exists()
@@ -245,6 +248,7 @@ def test_compare_parser_defaults_to_runtime_output_root(monkeypatch, tmp_path):
     args = parser.parse_args(["--data-dir", str(tmp_path / "raw_data" / "project" / "training_pairs")])
 
     assert args.output_dir == str(runtime_root / "output" / "segmentation_evaluation" / "glomeruli_candidate_comparison")
+    assert args.model_dir == str(runtime_root / "models" / "segmentation" / "glomeruli")
 
 
 def test_predict_crop_uses_learner_preprocessing_and_underconfident_threshold(monkeypatch):

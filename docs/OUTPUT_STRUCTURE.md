@@ -42,10 +42,13 @@ $EQ_RUNTIME_ROOT/
 │   ├── segmentation_cache/
 │   └── <project_name>/
 ├── logs/
+│   └── run_config/<run_id>/
 ├── models/
 │   └── segmentation/
-│       ├── mitochondria/
+│       ├── mitochondria/<run_id>/
 │       └── glomeruli/
+│           ├── transfer/<run_id>/
+│           └── scratch/<run_id>/
 └── output/
 ```
 
@@ -100,7 +103,7 @@ $EQ_RUNTIME_ROOT/
   Trained glomeruli segmentation models and associated training artifacts.
 
 - `logs/`
-  Run logs and temporary experiment logs.
+  Run logs and temporary experiment logs. `eq run-config` writes a tee of the workflow commands and subprocess output to `logs/run_config/<run_id>/`.
 
 - `output/`
   General-purpose generated outputs such as visualizations, quantification review reports, and one-off analysis exports.
@@ -193,7 +196,10 @@ Current code and documentation should resolve paths through `src/eq/utils/paths.
 - `<runtime_root>/raw_data`
 - `<runtime_root>/derived_data`
 - `<runtime_root>/models/segmentation`
+- `<runtime_root>/models/segmentation/mitochondria/<run_id>/`
+- `<runtime_root>/models/segmentation/glomeruli/{transfer,scratch}/<run_id>/`
 - `<runtime_root>/logs`
+- `<runtime_root>/logs/run_config/<run_id>/`
 - `<runtime_root>/output`
 - `<runtime_root>/raw_data/cohorts/manifest.csv`
 - `<runtime_root>/raw_data/cohorts/<cohort_id>/`

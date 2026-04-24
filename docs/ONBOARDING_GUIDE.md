@@ -286,20 +286,20 @@ On the powerful Apple Silicon MPS machine class, `12` is the current starting ba
 
 For all-data glomeruli training, use the manifest-backed `raw_data/cohorts` registry root. It trains from admitted manifest rows in the `manual_mask_core` and `manual_mask_external` lanes, so unresolved, foreign, evaluation-only, and scored-only rows stay out. For a single-cohort run, use `raw_data/cohorts/<cohort_id>`. Raw backup trees are source material, not direct training roots. Generated manifests, audits, caches, and metrics belong under `derived_data` or `output`.
 
-The YAML workflow is the normal control surface for full candidate training and comparison. Direct training module commands remain useful for targeted runs, and the later artifact path is derived from the base model name plus the auto-generated run suffix. Transfer training with `--base-model` must load that artifact and copy compatible weights or the run stops. The `--from-scratch` candidate is the no-mitochondria-base comparator with an ImageNet-pretrained ResNet34 encoder, not a literal all-random initialization baseline. After training, inspect the produced `.pkl` path and reuse that exact path in downstream comparison or quantification commands.
+The YAML workflow is the normal control surface for full candidate training and comparison. Direct training module commands remain useful for targeted runs, and the later artifact path is derived from the base model name plus the auto-generated run suffix. Transfer training with `--base-model` must load that artifact and copy compatible weights or the run stops. The `--from-scratch` candidate is the no-mitochondria-base comparator with an ImageNet-pretrained ResNet34 encoder, not a literal all-random initialization baseline. `eq run-config` writes workflow logs under `$EQ_RUNTIME_ROOT/logs/run_config/<run_id>/`, model artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/`, and comparison reports under `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/`. After training, inspect the produced `.pkl` path and reuse that exact path in downstream comparison or quantification commands.
 
 ### 4. Run The Current Quantification Baseline
 
 ```bash
 eq prepare-quant-contract \
   --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>" \
-  --segmentation-model "$EQ_RUNTIME_ROOT/models/segmentation/glomeruli/<your_model>.pkl" \
+  --segmentation-model "$EQ_RUNTIME_ROOT/models/segmentation/glomeruli/<transfer_or_scratch>/<model_run>/<your_model>.pkl" \
   --score-source labelstudio \
   --annotation-source "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>/scores/labelstudio_annotations.json"
 
 eq quant-endo \
   --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>" \
-  --segmentation-model "$EQ_RUNTIME_ROOT/models/segmentation/glomeruli/<your_model>.pkl" \
+  --segmentation-model "$EQ_RUNTIME_ROOT/models/segmentation/glomeruli/<transfer_or_scratch>/<model_run>/<your_model>.pkl" \
   --score-source labelstudio \
   --annotation-source "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>/scores/labelstudio_annotations.json" \
   --output-dir "$EQ_RUNTIME_ROOT/output/quantification_results/<cohort_id>"
