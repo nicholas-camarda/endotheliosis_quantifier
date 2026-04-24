@@ -703,7 +703,7 @@ Examples:
     quant_parser = subparsers.add_parser('quant-endo', help='Run the current endotheliosis quantification baseline')
     quant_parser.add_argument('--data-dir', required=True, help='Raw cohort/project directory containing images/, masks/, and optionally scores/ or metadata/subject_metadata.xlsx')
     quant_parser.add_argument('--segmentation-model', required=True, help='Path to trained segmentation model')
-    quant_parser.add_argument('--score-source', default='auto', choices=['auto', 'labelstudio', 'spreadsheet'], help='Preferred score source contract; labelstudio is the intended preeclampsia default')
+    quant_parser.add_argument('--score-source', default='auto', choices=['auto', 'labelstudio', 'spreadsheet'], help='Preferred score source contract; labelstudio is the intended default for scored-cohort workflows')
     quant_parser.add_argument('--annotation-source', help='Label Studio annotation export path or git source spec like git:REV:path/to/annotations.json')
     quant_parser.add_argument('--mapping-file', help='CSV mapping legacy image stems to canonical subject_image_id values')
     quant_parser.add_argument(
@@ -720,7 +720,7 @@ Examples:
     contract_parser = subparsers.add_parser('prepare-quant-contract', help='Build score-linked contract artifacts for quantification')
     contract_parser.add_argument('--data-dir', required=True, help='Raw cohort/project directory containing images/, masks/, and optionally scores/ or metadata/subject_metadata.xlsx')
     contract_parser.add_argument('--segmentation-model', required=True, help='Path to trained segmentation model used later for embeddings')
-    contract_parser.add_argument('--score-source', default='auto', choices=['auto', 'labelstudio', 'spreadsheet'], help='Preferred score source contract; labelstudio is the intended preeclampsia default')
+    contract_parser.add_argument('--score-source', default='auto', choices=['auto', 'labelstudio', 'spreadsheet'], help='Preferred score source contract; labelstudio is the intended default for scored-cohort workflows')
     contract_parser.add_argument('--annotation-source', help='Label Studio annotation export path or git source spec like git:REV:path/to/annotations.json')
     contract_parser.add_argument('--mapping-file', help='CSV mapping legacy image stems to canonical subject_image_id values')
     contract_parser.add_argument(

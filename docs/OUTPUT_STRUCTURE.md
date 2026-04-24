@@ -164,9 +164,9 @@ Generated cohort summaries are written under `derived_data/cohort_manifest/`. Th
 
 Lucchi and other segmentation-install datasets remain outside `raw_data/cohorts/manifest.csv`.
 
-## Retired Runtime Input Surfaces
+## Runtime Input Surfaces
 
-The active scored-cohort input surface is `raw_data/cohorts/manifest.csv` plus `raw_data/cohorts/<cohort_id>/`. Retired historical static-patch trees remain under `<runtime_root>/_retired/` and are reference surfaces only, not active cohort or training inputs.
+The active scored-cohort input surface is `raw_data/cohorts/manifest.csv` plus `raw_data/cohorts/<cohort_id>/`. Active training and quantification docs should point to those surfaces.
 
 For quantification runs, a typical output subtree looks like:
 
@@ -209,7 +209,7 @@ Current code and documentation should resolve paths through `src/eq/utils/paths.
 - `<runtime_root>/output/predictions/<task>/<model_run_id>/<input_set>/`
 - `<runtime_root>/output/quantification_results/<cohort_id>/`
 
-Avoid older machine-specific absolute paths and legacy directory names such as bare `derived_data/` at the repo root unless you are working on explicit backward-compatibility code.
+Use the runtime-root-relative paths above as the canonical path contract in current code and docs.
 
 ## Environment Overrides
 

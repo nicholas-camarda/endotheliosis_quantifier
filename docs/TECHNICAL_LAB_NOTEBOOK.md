@@ -14,6 +14,7 @@ It is not a project vision document. In particular, it distinguishes between:
 - implemented segmentation and data-preparation workflows
 - maintained Label Studio-first quantification workflows
 - partially implemented or legacy inference code
+- local lab-state notes that do not belong in the front-door docs
 
 ## Executive Summary
 
@@ -21,10 +22,10 @@ The current `master` branch is best described as a **segmentation-first FastAI/P
 
 1. mitochondria pretraining on EM-style data
 2. glomeruli segmentation in histology images
-3. Label Studio-derived image-level endotheliosis scoring with union-ROI crops, frozen segmentation-backbone embeddings, and an ordinal baseline
+3. image-level endotheliosis quantification from scored cohorts, with union-ROI crops, frozen segmentation-backbone embeddings, and an ordinal baseline
 4. supporting utilities for data preparation, metadata processing, mask auditing, visualization, and environment detection
 
-The strongest maintained paths in this branch are the segmentation workflow and the contract-first quantification baseline. The quantification baseline treats Label Studio image-level grades as supervised targets for image/mask pairs, extracts full multi-component union ROIs, builds frozen segmentation-backbone embeddings, and fits the canonical penalized multiclass ordinal estimator in `src/eq/quantification/ordinal.py`.
+The strongest maintained paths in this branch are the segmentation workflow and the contract-first quantification baseline. The quantification baseline treats image-level grades as supervised targets for image or mask pairs, extracts full multi-component union ROIs, builds frozen segmentation-backbone embeddings, and fits the canonical penalized multiclass ordinal estimator in `src/eq/quantification/ordinal.py`.
 
 The current quantification output is a predictive audit baseline with explicit cohort-shape metadata. It is not a clinically validated scoring system, and its current local audit cohort does not yet provide full seven-bin target support.
 
@@ -32,8 +33,7 @@ The current quantification output is a predictive audit baseline with explicit c
 
 The current branch baseline matches the main repository docs:
 
-- primary development target: WSL on Windows with CUDA-capable PyTorch
-- macOS local-development target: Apple Silicon/MPS with the `eq-mac` conda environment
+- supported active development environments: WSL/Linux with CUDA-capable PyTorch and macOS Apple Silicon/MPS with the `eq-mac` conda environment
 - package source: `src/eq/`
 - runtime-heavy raw data, derived data, models, logs, and outputs: the active `EQ_RUNTIME_ROOT`
 - repo-local `data/`, `models/`, `logs/`, and `output/`: gitignored placeholders or compatibility locations
@@ -260,33 +260,74 @@ That changes what the network sees during training:
 
 In this repo, that behavior is controlled in `src/eq/data_management/datablock_loader.py` through dynamic patching and positive-aware crop settings such as `positive_focus_p`, `min_pos_pixels`, and `pos_crop_attempts`.
 
-#### Concept Images
+#### Current Segmentation Training Snapshot
 
-These images are included to illustrate the concept of the maintained segmentation workflow. They show examples of training outputs and validation predictions from this repository. They do **not** by themselves establish that a model is scientifically valid, generalizable, or promoted for use.
+These checked-in figures come from the canonical April 24, 2026 segmentation workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/all_manual_mask_glomeruli_seed42/`. They show the current repository training outputs and candidate-comparison evidence. They do **not** by themselves establish external validity, scientific readiness, or an unconditional promotion claim.
 
-##### Example Validation Predictions
+Current artifact names:
 
-Mitochondria example:
+- mitochondria base: `fixedloader_full_mito_base-pretrain_e50_b24_lr1e-3_sz256`
+- glomeruli transfer: `fixedloader_full_glomeruli_transfer-transfer_s1lr1e-3_s2lr_lrfind_e30_b12_lr1e-3_sz256`
+- glomeruli scratch: `fixedloader_full_glomeruli_no_mito_base-scratch_e50_b12_lr1e-3_sz256`
 
-![Mitochondria validation predictions](../assets/mitochondria/validation_predictions.png)
+Current deterministic glomeruli review-panel composition:
 
-Glomeruli transfer-learning example:
+- `30` crops across `29` images and `25` subjects
+- `10` background crops
+- `10` boundary crops
+- `10` positive crops
 
-![Glomeruli transfer validation predictions](../assets/glomeruli/transfer/validation_predictions.png)
+Current candidate-comparison summary:
+
+| Candidate | Dice | Jaccard | Precision | Recall | Gate blocked | Current decision state |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| `transfer` | `0.8954` | `0.8106` | `0.8106` | `1.0000` | `False` | within tie margin |
+| `scratch` | `0.8913` | `0.8040` | `0.8040` | `1.0000` | `False` | within tie margin |
+
+Current comparison outcome:
+
+- report decision: `insufficient_evidence`
+- reason: `transfer_and_scratch_are_within_practical_tie_margin`
+- promoted family: `None`
+- interpretation: both candidates cleared the gates on this internal deterministic panel, but neither separated enough to become the sole default
+
+Decision-label meaning in this repo:
+
+- `insufficient_evidence`: non-blocked tie case; candidates passed the gates but neither wins clearly enough to become the sole default
+- `blocked`: candidate failed the promotion gates
+- `promoted`: candidate cleared the gates and separated enough to become the sole default
 
 These panels are useful because they make the task concrete: the network is not producing one global score first. It is producing a spatial mask, and those masks are then visually compared against held-out targets.
 
-##### Example Training Curves
+##### Current Validation Predictions
 
-Mitochondria training-loss example:
+Current mitochondria base example:
 
-![Mitochondria training loss](../assets/mitochondria/training_loss.png)
+![Mitochondria validation predictions](../assets/mitochondria/validation_predictions.png)
 
-Glomeruli transfer training-loss example:
+Current glomeruli transfer candidate:
 
-![Glomeruli transfer training loss](../assets/glomeruli/transfer/training_loss.png)
+![Glomeruli transfer validation predictions](../assets/glomeruli/transfer/validation_predictions.png)
 
-These curves illustrate optimization progress, not scientific validity. A smoother or lower loss curve can still correspond to leakage, bad labels, missing negatives, or degenerate predictions, which is why the repo keeps promotion and audit language separate from simple training completion.
+Current glomeruli no-mitochondria-base candidate:
+
+![Glomeruli scratch validation predictions](../assets/glomeruli/scratch/validation_predictions.png)
+
+##### Current Metric Curves
+
+Current mitochondria base metric history:
+
+![Mitochondria metrics](../assets/mitochondria/metrics.png)
+
+Current glomeruli transfer candidate metric history:
+
+![Glomeruli transfer metrics](../assets/glomeruli/transfer/metrics.png)
+
+Current glomeruli no-mitochondria-base candidate metric history:
+
+![Glomeruli scratch metrics](../assets/glomeruli/scratch/metrics.png)
+
+The metric curves and prediction panels illustrate optimization progress and internal validation behavior, not scientific validity. A smoother loss curve or higher overlap on this deterministic panel can still correspond to leakage, label issues, or poor transportability, which is why the repo keeps promotion and audit language separate from simple training completion.
 
 #### What The Pictures Support And What They Do Not
 
@@ -383,7 +424,7 @@ python -m eq.training.train_glomeruli \
   --seed 42
 ```
 
-For all-data glomeruli training, use the manifest-backed `raw_data/cohorts` registry root. It trains from admitted manifest rows in the `manual_mask_core` and `manual_mask_external` lanes. For Lauren-only training, use the localized cohort root `raw_data/cohorts/lauren_preeclampsia`. Raw backup trees are source material, not direct training roots. Generated manifests, audits, caches, and metrics belong under `derived_data` or `output`.
+For all-data glomeruli training, use the manifest-backed `raw_data/cohorts` registry root. It trains from admitted manifest rows in the `manual_mask_core` and `manual_mask_external` lanes. For a single-cohort run, use the localized cohort root `raw_data/cohorts/<cohort_id>`. Raw backup trees are source material, not direct training roots. Generated manifests, audits, caches, and metrics belong under `derived_data` or `output`.
 
 Important nuance:
 
@@ -573,6 +614,6 @@ As of April 2, 2026 on `master`, the main known gaps are:
 
 The current `master` branch should be described as:
 
-**A maintained segmentation repository with useful data-preparation utilities, a working Label Studio-first image-level learned quantification baseline, partial inference code, and remaining scientific/production gaps around calibration, deployment, and per-glomerulus labeling.**
+**A maintained segmentation repository with useful data-preparation utilities, a working image-level learned quantification baseline across scored cohorts, partial inference code, and remaining scientific or production gaps around calibration, deployment, and per-glomerulus labeling.**
 
 This baseline is useful for predictive audit work, but it is not a finished clinically trustworthy scoring system.

@@ -1,25 +1,40 @@
 # Endotheliosis Quantifier Onboarding Guide
 
-This guide keeps the more explanatory, beginner-friendly walkthrough for the project. The main [`README.md`](../README.md) stays focused on the current WSL/CUDA operating baseline, while this document is meant to help non-technical collaborators, future-you, or anyone returning to the repo after a long break.
+This guide keeps the more explanatory, beginner-friendly walkthrough for the project. The main [`README.md`](../README.md) covers the shared workflow and environment contract for both WSL/CUDA and macOS/MPS development, while this document is meant to help non-technical collaborators, future-you, or anyone returning to the repo after a long break.
 
 ## What This Project Is
 
-Endotheliosis Quantifier (`eq`) is a deep learning pipeline for segmentation-first analysis of glomeruli histology images, with a maintained image-level endotheliosis scoring baseline built on Label Studio annotations.
+Endotheliosis Quantifier (`eq`) is a deep learning pipeline for glomeruli segmentation and image-level endotheliosis quantification in kidney histology, with scored-cohort workflows built around a shared runtime contract.
 
 At a high level, the project uses a two-stage idea:
 
 1. Train a segmentation model on a mitochondria dataset to learn useful visual features such as edges, substructure, and boundaries.
 2. Transfer that knowledge to glomeruli segmentation in kidney histology images.
 
-That segmentation output supports a first frozen-embedding ordinal scoring workflow for preeclampsia data.
+That segmentation output supports image-level endotheliosis quantification workflows across scored cohorts rather than one single project-specific dataset.
 
 ## Key Ideas
 
 - **Two-stage training**: mitochondria pretraining followed by glomeruli fine-tuning
 - **Dynamic patching**: train on full images with augmentations and on-the-fly crops instead of permanently patchifying everything upfront
 - **ROI identification**: segment glomeruli regions before later quantification steps
-- **Label Studio-first scoring**: for the current preeclampsia workflow, the image-level grade attached in Label Studio is the primary supervised target
+- **Current image-level supervision**: the maintained quantification path uses image-level grades joined to image or mask pairs
 - **Union ROI semantics**: image-level scoring uses the full multi-component mask region rather than only the largest connected component
+
+## Current Training Snapshot
+
+The current checked-in segmentation results come from the canonical April 24, 2026 workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/all_manual_mask_glomeruli_seed42/`.
+
+- Current mitochondria base artifact: `fixedloader_full_mito_base-pretrain_e50_b24_lr1e-3_sz256`
+- Deterministic glomeruli review panel: `30` crops across `29` images and `25` subjects
+- Category balance: `10` background, `10` boundary, `10` positive
+
+| Candidate | Dice | Jaccard | Precision | Recall | Current decision state |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `transfer` | `0.8954` | `0.8106` | `0.8106` | `1.0000` | within tie margin |
+| `scratch` | `0.8913` | `0.8040` | `0.8040` | `1.0000` | within tie margin |
+
+The current candidate comparison result is `insufficient_evidence`, so neither glomeruli candidate is the sole promoted default. Here that means both candidates passed the gates on this internal deterministic panel, but neither beat the other by enough to become the sole default. `blocked` means something else: a candidate failed the promotion gates. Treat these as internal deterministic validation metrics, not as external validation or a deployment-ready promotion claim. The checked-in figures live in [TECHNICAL_LAB_NOTEBOOK.md](TECHNICAL_LAB_NOTEBOOK.md#current-segmentation-training-snapshot).
 
 ## What Data You Need
 
@@ -28,21 +43,7 @@ There are two main image data sources:
 - **Mitochondria data**: electron microscopy images with mitochondria annotations
 - **Glomeruli data**: H&E kidney histology images with binary glomeruli masks
 
-You may also have subject-level metadata such as a scoring spreadsheet:
-
-- **Subject metadata**: usually something like `subject_metadata.xlsx`
-- This is still useful for audit trails, summaries, or legacy workflows, but it is not the default score source for the current preeclampsia quantification baseline
-
-### Example Metadata Layout
-
-| Glomerulus # | T19-1 | T19-2 | T30-1 | T30-2 | T30-3 |
-|--------------|-------|-------|-------|-------|-------|
-| 1            | 0.5   | 1     | 0     | 0.5   | 0     |
-| 2            | 0     | 1     | 0.5   | 0     | 0     |
-| 3            | 0     | 0.5   | 1     | 0     | 0     |
-| 4            | 0.5   | 0.5   | 0     | 0     | 0     |
-
-For the current scoring workflow, think of that spreadsheet as optional legacy metadata rather than the canonical supervised label table.
+Some cohorts may also include spreadsheets or other metadata files for audit context. Those are useful for summaries, joins, and migration work, but they are not the front-door control surface for the maintained segmentation workflow.
 
 ## Naming Convention
 
@@ -63,7 +64,7 @@ Supported image formats are typically `tif`, `tiff`, `png`, `jpg`, or `jpeg`. Ma
 
 ## Creating Masks With Label Studio
 
-If masks are being created manually, Label Studio is a practical workflow. For the current preeclampsia quantification path, the Label Studio export is more than a mask source: it is also the canonical image-level grading source.
+If masks are being created manually, Label Studio is a practical workflow. In the current maintained quantification path, the annotation export can also serve as the image-level grading source.
 
 ### 1. Install Label Studio
 
@@ -99,19 +100,18 @@ Recommended project structure:
 ```text
 $EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>/
 ├── images/
-│   ├── T19/
-│   │   └── T19-1.jpg
-│   └── T30/
-│       └── T30-1.jpg
+│   ├── SUBJECT_A/
+│   │   └── SUBJECT_A-1.jpg
+│   └── SUBJECT_B/
+│       └── SUBJECT_B-1.jpg
 ├── masks/
-│   ├── T19/
-│   │   └── T19-1_mask.png
-│   └── T30/
-│       └── T30-1_mask.png
+│   ├── SUBJECT_A/
+│   │   └── SUBJECT_A-1_mask.png
+│   └── SUBJECT_B/
+│       └── SUBJECT_B-1_mask.png
 ├── scores/
 │   └── labelstudio_annotations.json
-└── metadata/
-    └── subject_metadata.xlsx
+└── metadata/  # optional audit context
 ```
 
 ## Suggested Raw Data Layout
@@ -129,11 +129,10 @@ $EQ_RUNTIME_ROOT/raw_data/
         ├── masks/
         ├── scores/
         │   └── labelstudio_annotations.json
-        └── metadata/
-            └── subject_metadata.xlsx
+        └── metadata/  # optional
 ```
 
-This is cleaner than older hardcoded machine-specific paths and works better across WSL, Windows, and macOS.
+This layout keeps cohort inputs portable across WSL, Windows, and macOS.
 
 ## Before Training
 
@@ -196,7 +195,7 @@ Training uses the `training/` root and creates its internal dynamic train/valida
 For quantification, the current contract is also intentionally simple:
 
 - one scored example per image/mask pair
-- score recovered from the Label Studio annotation export
+- score recovered from the active image-level annotation source
 - one union ROI built from all positive pixels in the mask
 - frozen segmentation-encoder embeddings extracted from that union ROI
 

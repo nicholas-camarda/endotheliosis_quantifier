@@ -1,23 +1,40 @@
 # Endotheliosis Quantifier
 
-Endotheliosis Quantifier (`eq`) is a FastAI/PyTorch project for binary segmentation workflows around glomeruli histology and mitochondria pretraining, plus a maintained Label Studio-first image-level endotheliosis scoring baseline. The repository is a WSL-first development environment with local GPU training, local data directories, and Git-tracked code/config only.
+Endotheliosis Quantifier (`eq`) is a FastAI/PyTorch toolkit for glomeruli segmentation and endotheliosis quantification in kidney histology, with manifest-backed multi-cohort intake and candidate-evaluated segmentation training. Mitochondria pretraining is one supported transfer-learning path for segmentation. The repository supports active development in both WSL/Linux with CUDA and macOS Apple Silicon with MPS, with local data directories and Git-tracked code/config only.
 
 If you want the friendlier long-form introduction and workflow explanation, see [docs/ONBOARDING_GUIDE.md](docs/ONBOARDING_GUIDE.md).
 For the full curated documentation set, see [docs/README.md](docs/README.md).
+
+## Quick Start
+
+The main workflow entrypoint is `eq run-config`. If you want the easiest supported way to run the segmentation workflows in this repo, use one of the committed YAML configs:
+
+```bash
+eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml --dry-run
+eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
+```
+
+Other supported workflow configs use the same entrypoint:
+
+```bash
+eq run-config --config configs/mito_pretraining_config.yaml
+eq run-config --config configs/glomeruli_finetuning_config.yaml
+```
+
+The YAML is the control surface. In the common case, you should not need to stitch the workflow together manually from separate shell commands.
 
 ## Operating Contract
 
 | Area | Current contract |
 | --- | --- |
-| Development target | WSL on Windows with CUDA-capable PyTorch |
-| macOS local execution | Apple Silicon/MPS through the `eq-mac` conda environment |
+| Supported development environments | WSL/Linux with CUDA via `eq` and macOS Apple Silicon/MPS via `eq-mac` |
 | Package source | `src/eq/` |
 | Workflow control surface | YAML workflow files in `configs/`, run with `eq run-config --config <file>` |
 | Runtime root | `EQ_RUNTIME_ROOT`, with this checkout's local default recorded in `analysis_registry.yaml` |
 | Runtime inputs | Raw datasets under `$EQ_RUNTIME_ROOT/raw_data/` |
 | Runtime outputs | Derived data, trained models, logs, and generated reports under `$EQ_RUNTIME_ROOT/derived_data/`, `$EQ_RUNTIME_ROOT/models/`, `$EQ_RUNTIME_ROOT/logs/`, and `$EQ_RUNTIME_ROOT/output/` |
 | Scored cohort registry | `$EQ_RUNTIME_ROOT/raw_data/cohorts/manifest.csv` |
-| Preeclampsia quantification labels | Label Studio-derived image-level grades joined to image/mask pairs |
+| Current quantification supervision | Image-level grades joined to image/mask pairs in the active scored cohort workflow |
 | Quantification ROI semantics | Full multi-component union ROI |
 | Quantification outputs | Frozen segmentation-encoder embeddings, ordinal predictions, and an HTML review artifact with example cases |
 
@@ -128,19 +145,11 @@ Build or refresh the runtime manifest with:
 eq cohort-manifest
 ```
 
-The manifest is the project-local data contract for cohort ID, runtime-local image paths, optional mask paths, score linkage, lane assignment, mapping verification, hashes, and admission state. It is not a generic public dataset format. Original source-folder provenance belongs in sidecar ingest artifacts, while normal training and quantification use the localized runtime cohort directories.
-
-Manifest rows are image-level. Admitted rows require `cohort_id`, `image_path`, `score`, and a score locator such as `source_sample_id` or `source_score_row`; the pipeline appends `manifest_row_id`, `harmonized_id`, `join_status`, `verification_status`, `lane_assignment`, `admission_status`, `exclusion_reason`, `image_sha256`, and `mask_sha256`. Placeholder rows may be present before enrichment, but rows without a resolved runtime-local `image_path` cannot be admitted for training or quantification.
-
-Manifest naming separates cohort identity from workflow role:
-
-- `cohort_id` names the biological or project cohort.
-- `lane_assignment` names the workflow lane, such as `manual_mask_core`, `manual_mask_external`, `scored_only`, or `mr_concordance_only`.
-- Manual-mask lanes are first-class glomeruli training inputs when admitted; lane names preserve provenance and workflow role.
+The manifest is the project-local data contract for runtime-local image assets, optional masks, score linkage, workflow lane, verification or admission state, and file hashes. It is not a generic public dataset format. Original source-folder provenance belongs in sidecar ingest artifacts, while normal training and quantification use the localized runtime cohort directories.
 
 Lucchi and other segmentation-install datasets stay outside `raw_data/cohorts/manifest.csv`.
 
-For the generic runtime layout, see [docs/OUTPUT_STRUCTURE.md](docs/OUTPUT_STRUCTURE.md#runtime-scored-cohort-layout). For this checkout's current local cohort counts and unresolved-source notes, see [docs/TECHNICAL_LAB_NOTEBOOK.md](docs/TECHNICAL_LAB_NOTEBOOK.md#local-cohort-manifest-snapshot).
+For the generic runtime layout and more detailed manifest semantics, see [docs/OUTPUT_STRUCTURE.md](docs/OUTPUT_STRUCTURE.md#runtime-scored-cohort-layout). Current local cohort counts and source-specific notes live in the lab notebook rather than this front-door README.
 
 ## YAML-First Workflow
 
@@ -184,6 +193,21 @@ EQ_RUNTIME_ROOT=/path/to/runtime eq run-config --config configs/segmentation_fix
 ```
 
 Site-specific source-location overrides are defined in `src/eq/utils/paths.py` for local cohort ingestion. Treat those as local data plumbing, not as part of the ordinary run recipe.
+
+## Current Segmentation Snapshot
+
+The current checked-in segmentation snapshot comes from the canonical April 24, 2026 workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/all_manual_mask_glomeruli_seed42/`.
+
+- Current mitochondria base artifact: `fixedloader_full_mito_base-pretrain_e50_b24_lr1e-3_sz256`
+- Current deterministic glomeruli review panel: `30` crops across `29` images and `25` subjects
+- Review-panel category balance: `10` background, `10` boundary, `10` positive
+
+| Candidate | Dice | Jaccard | Precision | Recall | Current decision state |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `transfer` | `0.8954` | `0.8106` | `0.8106` | `1.0000` | within tie margin |
+| `scratch` | `0.8913` | `0.8040` | `0.8040` | `1.0000` | within tie margin |
+
+The current comparison report is `insufficient_evidence`, so neither candidate is the sole promoted default. In this repo, `insufficient_evidence` is the non-blocked tie case: both candidates cleared the gates on this internal panel, but neither separated enough to become the sole default. `blocked` is a different outcome and means a candidate failed the promotion gates. These figures come from an internal deterministic validation panel and are not external validation. For the checked-in figures and a fuller interpretation, see [docs/TECHNICAL_LAB_NOTEBOOK.md](docs/TECHNICAL_LAB_NOTEBOOK.md#current-segmentation-training-snapshot).
 
 ## Typical Run
 
@@ -236,7 +260,7 @@ eq quant-endo \
 
 To quantify with a different candidate, use that candidate's `.pkl` path.
 
-This path treats the Label Studio image-level grade as the supervised target for each image/mask pair. ROI extraction uses the full multi-component mask bounding box with context padding, then builds frozen segmentation-backbone embeddings and a canonical penalized multiclass ordinal baseline from `src/eq/quantification/ordinal.py`.
+The current maintained quantification path uses image-level grades joined to each image or mask pair. ROI extraction uses the full multi-component mask bounding box with context padding, then builds frozen segmentation-backbone embeddings and a canonical penalized multiclass ordinal baseline from `src/eq/quantification/ordinal.py`.
 
 The pipeline reports cohort-shape and target-support metadata with each run. Treat these outputs as a predictive audit baseline unless the scored cohort provides the target support and validation evidence needed for the intended scientific claim.
 
