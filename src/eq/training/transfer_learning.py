@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 from fastai.vision.all import *
 # BCEWithLogitsLossFlat import removed - using FastAI v2 automatic loss selection
 
-from eq.data_management.standard_getters import get_y
 from eq.data_management.datablock_loader import (
     TRAINING_MODE_DYNAMIC_FULL_IMAGE,
     build_segmentation_dls_dynamic_patching,
@@ -178,14 +177,6 @@ def load_model_for_transfer_learning(
     )
     logger.info(f"Target data root: {target_root}")
     logger.info(f"Training mode: {TRAINING_MODE_DYNAMIC_FULL_IMAGE}")
-    
-    # Make get_y function available in global namespace for model loading
-    import sys
-    from typing import Any
-    current_module = sys.modules[__name__]
-    if not hasattr(current_module, 'get_y'):
-        # Expose getter for FastAI's pickled learner; silence type checker
-        setattr(current_module, 'get_y', get_y)  # type: ignore[attr-defined]
     
     # Create new data loaders for target task with positive-aware dynamic cropping.
     target_dls = build_segmentation_dls_dynamic_patching(

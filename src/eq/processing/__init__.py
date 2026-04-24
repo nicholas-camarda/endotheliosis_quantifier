@@ -2,18 +2,11 @@
 """
 Processing Module
 
-This module consolidates image processing functionality that was previously
-scattered across multiple folders:
-- patches/ (image patchification)
-- io/ (file conversion and I/O operations)
-- features/ (feature extraction and processing, minus data loading)
-
-Provides unified image processing, patchification, and file conversion tools.
+This module exposes current full-image preprocessing and extraction helpers.
 """
 
 # Import processing functionality
-from .convert_files import convert_tif_to_jpg  # File conversion (from io/convert_files_to_jpg.py)
-from .image_mask_preprocessing import patchify_dataset, extract_large_images  # Unified image patchification and extraction
+from .image_mask_preprocessing import extract_large_images
 from .preprocessing import (  # Core preprocessing functions
     resize_image_standard,
     resize_image_large,
@@ -21,29 +14,18 @@ from .preprocessing import (  # Core preprocessing functions
     normalize_image_array,
 )
 # Note: annotation_processor removed - use PNG exports from Label Studio instead
-# Note: create_mitochondria_patches.py removed - functionality replaced by patchify_dataset
-
-# TODO: Add feature extraction functionality from features/ (non-data-loading parts)
 
 __all__ = [
-    # File conversion
-    'convert_tif_to_jpg',
-    
     # Image preprocessing
     'resize_image_standard',
     'resize_image_large',
     'preprocess_image_for_model',
     'normalize_image_array',
     
-    # Image patchification and extraction
-    'patchify_dataset',
+    # Full-image extraction
     'extract_large_images',
-    
-    # Note: Label Studio annotation processing removed - use PNG exports instead
-    
-    # Note: Mitochondria patch creation functions removed - use patchify_dataset instead
 ]
 
 # Version info
 __version__ = "1.0.0"
-__description__ = "Unified image processing and file operations"
+__description__ = "Current full-image preprocessing and extraction helpers"

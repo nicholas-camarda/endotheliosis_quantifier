@@ -7,15 +7,12 @@ with real medical image data before proceeding with FastAI v2 migration.
 
 Tests cover:
 1. Image loading and preprocessing
-2. Image patching/segmentation
-3. Mask generation and validation
-4. Data processing pipeline validation
+2. Mask generation and validation
+3. Dynamic full-image loader validation
 """
 
-import os
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
@@ -27,9 +24,6 @@ from eq.processing.preprocessing import (
     prepare_image_for_inference,
     resize_image_large,
     resize_image_standard,
-)
-from eq.processing.image_mask_preprocessing import (
-    patchify_dataset,
 )
 from eq.data_management.datablock_loader import build_segmentation_dls_dynamic_patching
 from eq.core.constants import DEFAULT_IMAGE_SIZE, LARGE_IMAGE_SIZE
@@ -144,85 +138,6 @@ class TestDataProcessingComponents:
                 
             except Exception as e:
                 pytest.fail(f"Failed to validate mask {mask_path.name}: {e}")
-
-    def test_image_patching_functionality(self, temp_dir):
-        """Test image patching/segmentation functionality."""
-        print(f"\nTesting image patching functionality...")
-        
-        # Create a larger test image
-        large_img = np.random.randint(0, 255, (400, 400, 3), dtype=np.uint8)
-        large_img_path = Path(temp_dir) / "large_test_image.jpg"
-        cv2.imwrite(str(large_img_path), large_img)
-        
-        # Output root for derived data
-        patches_root = Path(temp_dir) / "patches_root"
-        patches_root.mkdir()
-        
-        try:
-            # Use unified patchify_dataset
-            patchify_dataset(
-                input_root=str(large_img_path.parent),
-                output_root=str(patches_root),
-                patch_size=224,
-            )
-            
-            # Check that patches were created under image_patches/
-            patch_files = list((patches_root / "image_patches").glob("*.png"))
-            assert len(patch_files) > 0, "Should create patches from large image"
-            
-            # Verify patch dimensions
-            for patch_file in patch_files:
-                patch_img = cv2.imread(str(patch_file))
-                assert patch_img.shape[:2] == (224, 224), f"Patch should be 224x224, got {patch_img.shape[:2]}"
-            
-            print(f"✅ Successfully created {len(patch_files)} patches from large image")
-            
-        except Exception as e:
-            pytest.fail(f"Failed to create patches: {e}")
-
-    def test_mask_patching_functionality(self, temp_dir):
-        """Test mask patching functionality."""
-        print(f"\nTesting mask patching functionality...")
-        
-        # Create a larger test mask in a separate input directory
-        input_dir = Path(temp_dir) / "input_masks"
-        images_dir = input_dir / "images"
-        masks_dir = input_dir / "masks"
-        images_dir.mkdir(parents=True)
-        masks_dir.mkdir(parents=True)
-        
-        # Create a test image (required for the function to work)
-        large_img = np.random.randint(0, 255, (400, 400, 3), dtype=np.uint8)
-        large_img_path = images_dir / "large_test_image.jpg"
-        cv2.imwrite(str(large_img_path), large_img)
-        
-        # Create a test mask with the correct naming convention
-        large_mask = np.random.randint(0, 2, (400, 400), dtype=np.uint8) * 255
-        large_mask_path = masks_dir / "large_test_image_mask.png"
-        cv2.imwrite(str(large_mask_path), large_mask)
-        
-        # Output root for derived data
-        patches_root = Path(temp_dir) / "output_mask_patches_root"
-        patches_root.mkdir()
-        
-        try:
-            # Use unified patchify_dataset (auto-detects masks)
-            patchify_dataset(
-                input_root=str(input_dir),
-                output_root=str(patches_root),
-                patch_size=224,
-            )
-            
-            image_patch_files = list((patches_root / "image_patches").glob("*.png"))
-            mask_patch_files = list((patches_root / "mask_patches").glob("*_mask.png"))
-            
-            assert len(image_patch_files) > 0, "Should create image patches"
-            assert len(mask_patch_files) > 0, "Should create mask patches"
-            
-            print(f"✅ Successfully created {len(image_patch_files)} image patches and {len(mask_patch_files)} mask patches")
-            
-        except Exception as e:
-            pytest.fail(f"Failed to create mask patches: {e}")
 
     def test_data_loader_initialization(self, temp_dir):
         """Test that supported dynamic full-image data loader can be initialized."""
@@ -388,68 +303,6 @@ class TestRealDataValidation:
                     print(f"❌ Error loading real image {img_file.name}: {e}")
         else:
             print("⚠️  No images directory found, skipping real data loading test")
-
-    def test_real_data_patching(self):
-        """Test patching with real project data."""
-        print(f"\nTesting real data patching...")
-        
-        # Use centralized path management and discover actual project structure
-        from eq.utils.config_manager import ConfigManager
-        config_manager = ConfigManager()
-        data_path = config_manager.global_config.data_path
-        raw_data_dir = Path(data_path)
-        
-        if not raw_data_dir.exists():
-            pytest.skip(f"Raw data directory not found: {raw_data_dir}")
-        
-        # Find the first available project directory with a 'data' subdirectory
-        project_data_dir = None
-        for project_dir in raw_data_dir.iterdir():
-            if project_dir.is_dir():
-                candidate_data_path = project_dir / "data"
-                if candidate_data_path.exists():
-                    project_data_dir = candidate_data_path
-                    break
-        
-        if project_data_dir is None:
-            pytest.skip(f"No project with 'data' subdirectory found in: {raw_data_dir}")
-        images_dir = project_data_dir / "images"
-        
-        if images_dir.exists():
-            # Find a suitable large image for patching (recursively search subdirectories)
-            image_files = []
-            for ext in ['*.jpg', '*.jpeg', '*.png', '*.tif']:
-                image_files.extend(list(images_dir.rglob(ext)))
-            
-            if image_files:
-                test_image = image_files[0]
-                
-                # Create temporary output root
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    patches_root = Path(temp_dir) / "real_patches_root"
-                    patches_root.mkdir()
-                    
-                    try:
-                        # Use unified patchify_dataset
-                        patchify_dataset(
-                            input_root=str(test_image.parent),
-                            output_root=str(patches_root),
-                            patch_size=224,
-                        )
-                        
-                        # Check results
-                        patch_files = list((patches_root / "image_patches").glob("*.jpg"))
-                        if patch_files:
-                            print(f"✅ Successfully created {len(patch_files)} patches from real image: {test_image.name}")
-                        else:
-                            print(f"⚠️  No patches created from real image: {test_image.name}")
-                            
-                    except Exception as e:
-                        print(f"❌ Error patching real image {test_image.name}: {e}")
-            else:
-                print("⚠️  No image files found for patching test")
-        else:
-            print("⚠️  No images directory found, skipping real data patching test")
 
 
 if __name__ == "__main__":

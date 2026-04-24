@@ -1,6 +1,6 @@
 import inspect
-import json
 import os
+import random
 import subprocess
 import sys
 from pathlib import Path
@@ -250,6 +250,9 @@ def test_dynamic_dls_positive_focus_crops_pairs_and_preserves_image_intensity(tm
     Image.fromarray(image).save(tmp_path / "images" / "sample.jpg")
     Image.fromarray(mask).save(tmp_path / "masks" / "sample_mask.png")
 
+    random.seed(0)
+    np.random.seed(0)
+    torch.manual_seed(0)
     dls = build_segmentation_dls_dynamic_patching(
         tmp_path,
         bs=1,
@@ -261,6 +264,9 @@ def test_dynamic_dls_positive_focus_crops_pairs_and_preserves_image_intensity(tm
         pos_crop_attempts=10,
     )
 
+    random.seed(0)
+    np.random.seed(0)
+    torch.manual_seed(0)
     x_batch, y_batch = dls.one_batch()
     foreground_fraction = float((y_batch > 0).float().mean())
 

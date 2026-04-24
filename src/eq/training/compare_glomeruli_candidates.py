@@ -12,7 +12,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Sequence
+from typing import Any, Dict, List, Sequence
 
 import numpy as np
 import torch
@@ -32,6 +32,7 @@ from eq.training.promotion_gates import (
     binary_precision_recall,
     deterministic_validation_manifest,
     evaluate_glomeruli_promotion_candidate,
+    resolve_image_path_for_mask,
     trivial_baseline_metrics,
 )
 from eq.utils.logger import get_logger

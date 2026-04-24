@@ -4,16 +4,12 @@
 import argparse
 import logging
 import os
-import re
 import sys
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
-
-from eq.utils.logger import ProgressLogger, get_logger, log_function_call, setup_logging
+from eq.utils.logger import get_logger, log_function_call, setup_logging
 from eq.utils.mode_manager import EnvironmentMode, ModeManager
-from eq.core.constants import DEFAULT_MASK_THRESHOLD, DEFAULT_IMAGE_SIZE
 from eq.utils.paths import (
     get_output_path,
     get_runtime_mitochondria_data_path,
@@ -71,13 +67,6 @@ def auto_setup_environment():
 _auto_mode_manager = auto_setup_environment()
 
 
-def _load_run_pipeline():
-    """Import the production pipeline only when a command actually needs it."""
-    from eq.pipeline.run_production_pipeline import run_pipeline
-
-    return run_pipeline
-
-
 def _load_process_metadata_file():
     """Import metadata processing lazily to keep CLI startup lightweight."""
     from eq.data_management.metadata_processor import process_metadata_file
@@ -128,59 +117,7 @@ def _load_visualizers():
 
 
 # Functions needed for loading pre-trained models
-def n_glom_codes(mask_files):
-    """Get unique codes from mask files."""
-    codes = set()
-    # Lazy import to avoid fastai dependency unless needed
-    try:
-        from fastai.vision.all import PILMask
-    except Exception:
-        raise ImportError("fastai not available; install fastai to use n_glom_codes")
-    for mask_file in mask_files:
-        mask = np.array(PILMask.create(mask_file))
-        codes.update(np.unique(mask))
-    return sorted(list(codes))
-
-
-def get_glom_mask_file(image_file, p2c, thresh=DEFAULT_MASK_THRESHOLD):
-    """Get mask path for image file."""
-    # this is the base path
-    base_path = image_file.parent.parent.parent
-    first_name = image_file.parent.name
-    # get training or testing from here
-    full_name = re.findall(string=image_file.name, pattern=r"^[A-Za-z]*[0-9]+[_|-]+[A-Za-z]*[0-9]+")[0]
-    
-    # put the whole thing together
-    str_name = f'{full_name}_mask' + image_file.suffix
-    # attach it to the correct path
-    mask_path = (base_path / 'masks' / first_name / str_name)
-    
-    # convert to an array (mask)
-    try:
-        from fastai.vision.all import PILMask
-    except Exception:
-        raise ImportError("fastai not available; install fastai to use get_glom_mask_file")
-    msk = np.array(PILMask.create(mask_path))
-    # convert the image to binary if it isn't already (tends to happen when working with .jpg files)
-    msk[msk <= thresh] = 0
-    msk[msk > thresh] = 1
-    
-    # find all the possible values in the mask (0,255)
-    for i, val in enumerate(p2c):
-        msk[msk == p2c[i]] = val
-    return PILMask.create(msk)
-
-
-def get_glom_y(o):
-    """Get glomeruli mask for a given image file."""
-    # This is a placeholder - p2c should be defined when this function is used
-    # For now, we'll use a default value
-    p2c = [0, 1]  # Default binary mask codes
-    return get_glom_mask_file(o, p2c)
-
-
 # from eq.models.feature_extractor import run_feature_extraction
-# from eq.pipeline.quantify_endotheliosis import run_endotheliosis_quantification
 
 
 @log_function_call
@@ -215,57 +152,12 @@ def pipeline_orchestrator_command(args):
     print()
     print("Available pipeline stages:")
     print("  1. Quantification Training (quant-endo) - Run the Label Studio-first ordinal endotheliosis baseline") 
-    print("  2. Production Inference (production) - End-to-end inference using pre-trained models")
     print()
     print("Usage:")
     print("  python -m eq quant-endo             # Run quantification contract + embedding baseline")
-    print("  python -m eq production             # Run production inference")
-    print("  QUICK_TEST=true python -m eq production  # Quick test production inference")
     print()
     print("❌ No interactive input required. Use specific commands above.")
     print("❌ This orchestrator is for documentation only.")
-
-
-@log_function_call
-def data_load_command(args):
-    """Load and preprocess data for the pipeline."""
-    logger = get_logger("eq.data_load")
-    logger.info("🔄 Starting data loading and preprocessing pipeline...")
-
-    # Lazy import heavy data utilities to avoid import-time side effects
-    # Note: These functions are not yet implemented in the consolidated architecture
-    # TODO: Implement these functions in the appropriate modules
-    logger.warning("⚠️  Data loading functions not yet implemented in consolidated architecture")
-    logger.warning("⚠️  Skipping data loading step")
-    return
-
-    # Note: create_train_val_test_lists, organize_data_into_subdirs, and
-    # generate_binary_masks were part of legacy features modules. The
-    # consolidated loader returns train/val/test splits directly.
-    # Set up progress tracking
-    progress = ProgressLogger(logger, 6, "Data Loading Pipeline")
-    
-    # Load and split data using the unified loader (into cache)
-    progress.step("Loading and caching glomeruli dataset")
-    data_splits = generate_final_dataset(
-        processed_images_dir=args.data_dir,
-        cache_dir=args.cache_dir
-    )
-    logger.info(f"📊 Train samples: {data_splits['metadata']['train_samples']}")
-    logger.info(f"📊 Val samples: {data_splits['metadata']['val_samples']}")
-    logger.info(f"📊 Test samples: {data_splits['metadata']['test_samples']}")
-    
-    # Process scores if annotation file provided
-    if args.annotation_file:
-        progress.step("Processing scores from annotations")
-        annotations = load_annotations_from_json(args.annotation_file)
-        scores = get_scores_from_annotations(annotations)
-        logger.info(f"📊 Processed {len(scores)} scores from annotations")
-    else:
-        progress.step("Skipping score processing (no annotation file provided)")
-    
-    progress.complete("Data loading and preprocessing")
-    logger.info("🎉 Data loading pipeline completed successfully!")
 
 
 # Note: process_annotations_command removed - use PNG exports from Label Studio instead
@@ -390,90 +282,6 @@ def validate_naming_command(args):
     logger.info("🎉 Naming validation completed!")
 
 
-def process_data_command(args):
-    """Legacy static patch conversion for audit or historical workflows."""
-    logger = get_logger("eq.process_data")
-    logger.info("🔄 Starting legacy static patch conversion pipeline...")
-    logger.warning("Static patch outputs are legacy audit/conversion artifacts, not supported segmentation training inputs.")
-
-    from pathlib import Path
-    import os
-    from datetime import datetime
-    from eq.processing.image_mask_preprocessing import patchify_dataset
-    from eq.core.constants import EXPECTED_INPUT_WIDTH, EXPECTED_INPUT_HEIGHT, EXPECTED_PATCHES_PER_IMAGE
-    
-    # Set up progress tracking
-    progress = ProgressLogger(logger, 4, "Data Processing Pipeline")
-    
-    # Validate input directory
-    input_path = Path(args.input_dir)
-    if not input_path.exists():
-        logger.error(f"❌ Input directory does not exist: {input_path}")
-        sys.exit(1)
-    
-    # Show expected processing info
-    logger.info(f"📏 Expected input image dimensions: {EXPECTED_INPUT_WIDTH}x{EXPECTED_INPUT_HEIGHT}")
-    logger.info(f"✂️  Creating {args.patch_size}x{args.patch_size} legacy static patches")
-    logger.info(f"📊 Expected patches per image: ~{EXPECTED_PATCHES_PER_IMAGE}")
-    
-    # Create output directory structure
-    output_path = Path(args.output_dir)
-    progress.step("Creating output directory structure")
-    
-    # Create the main derived_data structure
-    image_patches_dir = output_path / "image_patches"
-    mask_patches_dir = output_path / "mask_patches"
-    cache_dir = output_path / "cache"
-    
-    for dir_path in [image_patches_dir, mask_patches_dir, cache_dir]:
-        dir_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f"📁 Created directory: {dir_path}")
-    
-    # Single unified processing step
-    progress.step("Processing data (auto-detect masks and structure)")
-    counts = patchify_dataset(
-        input_root=str(input_path),
-        output_root=str(output_path),
-        patch_size=args.patch_size,
-    )
-    
-    # Count processed files (search recursively through subdirectories)
-    image_count = counts.get("images", 0)
-    mask_count = counts.get("masks", 0)
-    subjects_count = counts.get("subjects", 0)
-    
-    progress.step("Finalizing output")
-    
-    # Create metadata file
-    metadata = {
-        'input_directory': str(input_path),
-        'output_directory': str(output_path),
-        'patch_size': args.patch_size,
-        'overlap': args.overlap,
-        'has_masks': mask_count > 0,
-        'processed_at': datetime.now().isoformat(),
-        'statistics': {
-            'image_patches': image_count,
-            'mask_patches': mask_count,
-            'subjects_processed': subjects_count,
-            'total_files': image_count + mask_count
-        }
-    }
-    
-    import json
-    metadata_file = output_path / "processing_metadata.json"
-    with open(metadata_file, 'w') as f:
-        json.dump(metadata, f, indent=2, default=str)
-    
-    progress.complete("Legacy static patch conversion")
-    logger.info(f"🎉 Legacy static patch conversion completed successfully!")
-    logger.info(f"📊 Generated {image_count} image patches from {subjects_count} subjects")
-    if mask_count > 0:
-        logger.info(f"📊 Generated {mask_count} mask patches")
-    logger.info(f"📁 Output saved to: {output_path}")
-    logger.info(f"📄 Metadata saved to: {metadata_file}")
-
-
 def mode_command(args):
     """Inspect and manage environment mode selection."""
     logger = get_logger("eq.mode")
@@ -584,48 +392,6 @@ def _handle_mode_specific_errors(e: Exception, mode_manager: ModeManager, comman
 
 
 @log_function_call
-def extract_features_command(args):
-    """Extract features from images."""
-    logger = get_logger("eq.extract_features")
-    logger.info("🔄 Starting feature extraction...")
-    
-    # Get mode manager and validate mode
-    mode_manager = ModeManager()
-    _validate_mode_for_command(mode_manager, "extract-features")
-    
-    logger.info(f"🔧 Mode: {mode_manager.current_mode.value}")
-    
-    print("Note: This command is not yet implemented due to import issues.")
-    # run_feature_extraction(
-    #     cache_dir=args.cache_dir,
-    #     output_dir=args.output_dir,
-    #     model_path=args.model_path
-    # )
-    logger.info("✅ Feature extraction complete!")
-
-
-@log_function_call
-def quantify_command(args):
-    """Run endotheliosis quantification."""
-    logger = get_logger("eq.quantify")
-    logger.info("🔄 Starting endotheliosis quantification...")
-    
-    # Get mode manager and validate mode
-    mode_manager = ModeManager()
-    _validate_mode_for_command(mode_manager, "quantify")
-    
-    logger.info(f"🔧 Mode: {mode_manager.current_mode.value}")
-    
-    print("Note: This command is not yet implemented due to import issues.")
-    # run_endotheliosis_quantification(
-    #     cache_dir=args.cache_dir,
-    #     output_dir=args.output_dir,
-    #     model_path=args.model_path
-    # )
-    logger.info("✅ Quantification complete!")
-
-
-@log_function_call
 def prepare_quant_contract_command(args):
     """Prepare contract artifacts for canonical quantification data."""
     logger = get_logger("eq.prepare_quant_contract")
@@ -723,82 +489,6 @@ def metadata_process_command(args):
         sys.exit(1)
 
 
-# === Legacy derived static patch audit ===
-def audit_derived_command(args):
-    """Audit legacy static patch directory for 1:1 pairs, size match, and binary masks.
-
-    Writes a JSON report under <data_dir>/cache/audit_masks.json
-    """
-    logger = get_logger("eq.audit_derived")
-    data_dir = Path(args.data_dir)
-    img_dir = data_dir / 'image_patches'
-    msk_dir = data_dir / 'mask_patches'
-    cache_dir = data_dir / 'cache'
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    if not img_dir.exists() or not msk_dir.exists():
-        print(f"❌ Expected subdirs not found: {img_dir} and {msk_dir}")
-        sys.exit(1)
-
-    from PIL import Image
-    import numpy as _np
-    import json as _json
-
-    images = sorted([p for p in img_dir.glob('*.png')])
-    total_images = len(images)
-
-    missing_masks = []
-    size_mismatch = []
-    non_binary_masks = []
-
-    def _mask_path(p: Path) -> Path:
-        return msk_dir / f"{p.stem}_mask{p.suffix}"
-
-    for p in images:
-        mp = _mask_path(p)
-        if not mp.exists():
-            # Fallback common renames
-            alt = Path(str(p).replace('.jpeg', '.png').replace('.jpg', '.png').replace('img_', 'mask_'))
-            if alt.exists():
-                mp = alt
-            else:
-                missing_masks.append({"image": str(p), "expected_mask": str(mp)})
-                continue
-        try:
-            im = Image.open(p)
-            mm = Image.open(mp)
-            if im.size != mm.size:
-                size_mismatch.append({"image": str(p), "mask": str(mp), "image_size": im.size, "mask_size": mm.size})
-            arr = _np.array(mm)
-            uniq = set(_np.unique(arr).tolist())
-            if not (uniq.issubset({0,1}) or uniq.issubset({0,255})):
-                non_binary_masks.append({"mask": str(mp), "unique_values": sorted(list(uniq))[:20]})
-        except Exception as e:
-            non_binary_masks.append({"mask": str(mp), "error": str(e)})
-
-    report = {
-        "data_dir": str(data_dir),
-        "summary": {
-            "total_images": total_images,
-            "missing_masks": len(missing_masks),
-            "size_mismatch": len(size_mismatch),
-            "non_binary_masks": len(non_binary_masks)
-        },
-        "examples": {
-            "missing_masks": missing_masks[:20],
-            "size_mismatch": size_mismatch[:20],
-            "non_binary_masks": non_binary_masks[:20]
-        }
-    }
-
-    out_path = cache_dir / 'audit_masks.json'
-    with open(out_path, 'w') as f:
-        _json.dump(report, f, indent=2)
-
-    print(f"✅ Audit complete. Report: {out_path}")
-    print(_json.dumps(report["summary"], indent=2))
-
-
 @log_function_call
 def capabilities_command(args):
     """Report detected hardware capabilities and recommendations."""
@@ -854,51 +544,6 @@ def visualize_command(args):
         logger.error(f"Visualization failed: {e}")
         print(f"❌ Error: {e}")
         raise
-
-
-@log_function_call
-def pipeline_command(args):
-    """Run the production inference pipeline."""
-    logger = get_logger("eq.pipeline")
-    logger.info("🔄 Starting end-to-end production inference...")
-    run_pipeline = _load_run_pipeline()
-    
-    # Auto-determine cache and output directories
-    data_dir = args.data_dir
-    cache_dir = f"{data_dir}/cache"
-    output_dir = "output"
-    
-    # Check for QUICK_TEST mode
-    is_quick_test = os.getenv('QUICK_TEST') == 'true'
-    if is_quick_test:
-        args.epochs = 5
-        args.batch_size = 4
-        run_type = "development"
-    else:
-        run_type = "production"
-    
-    print("🚀 === PRODUCTION INFERENCE PIPELINE ===")
-    print("Running end-to-end inference using pre-trained models...")
-    print(f"Data directory: {data_dir}")
-    print(f"Test data directory: {args.test_data_dir}")
-    print(f"Cache directory: {cache_dir} (auto-detected)")
-    print(f"Output directory: {output_dir} (auto-detected)")
-    print(f"Base model path: {args.base_model_path}")
-    print(f"Epochs: {args.epochs}")
-    print(f"Batch size: {args.batch_size}")
-    print(f"Quick test: {is_quick_test}")
-    if args.segmentation_model:
-        print(f"Segmentation model: {args.segmentation_model}")
-    
-    # Run the pipeline
-    run_pipeline(
-        epochs=args.epochs,
-        run_type=run_type,
-        use_existing_models=True,
-        data_dir=data_dir,
-        cache_dir=cache_dir,
-        segmentation_model=args.segmentation_model
-    )
 
 
 @log_function_call
@@ -1001,10 +646,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  eq data-load --data-dir data/train --test-data-dir data/test
-  eq extract-features --cache-dir data/cache --output-dir output
-  eq quantify --cache-dir data/cache --output-dir output
-  eq pipeline --data-dir data/train --test-data-dir data/test --output-dir output
+  eq quant-endo --data-dir <raw-project> --segmentation-model <model.pkl>
+  eq prepare-quant-contract --data-dir <raw-project> --segmentation-model <model.pkl>
+  eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml --dry-run
   eq capabilities
   eq mode --set development --show --validate
   eq orchestrator  # Interactive menu
@@ -1032,30 +676,6 @@ Examples:
         description='Interactive pipeline orchestrator with menu selection'
     )
     orchestrator_parser.set_defaults(func=pipeline_orchestrator_command)
-    
-    # Data loading command
-    data_parser = subparsers.add_parser('data-load', help='Load and preprocess data')
-    data_parser.add_argument('--data-dir', required=True, help='Training data directory')
-    data_parser.add_argument('--test-data-dir', required=True, help='Test data directory')
-    data_parser.add_argument('--cache-dir', required=True, help='Cache directory')
-    data_parser.add_argument('--annotation-file', help='Annotation JSON file')
-    data_parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Image size for processing')
-    data_parser.set_defaults(func=data_load_command)
-
-    # Legacy static patch conversion command
-    process_parser = subparsers.add_parser('process-data', help='Legacy static patch conversion for audit/historical workflows')
-    process_parser.add_argument('--input-dir', required=True, help='Input directory with raw images (supports nested images/ and masks/ subdirs)')
-    process_parser.add_argument(
-        '--output-dir',
-        default=str(get_output_path()),
-        help='Output directory (default: active runtime derived_data root)',
-    )
-    from eq.core.constants import DEFAULT_PATCH_SIZE, EXPECTED_PATCHES_PER_IMAGE
-    process_parser.add_argument('--patch-size', type=int, default=DEFAULT_PATCH_SIZE, help=f'Legacy static patch size (default: {DEFAULT_PATCH_SIZE}, expected ~{EXPECTED_PATCHES_PER_IMAGE} patches per image)')
-    from eq.core.constants import DEFAULT_PATCH_OVERLAP
-    process_parser.add_argument('--overlap', type=float, default=DEFAULT_PATCH_OVERLAP, help=f'Overlap between patches (default: {DEFAULT_PATCH_OVERLAP})')
-    # auto-detect masks; no explicit flag needed
-    process_parser.set_defaults(func=process_data_command)
     
     # Extract images command (for large TIF files)
     extract_parser = subparsers.add_parser('extract-images', help='Extract large images from TIF files without patchifying')
@@ -1174,20 +794,6 @@ Examples:
     backup_parser.add_argument('--derived-dir', help='Optional derived-data directory to include when --include-derived is set')
     backup_parser.set_defaults(func=backup_project_data_command)
     
-    # Feature extraction command
-    features_parser = subparsers.add_parser('extract-features', help='Extract features')
-    features_parser.add_argument('--cache-dir', required=True, help='Cache directory')
-    features_parser.add_argument('--output-dir', required=True, help='Output directory')
-    features_parser.add_argument('--model-path', required=True, help='Path to trained model')
-    features_parser.set_defaults(func=extract_features_command)
-    
-    # Quantification command
-    quant_parser = subparsers.add_parser('quantify', help='Run endotheliosis quantification')
-    quant_parser.add_argument('--cache-dir', required=True, help='Cache directory')
-    quant_parser.add_argument('--output-dir', required=True, help='Output directory')
-    quant_parser.add_argument('--model-path', required=True, help='Path to trained model')
-    quant_parser.set_defaults(func=quantify_command)
-
     # Metadata processing command
     metadata_parser = subparsers.add_parser('metadata-process', help='Process metadata (e.g., glomeruli scoring matrix)')
     metadata_parser.add_argument('--input-file', required=True, help='Path to input metadata file (e.g., .xlsx)')
@@ -1213,23 +819,6 @@ Examples:
     mode_parser.add_argument('--show', action='store_true', help='Show current mode and configuration summary')
     mode_parser.add_argument('--validate', action='store_true', help='Validate current mode against hardware capabilities')
     mode_parser.set_defaults(func=mode_command)
-    
-    # Production pipeline command
-    production_parser = subparsers.add_parser('production', help='Run production inference pipeline')
-    production_parser.add_argument('--data-dir', required=True, help='Path to data directory')
-    production_parser.add_argument('--test-data-dir', required=True, help='Path to test data directory')
-    production_parser.add_argument('--annotation-file', help='Path to annotation file')
-    production_parser.add_argument('--base-model-path', default='segmentation_model_dir', help='Path to base model directory')
-    production_parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Image size for processing')
-    production_parser.add_argument('--batch-size', type=int, default=8, help='Batch size for processing')
-    production_parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
-    production_parser.add_argument('--segmentation-model', help='Segmentation model to use (glomeruli, mitochondria, etc.)')
-    production_parser.set_defaults(func=pipeline_command)
-
-    # Derived data audit command
-    audit_parser = subparsers.add_parser('audit-derived', help='Audit legacy static patch image/mask pairs for binary masks and mapping')
-    audit_parser.add_argument('--data-dir', required=True, help='Path to a legacy static patch folder with image_patches/ and mask_patches/')
-    audit_parser.set_defaults(func=audit_derived_command)
     
     # Visualization command
     viz_parser = subparsers.add_parser('visualize', help='Visualize masks and images for debugging')

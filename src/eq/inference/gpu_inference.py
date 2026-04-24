@@ -40,7 +40,7 @@ class GPUGlomeruliInference:
         # Load model
         self.logger.info(f'Loading model from {model_path}')
         try:
-            self.learn = load_model_safely(model_path)
+            self.learn = load_model_safely(model_path, model_type="glomeruli")
             self.logger.info('✅ Model loaded successfully')
         except Exception as e:
             self.logger.error(f'❌ Failed to load model: {e}')

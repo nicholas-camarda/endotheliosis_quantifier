@@ -419,7 +419,7 @@ Implemented validation includes:
 - early image-mask pairing checks for full-image dynamic training roots
 - failure when expected masks are missing
 - basic sampled mask-content sanity checks on validation items
-- static patch loaders retained only for legacy audit/conversion inspection
+- rejection of retired static patch roots before model construction
 
 This is one of the more mature parts of the current branch.
 
@@ -467,8 +467,6 @@ output/<data_source>/
 ├── results/
 └── cache/
 ```
-
-This path is used by the older production pipeline code.
 
 ## Metadata And Spreadsheet Processing
 
@@ -522,45 +520,42 @@ The current `master` branch still does **not** provide:
 - a fully production-hardened deployment path from predicted masks to final score
 - faithful attribution methods for the embedding model
 
-The CLI commands `extract-features` and `quantify` still print that they are not yet implemented, so the maintained quantification surface is currently `prepare-quant-contract` plus `quant-endo`.
+The maintained quantification CLI surface is `prepare-quant-contract` plus `quant-endo`.
 
 ## Inference Status
 
-Inference support is mixed.
+Inference support is scoped.
 
 ### Present In The Repo
 
 The branch includes:
 
-- glomeruli inference modules
-- mitochondria inference modules
-- a production-pipeline module intended to load existing models and generate outputs
+- the shared prediction core
+- GPU glomeruli inference
 
 ### Caveat
 
-This code should be treated as **partially maintained** rather than a fully trusted production surface.
+This code should be treated as a model-facing inference surface, not a fully trusted production quantification workflow.
 
 Reasons:
 
-- some inference paths still reference older assumptions
-- some modules import code that is not present in the tracked source tree
-- the production pipeline contains legacy dependencies and undefined classes
+- promotion and comparison gates still need explicit candidate artifacts and validation manifests
+- end-to-end image-level quantification is maintained through `prepare-quant-contract` and `quant-endo`
 
-So the presence of inference files should not be interpreted as proof of a clean end-to-end supported workflow.
+So inference modules should not be interpreted as proof of a complete production deployment path.
 
 ## Recommended Entry Points On `master`
 
 For the current branch, the safest supported workflow is:
 
 1. validate raw naming with `eq validate-naming`
-2. prepare derived data with `eq extract-images` or `eq process-data`
+2. prepare full-image extracted data with `eq extract-images`
 3. export Label Studio PNG masks plus annotation JSON when image-level quantification labels are needed
-4. process metadata with `eq metadata-process` if spreadsheets are present for legacy support or audit context
+4. process metadata with `eq metadata-process` if spreadsheets are present for audit context
 5. run `eq prepare-quant-contract` to recover score-linked image/mask pairs
 6. run `eq quant-endo` for the current embedding-first image-level baseline
-7. audit masks with `eq audit-derived`
-8. train mitochondria via `python -m eq.training.train_mitochondria`
-9. train glomeruli via `python -m eq.training.train_glomeruli`
+7. train mitochondria via `python -m eq.training.train_mitochondria`
+8. train glomeruli via `python -m eq.training.train_glomeruli`
 
 Use the dedicated training modules for heavy model training.
 

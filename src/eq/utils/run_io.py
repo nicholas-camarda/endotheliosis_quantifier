@@ -172,13 +172,7 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
         
         # Prepare item paths for raw image display (if available)
         item_paths = getattr(learn.dls.valid_ds, 'items', None)
-        # Try to import mask getter to resolve mask filenames alongside images
-        try:
-            from eq.data_management.datablock_loader import (
-                default_get_y_path as _get_mask_path,
-            )
-        except Exception:
-            _get_mask_path = None
+        from eq.data_management.standard_getters import get_y_full as _get_mask_path
         
         # Plot first few predictions: add a RAW column for sanity
         fig, axes = plt.subplots(3, 5, figsize=(20, 12))
@@ -314,13 +308,12 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
                         else:
                             raw_np = np.zeros_like(raw_np, dtype=np.float32)
                     # Resolve mask path for logging/annotation if possible
-                    mask_name = "(unknown)"
-                    if _get_mask_path is not None:
-                        try:
-                            mask_path = Path(_get_mask_path(raw_path))
-                            mask_name = mask_path.name
-                        except Exception as _e2:
-                            logger.warning(f"Failed to resolve mask path for {raw_path.name}: {_e2}")
+                    try:
+                        mask_path = Path(_get_mask_path(raw_path))
+                        mask_name = mask_path.name
+                    except Exception as _e2:
+                        mask_name = "(unresolved)"
+                        logger.warning(f"Failed to resolve mask path for {raw_path.name}: {_e2}")
 
                     logger.info(
                         f"PAIR[{i}] image={raw_path.name} mask={mask_name} | RAW shape={raw_np.shape} dtype={raw_np.dtype} min={float(np.nanmin(raw_np)):.4f} max={float(np.nanmax(raw_np)):.4f}"

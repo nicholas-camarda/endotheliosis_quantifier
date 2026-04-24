@@ -1,95 +1,36 @@
 #!/usr/bin/env python3
-"""
-Comprehensive Model Loading Module
+"""Current-namespace FastAI model loading utilities."""
 
-This module provides unified model loading functionality with support for
-historical model compatibility. Consolidates ALL model loading logic that was
-previously scattered across multiple files.
-
-Features:
-- Safe model loading with proper function definitions
-- Automatic model type detection
-- Historical function compatibility
-- MPS/CUDA/CPU hardware awareness
-- Comprehensive error handling and logging
-"""
-
-import os
 from pathlib import Path
-from typing import Any, Union
+from typing import Union
 
-from eq.core.constants import MPS_FALLBACK_ENV_VAR
 from eq.utils.logger import get_logger
 
 # FastAI is required by design
 from fastai.vision.all import Learner, load_learner  # type: ignore
 
 
-# Define the functions that were used during model training
-def get_y(x: Any) -> str:
-    """Get mask path for image path - used in mitochondria training."""
-    return str(x).replace('.jpg', '.png').replace('img_', 'mask_')
-
-
-def get_items_func(x: Any) -> Any:
-    """Get items function - used in glomeruli transfer learning."""
-    return x
-
-
-def get_y_func(x: Any) -> str:
-    """Get y function - used in glomeruli transfer learning."""
-    return str(x).replace('.jpg', '_mask.png')
-
-
-def _patch_main_module() -> None:
-    """Patch the __main__ module with required functions."""
-    import __main__
-
-    # Add the required functions to __main__ (use setattr to satisfy type checkers)
-    setattr(__main__, 'get_y', get_y)
-    setattr(__main__, 'get_items_func', get_items_func)
-    setattr(__main__, 'get_y_func', get_y_func)
-    
-    # Also add to globals for safety
-    globals()['get_y'] = get_y
-    globals()['get_items_func'] = get_items_func
-    globals()['get_y_func'] = get_y_func
-
-
-def setup_model_loading_environment() -> None:
-    """
-    Set up the environment for proper model loading.
-    """
-    os.environ[MPS_FALLBACK_ENV_VAR] = '1'
-    _patch_main_module()
-
-
 def load_mitochondria_model(model_path: str) -> Learner:
-    """Load the pre-trained mitochondria segmentation model."""
+    """Load a current-namespace mitochondria segmentation model."""
     logger = get_logger("eq.model_loading")
     
     if not Path(model_path).exists():
         raise FileNotFoundError(f"Mitochondria model not found at: {model_path}")
     
     logger.info(f"Loading mitochondria model from: {model_path}")
-    
-    # Patch the main module with required functions
-    _patch_main_module()
-    
-    # Load the model
+
     learn: Learner = load_learner(model_path)  # type: ignore[call-arg]
     logger.info("✅ Mitochondria model loaded successfully")
     return learn
 
 
 def load_glomeruli_model(model_path: str) -> Learner:
-    """Load the pre-trained glomeruli transfer learning model."""
+    """Load a current-namespace glomeruli segmentation model."""
     logger = get_logger("eq.model_loading")
-    
-    # Patch the main module with required functions
-    _patch_main_module()
-    
-    # Load the model
+
+    if not Path(model_path).exists():
+        raise FileNotFoundError(f"Glomeruli model not found at: {model_path}")
+
     learn: Learner = load_learner(model_path)  # type: ignore[call-arg]
     logger.info("✅ Glomeruli model loaded successfully")
     return learn
@@ -105,14 +46,16 @@ def load_model_safely(model_path: str, model_type: str = "auto") -> Learner:
         raise FileNotFoundError(f"Model not found at: {model_path}")
     
     if model_type == "auto":
-        # Auto-detect based on filename
         name_lower = Path(model_path).name.lower()
         if "mito" in name_lower:
             model_type = "mito"
-        elif "glomerulus" in name_lower:
+        elif "glomerulus" in name_lower or "glomeruli" in name_lower:
             model_type = "glomeruli"
         else:
-            model_type = "glomeruli"
+            raise ValueError(
+                f"Could not auto-detect model type from filename: {model_path}. "
+                "Pass model_type='mito' or model_type='glomeruli'."
+            )
     
     logger.info(f"Auto-detected model type: {model_type}")
     
@@ -122,20 +65,6 @@ def load_model_safely(model_path: str, model_type: str = "auto") -> Learner:
         return load_glomeruli_model(model_path)
     else:
         raise ValueError(f"Unknown model type: {model_type}")
-
-
-def load_model_with_historical_support(model_path: Union[str, Path], 
-                                     setup_environment: bool = True) -> Learner:
-    """
-    Load a FastAI model with historical function support.
-    """
-    model_path = Path(model_path)
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model file not found: {model_path}")
-    if setup_environment:
-        setup_model_loading_environment()
-    learner: Learner = load_learner(model_path)  # type: ignore[call-arg]
-    return learner
 
 
 def get_model_info(learner: Learner) -> dict:
@@ -217,7 +146,7 @@ def validate_model_compatibility(model_path: Union[str, Path]) -> dict:
         return results
     
     try:
-        learner = load_model_with_historical_support(model_path)
+        learner = load_model_safely(str(model_path), model_type="auto")
         if learner is not None:
             results["can_load"] = True
             results["model_info"] = get_model_info(learner)

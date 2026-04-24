@@ -1,20 +1,17 @@
-import torch
-from pathlib import Path
-from eq.data_management.datablock_loader import build_segmentation_datablock_dynamic_patching
 from eq.utils.paths import get_runtime_mitochondria_data_path
 
 # Build dataloader WITHOUT the MaskPreprocessTransform
 data_dir = get_runtime_mitochondria_data_path() / "training"
 
 # Let's check the raw mask files first
-from eq.data_management.standard_getters import get_y
+from eq.data_management.standard_getters import get_y_full
 from PIL import Image
 import numpy as np
 
 # Get a sample image path
 images_dir = data_dir / "images"
 sample_img = list(images_dir.glob("*.tif"))[0]
-mask_path = get_y(sample_img)
+mask_path = get_y_full(sample_img)
 
 print("=== RAW MASK FILE INSPECTION ===")
 print(f"Sample mask path: {mask_path}")

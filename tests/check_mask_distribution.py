@@ -15,8 +15,7 @@ sys.path.append(str(Path(__file__).parent / "src"))
 print("Checking mask distribution in glomerulus (preeclampsia) dataset...")
 
 try:
-    from eq.data_management.datablock_loader import get_items_full_images
-    from eq.data_management.standard_getters import get_y
+    from eq.data_management.standard_getters import get_y_full
     from fastai.vision.all import get_image_files
     
     # Check the raw data for full images
@@ -38,7 +37,7 @@ try:
     
     for i, item in enumerate(items):
         try:
-            mask = get_y(item)
+            mask = get_y_full(item)
             mask_array = np.array(mask)
             
             positive_pixels = (mask_array > 0).sum()

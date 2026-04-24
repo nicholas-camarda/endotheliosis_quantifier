@@ -65,7 +65,6 @@ data:
     crop_size: 512
 
   preprocessing:
-    convert_tif_to_jpg: true
     resize_to: [256, 256]
     normalize: true
 

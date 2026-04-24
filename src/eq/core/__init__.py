@@ -2,15 +2,10 @@
 """
 EQ Core Module
 
-This module provides core constants, types, and abstract interfaces for the endotheliosis quantifier package.
-After reorganization, core only contains:
-- Constants and configurations
-- Type definitions and abstract interfaces
-- Shared type hints
+This module provides core constants for the endotheliosis quantifier package.
 
 Import Usage:
     from eq.core.constants import BINARY_P2C, DEFAULT_MASK_THRESHOLD
-    from eq.core.types import DataLoaderInterface, ModelLoaderInterface
 """
 
 # Constants
@@ -28,19 +23,6 @@ from .constants import (
                         MPS_FALLBACK_ENV_VAR,
 )
 
-# Types and interfaces
-from .types import (
-                        DataLoaderInterface,
-                        ModelLoaderInterface,
-                        PreprocessorInterface,
-                        TrainingConfig,
-                        InferenceConfig,
-                        ImageArray,
-                        MaskArray,
-                        ImagePath,
-                        MaskPath,
-)
-
 # Public API
 __all__ = [
     # Constants
@@ -55,17 +37,6 @@ __all__ = [
     'FASTAI_MODEL_EXTENSION',
     'MPS_FALLBACK_ENV_VAR',
     'CACHE_PATTERNS',
-    
-    # Types and interfaces
-    'DataLoaderInterface',
-    'ModelLoaderInterface',
-    'PreprocessorInterface',
-    'TrainingConfig',
-    'InferenceConfig',
-    'ImageArray',
-    'MaskArray',
-    'ImagePath',
-    'MaskPath',
 ]
 
-__description__ = "Core constants, types, and interfaces for endotheliosis quantifier"
+__description__ = "Core constants for endotheliosis quantifier"
