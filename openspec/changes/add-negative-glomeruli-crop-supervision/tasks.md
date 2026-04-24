@@ -1,6 +1,6 @@
 ## 1. Negative Crop Contract
 
-- [ ] 1.1 Inventory what source provenance exists, if any, from curated `training_pairs` back to the larger MR/TIFF source images.
+- [ ] 1.1 Inventory what source provenance exists, if any, from the admitted `raw_data/cohorts` manifest rows and the direct `raw_data/preeclampsia_project/data` paired root back to larger MR/TIFF source images.
 - [ ] 1.2 Define the minimum annotation fields required for a supported negative crop manifest, including source image path, crop box, label, and review provenance.
 - [ ] 1.3 Define canonical storage locations for source images versus generated negative-crop manifests, audits, and review assets.
 

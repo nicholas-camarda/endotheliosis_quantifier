@@ -92,6 +92,20 @@ def _load_contract_first_quantification():
     return run_contract_first_quantification
 
 
+def _load_build_current_accessible_cohorts():
+    """Import cohort-manifest build helpers lazily."""
+    from eq.quantification import build_current_accessible_cohorts
+
+    return build_current_accessible_cohorts
+
+
+def _load_build_dox_mask_quality_audit():
+    """Import Dox mask-quality audit helpers lazily."""
+    from eq.quantification import build_dox_mask_quality_audit
+
+    return build_dox_mask_quality_audit
+
+
 def _load_organize_lucchi_dataset():
     """Import the Lucchi organizer only when requested from the CLI."""
     from eq.data_management.organize_lucchi_dataset import organize_lucchi_dataset
@@ -631,6 +645,44 @@ def prepare_quant_contract_command(args):
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+
+@log_function_call
+def cohort_manifest_command(args):
+    """Build or inspect the runtime scored-cohort manifest."""
+    logger = get_logger("eq.cohort_manifest")
+    build_current_accessible_cohorts = _load_build_current_accessible_cohorts()
+
+    result = build_current_accessible_cohorts(
+        runtime_root=Path(args.runtime_root) if args.runtime_root else None,
+        manifest_path=Path(args.manifest_path) if args.manifest_path else None,
+    )
+    logger.info("✅ Cohort manifest written to %s", result.manifest_path)
+    print("✅ Runtime cohort manifest written:")
+    print(f"  manifest: {result.manifest_path}")
+    print(f"  summary: {result.summary_path}")
+    print(f"  rows: {result.rows}")
+    print(f"  admission_status_counts: {result.status_counts}")
+    print(f"  lane_counts: {result.lane_counts}")
+
+
+@log_function_call
+def dox_mask_quality_audit_command(args):
+    """Build the Dox mask-quality audit and visual review panels."""
+    logger = get_logger("eq.dox_mask_quality_audit")
+    build_dox_mask_quality_audit = _load_build_dox_mask_quality_audit()
+
+    outputs = build_dox_mask_quality_audit(
+        runtime_root=Path(args.runtime_root) if args.runtime_root else None,
+        manifest_path=Path(args.manifest_path) if args.manifest_path else None,
+        audit_path=Path(args.audit_path) if args.audit_path else None,
+        panel_dir=Path(args.panel_dir) if args.panel_dir else None,
+    )
+    logger.info("✅ Dox mask-quality audit written to %s", outputs['audit'])
+    print("✅ Dox mask-quality audit written:")
+    print(f"  audit: {outputs['audit']}")
+    print(f"  summary: {outputs['summary']}")
+    print(f"  panel_dir: {outputs['panel_dir']}")
     
 @log_function_call
 def metadata_process_command(args):
@@ -1031,6 +1083,44 @@ Examples:
     contract_parser.add_argument('--output-dir', default='output/quantification', help='Directory to write contract preparation artifacts')
     contract_parser.add_argument('--apply-migration', action='store_true', help='Apply renames in place instead of producing a dry-run migration report')
     contract_parser.set_defaults(func=prepare_quant_contract_command)
+
+    cohort_manifest_parser = subparsers.add_parser(
+        'cohort-manifest',
+        help='Build the runtime raw_data/cohorts/manifest.csv for scored cohort admission',
+        description='Build the active runtime cohort manifest and cohort summary from localized cohort assets.',
+    )
+    cohort_manifest_parser.add_argument(
+        '--runtime-root',
+        help='Active runtime root to use instead of EQ_RUNTIME_ROOT or ~/ProjectsRuntime/endotheliosis_quantifier',
+    )
+    cohort_manifest_parser.add_argument(
+        '--manifest-path',
+        help='Output manifest path. Defaults to the active runtime raw_data/cohorts/manifest.csv.',
+    )
+    cohort_manifest_parser.set_defaults(func=cohort_manifest_command)
+
+    dox_mask_quality_parser = subparsers.add_parser(
+        'dox-mask-quality-audit',
+        help='Build the Dox masked-external mask-quality audit and review panels',
+        description='Audit Dox recovered brushlabel masks and write approval artifacts used by cohort-manifest.',
+    )
+    dox_mask_quality_parser.add_argument(
+        '--runtime-root',
+        help='Active runtime root to use instead of EQ_RUNTIME_ROOT or ~/ProjectsRuntime/endotheliosis_quantifier.',
+    )
+    dox_mask_quality_parser.add_argument(
+        '--manifest-path',
+        help='Input manifest path. Defaults to the active runtime raw_data/cohorts/manifest.csv.',
+    )
+    dox_mask_quality_parser.add_argument(
+        '--audit-path',
+        help='Output audit CSV. Defaults to raw_data/cohorts/vegfri_dox/metadata/mask_quality_audit.csv.',
+    )
+    dox_mask_quality_parser.add_argument(
+        '--panel-dir',
+        help='Directory for visual review panel PNGs. Defaults to output/cohorts/vegfri_dox/mask_quality.',
+    )
+    dox_mask_quality_parser.set_defaults(func=dox_mask_quality_audit_command)
 
     backup_parser = subparsers.add_parser('backup-project-data', help='Create a timestamped backup of project data before migration work')
     backup_parser.add_argument('--project-dir', required=True, help='Raw project directory containing images/, masks/, and subject_metadata.xlsx')

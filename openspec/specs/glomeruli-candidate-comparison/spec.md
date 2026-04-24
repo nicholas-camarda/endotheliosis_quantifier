@@ -1,23 +1,24 @@
 # glomeruli-candidate-comparison Specification
 
 ## Purpose
-Define the supported transfer-versus-scratch comparison workflow, deterministic promotion evidence, and explicit promotion decision contract for glomeruli segmentation artifacts.
+Define the supported mitochondria-transfer-versus-no-base comparison workflow, deterministic promotion evidence, and explicit promotion decision contract for glomeruli segmentation artifacts.
 
 ## Requirements
-### Requirement: Glomeruli promotion compares transfer and scratch candidates on the same evidence set
-The repository SHALL compare at least one transfer-trained glomeruli candidate and one scratch-trained glomeruli candidate using the same deterministic promotion-evaluation evidence.
+### Requirement: Glomeruli promotion compares transfer and no-base candidates on the same evidence set
+The repository SHALL compare at least one mitochondria-transfer glomeruli candidate and one no-mitochondria-base glomeruli candidate using the same deterministic promotion-evaluation evidence.
 
 #### Scenario: Candidate-comparison run is started
 - **WHEN** the glomeruli candidate-comparison workflow is executed
-- **THEN** it trains or loads a canonical transfer candidate and a canonical scratch candidate under the supported `raw_data/.../training_pairs` contract
+- **THEN** it trains or loads a canonical mitochondria-transfer candidate and a canonical no-mitochondria-base candidate under the supported `raw_data/cohorts` all-admitted-masked contract or an explicitly selected active paired project root
 - **AND** the canonical initial workflow uses one explicit seed per candidate family
 - **AND** both candidates are evaluated on the same deterministic validation manifest
 - **AND** each manifest crop is assigned to exactly one review category rather than being reused across `background`, `boundary`, and `positive`
 - **AND** the manifest selection prefers spanning multiple source images when enough qualifying evidence exists
-- **AND** the workflow does not silently fall back from transfer to scratch or from scratch to transfer during the comparison run
+- **AND** the workflow does not silently fall back from transfer to no-base training or from no-base training to transfer during the comparison run
+- **AND** the no-base candidate records its encoder initialization as the ImageNet-pretrained ResNet34 baseline rather than implying literal all-random initialization
 
 #### Scenario: One candidate family cannot be completed
-- **WHEN** either the transfer or scratch candidate cannot be trained or evaluated successfully
+- **WHEN** either the transfer or no-base candidate cannot be trained or evaluated successfully
 - **THEN** the comparison report records that failure explicitly
 - **AND** the workflow does not silently substitute a different candidate family
 

@@ -2,9 +2,10 @@
 """
 Train Mitochondria Segmentation Model - FastAI v2 Compatible
 
-This script trains a mitochondria segmentation model from scratch on EM data.
+This script trains a mitochondria segmentation model on EM data without a
+domain-specific base artifact.
 This is the first stage of the two-stage training pipeline:
-1. Train mitochondria model from scratch (this script)
+1. Train mitochondria model from an ImageNet-initialized ResNet34 encoder (this script)
 2. Use mitochondria model as base for glomeruli transfer learning
 
 The trained mitochondria model serves as a pretrained base for transfer learning
@@ -37,6 +38,8 @@ from eq.data_management.datablock_loader import (
     validate_supported_segmentation_training_root,
 )
 from eq.utils.hardware_detection import get_segmentation_training_batch_size
+
+MITOCHONDRIA_ENCODER_INITIALIZATION = "imagenet_pretrained_resnet34"
 
 
 def _format_run_suffix(epochs, batch_size, learning_rate, image_size, tag=""):
@@ -131,6 +134,7 @@ def train_mitochondria_with_datablock(
         dls,
         resnet34,
         n_out=2,  # 2 classes: background (0) + mitochondria (1)
+        pretrained=True,
         metrics=[Dice, JaccardCoeff()],  # Track both Dice and IoU for segmentation quality
         path=output_path,  # Save artifacts directly under the model output directory
         model_dir='.'  # Ensure callbacks/save go inside output_path
@@ -157,7 +161,9 @@ def train_mitochondria_with_datablock(
         'batch_size': batch_size,
         'learning_rate': learning_rate,
         'image_size': image_size,
-        'training_approach': 'from_scratch',
+        'training_approach': 'no_domain_base',
+        'candidate_family': 'mitochondria_no_domain_base',
+        'encoder_initialization': MITOCHONDRIA_ENCODER_INITIALIZATION,
         'training_mode': TRAINING_MODE_DYNAMIC_FULL_IMAGE,
         'data_root': str(data_root),
     })
@@ -210,6 +216,8 @@ def train_mitochondria_with_datablock(
             "training_mode": TRAINING_MODE_DYNAMIC_FULL_IMAGE,
             "data_root": str(data_root),
             "model_path": str(model_path),
+            "candidate_family": "mitochondria_no_domain_base",
+            "encoder_initialization": MITOCHONDRIA_ENCODER_INITIALIZATION,
             "invocation": {
                 "data_dir": str(data_root),
                 "output_dir": str(output_dir),
@@ -230,7 +238,7 @@ def main():
     """CLI interface for mitochondria training."""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Train mitochondria segmentation model')
+    parser = argparse.ArgumentParser(description='Train mitochondria segmentation model from the ImageNet-initialized ResNet34 baseline')
     parser.add_argument('--config', help='Optional YAML config file to override defaults')
     parser.add_argument('--data-dir', required=True, help='Full-image training root containing images/ and masks/')
     parser.add_argument('--model-dir', default=DEFAULT_MITOCHONDRIA_MODEL_DIR, help='Directory to save trained model')

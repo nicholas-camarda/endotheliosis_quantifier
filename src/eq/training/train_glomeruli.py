@@ -47,6 +47,9 @@ from eq.core.constants import (
 
 logger = get_logger("eq.retrain_glomeruli_original")
 
+SCRATCH_ENCODER_INITIALIZATION = "imagenet_pretrained_resnet34"
+TRANSFER_BASE_INITIALIZATION = "requested_base_artifact"
+
 
 def set_training_seed(seed: int) -> None:
     """Set process-wide RNG seeds for bounded reproducible training runs."""
@@ -71,6 +74,27 @@ def _format_run_suffix(epochs: int, batch_size: int, learning_rate: float, image
     if tag:
         parts.insert(0, tag)
     return "_".join(parts)
+
+
+def _require_existing_base_model(base_model_path: Optional[str]) -> Path:
+    """Return the requested base artifact path or fail before any training starts."""
+    if not base_model_path:
+        raise ValueError(
+            "Transfer learning requires an explicit base model artifact. "
+            "Provide --base-model or choose --from-scratch."
+        )
+
+    base_path = Path(base_model_path).expanduser()
+    if not base_path.exists():
+        raise FileNotFoundError(
+            f"Requested transfer base model does not exist: {base_path}. "
+            "Refusing to continue as a no-base scratch candidate. "
+            "Provide a supported base artifact or choose --from-scratch intentionally."
+        )
+    if not base_path.is_file():
+        raise ValueError(f"Requested transfer base model is not a file: {base_path}")
+    return base_path
+
 
 def train_glomeruli_with_transfer_learning(
     data_dir: str,
@@ -113,22 +137,8 @@ def train_glomeruli_with_transfer_learning(
         crop_size=crop_size or image_size,
         requested_batch_size=batch_size,
     )
-    
-    if base_model_path is None:
-        # Default path to mitochondria model
-        base_model_path = "models/segmentation/mitochondria/mitochondria_model.pkl"
-    
-    if not Path(base_model_path).exists():
-        logger.warning(f"Base model not found at {base_model_path}, training from scratch")
-        return train_glomeruli_with_datablock(
-            data_dir=data_dir,
-            output_dir=output_dir,
-            model_name=model_name,
-            batch_size=batch_size,
-            epochs=epochs,
-            learning_rate=learning_rate,
-            image_size=image_size,
-        )
+
+    base_model_path = str(_require_existing_base_model(base_model_path))
     
     # Use transfer learning with positive-aware cropping
     learn = transfer_learn_glomeruli(
@@ -172,7 +182,7 @@ def train_glomeruli_with_datablock(
     Train glomeruli segmentation model using FastAI v2 DataBlock approach with transfer learning.
     
     Args:
-        data_dir: Full-image training root containing images/ and masks/
+        data_dir: Full-image project/cohort root, or manifest-backed raw_data/cohorts root
         output_dir: Directory to save model and results
         model_name: Name for the model
         base_model_path: Path to pretrained mitochondria model for transfer learning
@@ -186,9 +196,11 @@ def train_glomeruli_with_datablock(
         Trained learner
     """
     logger = get_logger("eq.glomeruli_training")
-    logger.info("Starting glomeruli model training with DataBlock and transfer learning...")
+    logger.info("Starting glomeruli model training with DataBlock...")
     set_training_seed(seed)
     data_root = validate_supported_segmentation_training_root(data_dir, stage="glomeruli")
+    if base_model_path:
+        base_model_path = str(_require_existing_base_model(base_model_path))
     batch_size = get_segmentation_training_batch_size(
         "glomeruli",
         image_size=image_size,
@@ -197,7 +209,7 @@ def train_glomeruli_with_datablock(
     )
     
     # Create output directory with descriptive model name
-    approach = "transfer" if base_model_path and Path(base_model_path).exists() else "scratch"
+    approach = "transfer" if base_model_path else "scratch"
     # Tag should reflect LR policy. For scratch we use a single LR = learning_rate.
     # For transfer, the called function composes a richer tag; here keep simple and truthful for scratch.
     model_tag = _format_run_suffix(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate, image_size=image_size, tag=approach)
@@ -222,6 +234,7 @@ def train_glomeruli_with_datablock(
         positive_focus_p=positive_focus_p,
         min_pos_pixels=min_pos_pixels,
         pos_crop_attempts=pos_crop_attempts,
+        stage="glomeruli",
     )
 
     # Save data splits manifest
@@ -240,6 +253,7 @@ def train_glomeruli_with_datablock(
         dls,
         resnet34,
         n_out=2,  # 2 classes: background (0) + glomeruli (1)
+        pretrained=True,
         metrics=[Dice, JaccardCoeff()],  # Track both Dice and IoU for segmentation quality
         path=output_path,  # Save artifacts directly under the model output directory
         model_dir='.'  # Ensure callbacks/save go inside output_path
@@ -248,7 +262,7 @@ def train_glomeruli_with_datablock(
     logger.info(f"Using default loss function with positive-aware cropping: {learn.loss_func}")
     
     # Load pretrained model if provided
-    if base_model_path and Path(base_model_path).exists():
+    if base_model_path:
         logger.info(f"Loading pretrained model from: {base_model_path}")
         # For transfer learning, we need to load the exported learner and extract the model
         pretrained_learn = load_learner(base_model_path)
@@ -256,7 +270,7 @@ def train_glomeruli_with_datablock(
         learn.model.load_state_dict(pretrained_learn.model.state_dict())
         logger.info("✅ Pretrained model loaded successfully")
     else:
-        logger.info("No pretrained model provided, training from scratch")
+        logger.info("No mitochondria/base artifact provided; training no-base ImageNet-initialized baseline")
     
     # Train the model with callbacks
     logger.info(f"Training for {epochs} epochs...")
@@ -271,8 +285,10 @@ def train_glomeruli_with_datablock(
         'image_size': image_size,
         'crop_size': int(crop_size) if crop_size is not None else int(image_size),
         'output_size': int(image_size),
-        'base_model_path': base_model_path or 'None (from scratch)',
-        'training_approach': 'transfer_learning' if base_model_path else 'from_scratch',
+        'base_model_path': base_model_path or 'None (no mitochondria base)',
+        'training_approach': 'transfer_learning' if base_model_path else 'no_mitochondria_base',
+        'candidate_family': 'mitochondria_transfer' if base_model_path else 'no_mitochondria_base',
+        'encoder_initialization': TRANSFER_BASE_INITIALIZATION if base_model_path else SCRATCH_ENCODER_INITIALIZATION,
         'training_mode': TRAINING_MODE_DYNAMIC_FULL_IMAGE,
         'data_root': str(data_root),
         'seed': seed,
@@ -298,6 +314,8 @@ def train_glomeruli_with_datablock(
             "data_root": str(data_root),
             "model_path": str(model_path),
             "base_model_path": base_model_path or None,
+            "candidate_family": "mitochondria_transfer" if base_model_path else "no_mitochondria_base",
+            "encoder_initialization": TRANSFER_BASE_INITIALIZATION if base_model_path else SCRATCH_ENCODER_INITIALIZATION,
             "invocation": {
                 "data_dir": str(data_root),
                 "output_dir": str(output_dir),
@@ -388,11 +406,15 @@ def main():
     
     parser = argparse.ArgumentParser(description='Train glomeruli segmentation model')
     parser.add_argument('--config', help='Optional YAML config file to override defaults')
-    parser.add_argument('--data-dir', required=True, help='Full-image training root containing images/ and masks/')
+    parser.add_argument(
+        '--data-dir',
+        required=True,
+        help='Full-image project/cohort root with images/ and masks/, or manifest-backed raw_data/cohorts root for all admitted masked rows',
+    )
     parser.add_argument('--model-dir', default=DEFAULT_GLOMERULI_MODEL_DIR, help='Directory to save trained model')
     parser.add_argument('--model-name', default='glomeruli_model', help='Base name for saved model files')
     parser.add_argument('--base-model', help='Path to base model for explicit transfer learning')
-    parser.add_argument('--from-scratch', action='store_true', help='Train explicitly from scratch')
+    parser.add_argument('--from-scratch', action='store_true', help='Train the explicit no-mitochondria-base ImageNet baseline')
     parser.add_argument('--allow-auto-base-model', action='store_true', help='Opt in to auto-detecting a mitochondria base artifact when --base-model is not provided')
     parser.add_argument('--epochs', type=int, default=DEFAULT_EPOCHS, help='Number of training epochs')
     parser.add_argument('--batch-size', type=int, default=None, help='Training batch size (default: machine-aware recommendation)')

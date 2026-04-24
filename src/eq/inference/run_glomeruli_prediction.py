@@ -96,7 +96,10 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Evaluate a glomeruli artifact on a supported training root")
     parser.add_argument("--model-path", help="Explicit glomeruli artifact path")
-    parser.add_argument("--data-dir", help="Supported raw_data/.../training_pairs root")
+    parser.add_argument(
+        "--data-dir",
+        help="Supported glomeruli root: raw_data/cohorts, raw_data/cohorts/<cohort_id>, or an active paired raw_data project root",
+    )
     parser.add_argument("--output-dir", help="Directory for evaluation artifacts")
     parser.add_argument("--max-images", type=int, default=10, help="Maximum number of paired images to evaluate")
     parser.add_argument("--config", help="Optional YAML overlay for filling missing values only")

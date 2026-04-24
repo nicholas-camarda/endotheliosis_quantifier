@@ -7,10 +7,20 @@ from eq.utils.config_manager import ConfigManager
 from eq.utils.paths import (
     get_cache_path,
     get_data_path,
+    get_dox_label_studio_export_path,
     get_logs_path,
     get_models_path,
+    get_mr_image_root_path,
+    get_mr_score_workbook_path,
     get_output_path,
     get_repo_root,
+    get_runtime_cohort_manifest_path,
+    get_runtime_cohort_output_path,
+    get_runtime_cohort_output_root,
+    get_runtime_cohort_path,
+    get_runtime_cohorts_root,
+    get_runtime_output_path,
+    get_runtime_raw_data_path,
 )
 
 
@@ -21,14 +31,77 @@ def test_path_helpers_resolve_from_repo_root(monkeypatch):
     monkeypatch.delenv("EQ_MODEL_PATH", raising=False)
     monkeypatch.delenv("EQ_LOG_PATH", raising=False)
     monkeypatch.delenv("EQ_LOGS_PATH", raising=False)
+    monkeypatch.delenv("EQ_RUNTIME_ROOT", raising=False)
+    monkeypatch.delenv("EQ_RUNTIME_OUTPUT_PATH", raising=False)
 
     repo_root = get_repo_root()
+    runtime_root = Path.home() / "ProjectsRuntime" / repo_root.name
+    expected_raw = runtime_root / "raw_data" if runtime_root.exists() else repo_root / "data/raw_data"
+    expected_derived = (
+        runtime_root / "derived_data"
+        if (runtime_root / "derived_data").exists()
+        else repo_root / "data/derived_data"
+    )
 
-    assert get_data_path() == repo_root / "data/raw_data"
-    assert get_output_path() == repo_root / "data/derived_data"
+    assert get_data_path() == expected_raw
+    assert get_output_path() == expected_derived
     assert get_cache_path() == repo_root / "data/derived_data/cache"
     assert get_models_path() == repo_root / "models"
     assert get_logs_path() == repo_root / "logs"
+    active_root = runtime_root if runtime_root.exists() else repo_root
+    assert get_runtime_raw_data_path() == active_root / "raw_data"
+    assert get_runtime_output_path() == active_root / "output"
+    assert get_runtime_cohorts_root() == active_root / "raw_data/cohorts"
+    assert get_runtime_cohort_manifest_path() == active_root / "raw_data/cohorts/manifest.csv"
+    assert get_runtime_cohort_path("vegfri_dox") == active_root / "raw_data/cohorts/vegfri_dox"
+    assert get_runtime_cohort_output_root() == active_root / "output/cohorts"
+    assert get_runtime_cohort_output_path("vegfri_dox") == active_root / "output/cohorts/vegfri_dox"
+
+
+def test_path_helpers_prefer_runtime_root_when_present(tmp_path, monkeypatch):
+    runtime_root = tmp_path / "runtime"
+    (runtime_root / "raw_data").mkdir(parents=True)
+    (runtime_root / "derived_data").mkdir(parents=True)
+
+    monkeypatch.setenv("EQ_RUNTIME_ROOT", str(runtime_root))
+    monkeypatch.delenv("EQ_DATA_PATH", raising=False)
+    monkeypatch.delenv("EQ_OUTPUT_PATH", raising=False)
+    monkeypatch.delenv("EQ_RUNTIME_OUTPUT_PATH", raising=False)
+
+    assert get_data_path() == runtime_root / "raw_data"
+    assert get_output_path() == runtime_root / "derived_data"
+    assert get_runtime_raw_data_path() == runtime_root / "raw_data"
+    assert get_runtime_cohorts_root() == runtime_root / "raw_data/cohorts"
+    assert get_runtime_cohort_manifest_path() == runtime_root / "raw_data/cohorts/manifest.csv"
+    assert get_runtime_cohort_path("masked_core") == runtime_root / "raw_data/cohorts/masked_core"
+    assert get_runtime_output_path() == runtime_root / "output"
+    assert get_runtime_cohort_output_root() == runtime_root / "output/cohorts"
+    assert get_runtime_cohort_output_path("masked_core") == runtime_root / "output/cohorts/masked_core"
+
+
+def test_runtime_cohort_helpers_accept_explicit_runtime_root(tmp_path):
+    runtime_root = tmp_path / "explicit_runtime"
+
+    assert get_runtime_raw_data_path(runtime_root) == runtime_root / "raw_data"
+    assert get_runtime_cohorts_root(runtime_root) == runtime_root / "raw_data/cohorts"
+    assert get_runtime_cohort_manifest_path(runtime_root) == runtime_root / "raw_data/cohorts/manifest.csv"
+    assert get_runtime_cohort_path("vegfri_dox", runtime_root) == runtime_root / "raw_data/cohorts/vegfri_dox"
+    assert get_runtime_cohort_output_root(runtime_root) == runtime_root / "output/cohorts"
+    assert get_runtime_cohort_output_path("vegfri_dox", runtime_root) == runtime_root / "output/cohorts/vegfri_dox"
+
+
+def test_external_cohort_source_paths_are_overridable(monkeypatch, tmp_path):
+    dox_export = tmp_path / "dox.json"
+    mr_workbook = tmp_path / "mr.xlsx"
+    mr_images = tmp_path / "mr_images"
+
+    monkeypatch.setenv("EQ_DOX_LABEL_STUDIO_EXPORT", str(dox_export))
+    monkeypatch.setenv("EQ_MR_SCORE_WORKBOOK", str(mr_workbook))
+    monkeypatch.setenv("EQ_MR_IMAGE_ROOT", str(mr_images))
+
+    assert get_dox_label_studio_export_path() == dox_export
+    assert get_mr_score_workbook_path() == mr_workbook
+    assert get_mr_image_root_path() == mr_images
 
 
 def test_config_manager_uses_resolved_paths_and_reloadable_global_config(tmp_path, monkeypatch):

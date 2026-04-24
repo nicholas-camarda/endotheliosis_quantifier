@@ -1,6 +1,6 @@
 ## Context
 
-The repository's supported glomeruli training contract uses curated paired full images under `raw_data/.../training_pairs` and dynamic patching during model training. That solved the old static-patch workflow problem, but it did not solve the absence of explicit negative supervision at the crop level. The current `training_pairs` full images all contain glomeruli somewhere, and the larger MR/TIFF source images that could provide additional background-only regions do not have full masks.
+The repository's supported glomeruli training contract uses dynamic patching from full-image roots. The current all-data training surface is the manifest-backed `raw_data/cohorts` registry root, which enumerates admitted `manual_mask` and `masked_external` manifest rows across localized cohorts. Project-only training can use an active paired root such as `raw_data/preeclampsia_project/data`. Current training inputs do not provide explicit negative supervision at the crop level. The current admitted masked full images contain glomeruli somewhere, and the larger MR/TIFF source images that could provide additional background-only regions do not have full masks.
 
 That means the repo is currently missing a clean way to say "this crop is a true negative for glomerulus presence" unless the crop comes from a masked image and has verified zero overlap. The next change should define a supported negative-crop annotation contract for larger source images without pretending that unlabeled crops are automatically negative.
 

@@ -12,8 +12,8 @@ This notebook describes what the current `master` branch actually implements tod
 It is not a project vision document. In particular, it distinguishes between:
 
 - implemented segmentation and data-preparation workflows
+- maintained Label Studio-first quantification workflows
 - partially implemented or legacy inference code
-- still-unimplemented learned quantification and feature-extraction work
 
 ## Executive Summary
 
@@ -21,18 +21,22 @@ The current `master` branch is best described as a **segmentation-first FastAI/P
 
 1. mitochondria pretraining on EM-style data
 2. glomeruli segmentation in histology images
-3. supporting utilities for data preparation, metadata processing, mask auditing, visualization, and environment detection
+3. Label Studio-derived image-level endotheliosis scoring with union-ROI crops, frozen segmentation-backbone embeddings, and an ordinal baseline
+4. supporting utilities for data preparation, metadata processing, mask auditing, visualization, and environment detection
 
-The strongest maintained path in this branch is the segmentation workflow. The repository does **not** currently ship a completed learned regression pipeline for endotheliosis scoring. Quantification code exists, but what is checked in today is mainly a heuristic openness/grade calculation rather than a trained feature-extraction plus regression stack.
+The strongest maintained paths in this branch are the segmentation workflow and the contract-first quantification baseline. The quantification baseline treats Label Studio image-level grades as supervised targets for image/mask pairs, extracts full multi-component union ROIs, builds frozen segmentation-backbone embeddings, and fits the canonical penalized multiclass ordinal estimator in `src/eq/quantification/ordinal.py`.
+
+The current quantification output is a predictive audit baseline with explicit cohort-shape metadata. It is not a clinically validated scoring system, and its current local audit cohort does not yet provide full seven-bin target support.
 
 ## Current Baseline
 
 The current branch baseline matches the main repository docs:
 
 - primary development target: WSL on Windows with CUDA-capable PyTorch
+- macOS local-development target: Apple Silicon/MPS with the `eq-mac` conda environment
 - package source: `src/eq/`
-- raw datasets: `data/raw_data/`
-- generated artifacts: `data/derived_data/`, `models/`, `logs/`, `output/`
+- runtime-heavy raw data, derived data, models, logs, and outputs: the active `EQ_RUNTIME_ROOT`
+- repo-local `data/`, `models/`, `logs/`, and `output/`: gitignored placeholders or compatibility locations
 - current operational branch: `master`
 
 For the higher-level repo orientation, see:
@@ -44,7 +48,7 @@ For the higher-level repo orientation, see:
 
 ## Repository Layout
 
-The current codebase standardizes on repo-relative paths:
+The current codebase uses path helpers that prefer the active runtime root for heavy data and artifacts while preserving repo-relative placeholders for portable tests and compatibility:
 
 ```text
 endotheliosis_quantifier/
@@ -69,6 +73,10 @@ Path defaults are defined in [`src/eq/utils/paths.py`](../src/eq/utils/paths.py)
 - cache: `data/derived_data/cache`
 - models: `models`
 - logs: `logs`
+- runtime root: `EQ_RUNTIME_ROOT` or the active runtime root selected by `src/eq/utils/paths.py`
+- runtime cohort manifest: `$EQ_RUNTIME_ROOT/raw_data/cohorts/manifest.csv`
+- runtime outputs: `$EQ_RUNTIME_ROOT/output`
+- runtime models: `$EQ_RUNTIME_ROOT/models`
 
 ## Problem Framing
 
@@ -79,13 +87,17 @@ What the current branch supports directly:
 - binary segmentation of mitochondria or glomeruli
 - dynamic patching from full images
 - metadata standardization for glomeruli scoring spreadsheets
+- Label Studio score recovery joined to image/mask pairs
+- union-ROI crop extraction from full multi-component masks
+- frozen segmentation-backbone embeddings and ordinal image-level predictions
 - mask-pair auditing and visualization
 
 What it does **not** currently support as a completed, production-ready workflow:
 
-- learned feature extraction for downstream quantification
-- trained regression models such as Random Forest, SVR, XGBoost, or neural regressors for endotheliosis scoring
-- a clean, fully maintained end-to-end quantification pipeline from raw image to validated learned score
+- a clinically validated endotheliosis scoring system
+- full seven-bin target-support validation in the current local audit cohort
+- per-glomerulus supervision beyond the available image-level grades
+- promoted segmentation artifacts without training-data audit, validation metrics, and non-degenerate prediction review evidence
 
 ## Data Model And Input Layouts
 
@@ -273,10 +285,10 @@ What they do not support on their own:
 
 The two-stage conceptual story in this codebase is:
 
-1. train a mitochondria segmentation model from scratch
+1. train a mitochondria segmentation model from an ImageNet-initialized ResNet34 encoder
 2. reuse that learned representation as the starting point for glomeruli training
 
-The intuition is that the encoder may already have useful low-level and mid-level visual features, so glomeruli training does not start from random weights. That is an implementation choice and an efficiency hypothesis. It still needs empirical comparison against a scratch baseline, which is why the repo has explicit candidate-comparison and promotion-gate surfaces instead of assuming transfer is automatically better.
+The intuition is that the encoder may already have useful low-level and mid-level visual features from mitochondria training, so glomeruli training does not start from only the generic ImageNet baseline. That is an implementation choice and an efficiency hypothesis. It still needs empirical comparison against a no-mitochondria-base ImageNet baseline, which is why the repo has explicit candidate-comparison and promotion-gate surfaces instead of assuming transfer is automatically better.
 
 ### Core Contract
 
@@ -338,7 +350,7 @@ Primary entrypoint:
 
 ```bash
 python -m eq.training.train_glomeruli \
-  --data-dir /absolute/path/to/raw_data/project/training_pairs \
+  --data-dir /absolute/path/to/raw_data/cohorts \
   --model-dir /absolute/path/to/glomeruli_models \
   --base-model /absolute/path/to/mito_supported_base.pkl \
   --epochs 30 \
@@ -349,13 +361,14 @@ python -m eq.training.train_glomeruli \
   --seed 42
 ```
 
-The glomeruli training root must contain paired full-image `images/` and `masks/` directories under `raw_data`. Raw project backups are source material; curate paired files into `training_pairs` before running model training. Generated manifests, audits, caches, and metrics belong under `derived_data`.
+For all-data glomeruli training, use the manifest-backed `raw_data/cohorts` registry root. It trains from admitted manifest rows in the `manual_mask` and `masked_external` lanes. A single active paired project root such as `raw_data/preeclampsia_project/data` remains valid for project-only training. Raw project backups are source material, not direct training roots. Generated manifests, audits, caches, and metrics belong under `derived_data` or `output`.
 
 Important nuance:
 
 - the README example above is the recommended workflow documentation
 - the `train_glomeruli.py` module resolves a machine-aware default batch size and currently starts at `12` on the powerful Apple Silicon MPS machine class when using `512x512` crops
 - the canonical control surface is the dedicated training module CLI with explicit `--base-model` or `--from-scratch`
+- transfer training with `--base-model` must load that artifact and copy compatible weights; `--from-scratch` means no mitochondria/base artifact and currently uses an ImageNet-pretrained ResNet34 encoder
 - `configs/glomeruli_finetuning_config.yaml` is an optional overlay and engineering reference, not the authoritative promotion-workflow contract
 
 So the notebook should describe the explicit CLI path as canonical and treat YAML only as optional overlay material.
@@ -529,7 +542,7 @@ For the current branch, the safest supported workflow is:
 8. train mitochondria via `python -m eq.training.train_mitochondria`
 9. train glomeruli via `python -m eq.training.train_glomeruli`
 
-The dedicated training modules are more trustworthy than the older orchestration-style CLI routes for heavy model training.
+Use the dedicated training modules for heavy model training.
 
 ## Current Known Gaps
 
@@ -547,4 +560,4 @@ The current `master` branch should be described as:
 
 **A maintained segmentation repository with useful data-preparation utilities, a working Label Studio-first image-level learned quantification baseline, partial inference code, and remaining scientific/production gaps around calibration, deployment, and per-glomerulus labeling.**
 
-That is more accurate than either older extreme: the branch is no longer heuristic-only for quantification, but it is also not yet a finished clinically trustworthy scoring system.
+This baseline is useful for predictive audit work, but it is not a finished clinically trustworthy scoring system.

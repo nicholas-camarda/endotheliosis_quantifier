@@ -1,23 +1,26 @@
 import inspect
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 import numpy as np
+import pandas as pd
+import pytest
 from PIL import Image
 
 from eq.data_management import datablock_loader
 from eq.data_management.datablock_loader import (
     build_segmentation_dls_dynamic_patching,
+    get_items_full_images,
     validate_supported_segmentation_training_root,
 )
 from eq.data_management.standard_getters import get_y_full
 from eq.training import transfer_learning
 from eq.training.promotion_gates import (
-    audit_manifest_crops,
     audit_binary_masks,
+    audit_manifest_crops,
     deterministic_validation_manifest,
     evaluate_glomeruli_promotion_candidate,
     evaluate_prediction_degeneracy,
@@ -61,19 +64,50 @@ def test_training_root_validator_rejects_missing_full_image_dirs(tmp_path: Path)
         validate_supported_segmentation_training_root(tmp_path, stage="glomeruli")
 
 
-def test_glomeruli_training_root_validator_requires_raw_data_training_pairs(tmp_path: Path):
+def test_glomeruli_training_root_validator_requires_supported_raw_data_project_or_cohort_root(tmp_path: Path):
     invalid_root = tmp_path / "clean_backup"
     _make_full_image_root(invalid_root)
 
-    with pytest.raises(ValueError, match="raw_data/.*/training_pairs"):
+    with pytest.raises(ValueError, match="raw_data"):
         validate_supported_segmentation_training_root(invalid_root, stage="glomeruli")
 
-    valid_root = tmp_path / "raw_data" / "project" / "training_pairs"
-    _make_full_image_root(valid_root)
+    backup_root = tmp_path / "raw_data" / "preeclampsia_project" / "clean_backup"
+    _make_full_image_root(backup_root)
+
+    with pytest.raises(ValueError, match="clean_backup"):
+        validate_supported_segmentation_training_root(backup_root, stage="glomeruli")
+
+    project_data_root = tmp_path / "raw_data" / "preeclampsia_project" / "data"
+    _make_full_image_root(project_data_root)
 
     assert (
-        validate_supported_segmentation_training_root(valid_root, stage="glomeruli")
-        == valid_root
+        validate_supported_segmentation_training_root(project_data_root, stage="glomeruli")
+        == project_data_root
+    )
+
+    training_pairs_root = tmp_path / "raw_data" / "project" / "training_pairs"
+    _make_full_image_root(training_pairs_root)
+
+    assert (
+        validate_supported_segmentation_training_root(training_pairs_root, stage="glomeruli")
+        == training_pairs_root
+    )
+
+    cohort_root = tmp_path / "raw_data" / "cohorts" / "vegfri_dox"
+    _make_full_image_root(cohort_root)
+
+    assert (
+        validate_supported_segmentation_training_root(cohort_root, stage="glomeruli")
+        == cohort_root
+    )
+
+    cohort_registry_root = tmp_path / "raw_data" / "cohorts"
+    cohort_registry_root.mkdir(parents=True, exist_ok=True)
+    (cohort_registry_root / "manifest.csv").write_text("cohort_id\n", encoding="utf-8")
+
+    assert (
+        validate_supported_segmentation_training_root(cohort_registry_root, stage="glomeruli")
+        == cohort_registry_root
     )
 
 
@@ -107,6 +141,90 @@ def test_dynamic_dls_uses_selected_training_root_only(tmp_path: Path, monkeypatc
     assert testing_root not in [path for _, path in seen_paths]
 
 
+def test_cohort_training_root_uses_manifest_admitted_rows_only(tmp_path: Path):
+    runtime_root = tmp_path / "runtime"
+    cohort_root = runtime_root / "raw_data" / "cohorts" / "vegfri_dox"
+    image_dir = cohort_root / "images" / "M1"
+    mask_dir = cohort_root / "masks" / "M1"
+    image_dir.mkdir(parents=True)
+    mask_dir.mkdir(parents=True)
+    for stem in ("approved", "unresolved"):
+        Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(image_dir / f"{stem}.jpg")
+        mask = np.zeros((8, 8), dtype=np.uint8)
+        mask[2:6, 2:6] = 255
+        Image.fromarray(mask).save(mask_dir / f"{stem}_mask.png")
+
+    manifest = pd.DataFrame(
+        [
+            {
+                "cohort_id": "vegfri_dox",
+                "lane_assignment": "masked_external",
+                "admission_status": "admitted",
+                "image_path": "raw_data/cohorts/vegfri_dox/images/M1/approved.jpg",
+                "mask_path": "raw_data/cohorts/vegfri_dox/masks/M1/approved_mask.png",
+            },
+            {
+                "cohort_id": "vegfri_dox",
+                "lane_assignment": "masked_external",
+                "admission_status": "unresolved",
+                "image_path": "raw_data/cohorts/vegfri_dox/images/M1/unresolved.jpg",
+                "mask_path": "raw_data/cohorts/vegfri_dox/masks/M1/unresolved_mask.png",
+            },
+        ]
+    )
+    manifest.to_csv(runtime_root / "raw_data" / "cohorts" / "manifest.csv", index=False)
+
+    items = get_items_full_images(cohort_root)
+
+    assert items == [image_dir / "approved.jpg"]
+
+
+def test_cohort_registry_training_root_uses_all_admitted_masked_rows(tmp_path: Path):
+    runtime_root = tmp_path / "runtime"
+    cohorts_root = runtime_root / "raw_data" / "cohorts"
+    rows = []
+    for cohort_id, lane, stem in [
+        ("masked_core", "manual_mask", "core"),
+        ("vegfri_dox", "masked_external", "dox"),
+        ("vegfri_mr", "mr_concordance_only", "mr"),
+    ]:
+        image_dir = cohorts_root / cohort_id / "images"
+        mask_dir = cohorts_root / cohort_id / "masks"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        mask_dir.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(image_dir / f"{stem}.jpg")
+        mask = np.zeros((8, 8), dtype=np.uint8)
+        mask[2:6, 2:6] = 255
+        Image.fromarray(mask).save(mask_dir / f"{stem}_mask.png")
+        rows.append(
+            {
+                "cohort_id": cohort_id,
+                "lane_assignment": lane,
+                "admission_status": "admitted" if cohort_id != "vegfri_mr" else "evaluation_only",
+                "image_path": f"raw_data/cohorts/{cohort_id}/images/{stem}.jpg",
+                "mask_path": f"raw_data/cohorts/{cohort_id}/masks/{stem}_mask.png",
+            }
+        )
+    rows.append(
+        {
+            "cohort_id": "vegfri_dox",
+            "lane_assignment": "masked_external",
+            "admission_status": "unresolved",
+            "image_path": "raw_data/cohorts/vegfri_dox/images/unresolved.jpg",
+            "mask_path": "raw_data/cohorts/vegfri_dox/masks/unresolved_mask.png",
+        }
+    )
+    pd.DataFrame(rows).to_csv(cohorts_root / "manifest.csv", index=False)
+
+    assert validate_supported_segmentation_training_root(cohorts_root, stage="glomeruli") == cohorts_root
+    items = get_items_full_images(cohorts_root)
+
+    assert items == [
+        cohorts_root / "masked_core/images/core.jpg",
+        cohorts_root / "vegfri_dox/images/dox.jpg",
+    ]
+
+
 def test_dynamic_dls_fails_clearly_when_no_valid_pairs_exist(tmp_path: Path):
     _make_full_image_root(tmp_path)
 
@@ -138,7 +256,8 @@ def test_training_cli_help_does_not_expose_static_patch_toggle():
         )
         assert "--no-dynamic-patching" not in result.stdout
         assert "--use-dynamic-patching" not in result.stdout
-        assert "images/ and masks/" in result.stdout
+        assert "images/" in result.stdout
+        assert "masks/" in result.stdout
 
 
 def test_glomeruli_training_cli_requires_explicit_family_selection(tmp_path: Path):
@@ -187,7 +306,7 @@ def test_package_cli_does_not_expose_unsupported_training_routes():
     assert "--use-dynamic-patching" not in result.stdout
 
 
-def test_glomeruli_config_and_docs_use_raw_data_training_pairs_contract():
+def test_glomeruli_config_and_docs_use_raw_data_training_contract():
     repo_root = Path(__file__).resolve().parents[1]
     files = [
         repo_root / "configs" / "glomeruli_finetuning_config.yaml",
@@ -200,7 +319,7 @@ def test_glomeruli_config_and_docs_use_raw_data_training_pairs_contract():
     for path in files:
         text = path.read_text(encoding="utf-8")
         assert "raw_data" in text
-        assert "training_pairs" in text
+        assert "raw_data/cohorts" in text or "preeclampsia_project/data" in text
         assert "derived_data/glomeruli_data/training_full_images" not in text
 
 

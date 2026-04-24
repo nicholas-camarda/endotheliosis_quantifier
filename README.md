@@ -8,17 +8,47 @@ For the full curated documentation set, see [docs/README.md](docs/README.md).
 ## Current Baseline
 
 - Primary development target: WSL on Windows with CUDA-capable PyTorch
+- macOS local-development target: Apple Silicon/MPS using the `eq-mac` conda environment
 - Package source: `src/eq/`
-- Raw datasets: `data/raw_data/` (gitignored)
-- Generated artifacts: `data/derived_data/`, `models/`, `logs/`, `output/` (gitignored)
+- Raw datasets: the active runtime root's `raw_data/` tree
+- Generated artifacts: the active runtime root's `derived_data/`, `models/`, `logs/`, and `output/` trees
+- Active runtime root: configured by `EQ_RUNTIME_ROOT`; this checkout's local default is recorded in `analysis_registry.yaml`
 - Main operational branch today: `master`
 - Quantification default for preeclampsia: Label Studio-derived image-level grades joined to image/mask pairs
 - Current quantification input semantics: full multi-component union ROI, not largest-component-only crops
 - Current quantification outputs: frozen segmentation-encoder embeddings, ordinal predictions, and an HTML review artifact with example cases
+- External scored cohort registry: `$EQ_RUNTIME_ROOT/raw_data/cohorts/manifest.csv`
 
 The repo contains older experimental branches and historical notes. Treat the files in this branch as the source of truth unless you are deliberately comparing against another branch.
 
+## Environment Contract
+
+This repository has two supported Python environments. Use the one that matches the machine you are on.
+
+| Machine | Environment | Setup file | Use for |
+| --- | --- | --- | --- |
+| WSL/Linux with CUDA | `eq` | `environment.yml` | CUDA development, CUDA training, general Linux tests |
+| macOS Apple Silicon with MPS | `eq-mac` | `environment-macos.yml` | Mac execution, MPS segmentation training, segmentation validation, model export, model loading |
+
+On macOS, use the Mac environment explicitly:
+
+```bash
+conda activate eq-mac
+python -m eq --help
+```
+
+Real MPS training or validation should run outside the Codex sandbox with the `eq-mac` interpreter. A sandbox MPS failure is not authoritative for local Mac execution. For segmentation training and validation on Mac, use:
+
+```bash
+env PYTORCH_ENABLE_MPS_FALLBACK=1 MPLCONFIGDIR=/tmp/mpl_eq \
+  python ...
+```
+
+Do not use the generic `eq` environment for Mac MPS segmentation work. Transfer training with `--base-model` must load that artifact and copy compatible weights. The `--from-scratch` glomeruli path is the no-mitochondria-base comparator and uses FastAI's explicit ImageNet-pretrained ResNet34 encoder initialization.
+
 ## Environment Setup
+
+For WSL/Linux with CUDA:
 
 ```bash
 git clone https://github.com/nicholas-camarda/endotheliosis_quantifier.git
@@ -26,6 +56,18 @@ cd endotheliosis_quantifier
 
 mamba env create -f environment.yml
 conda activate eq
+
+pip install -e .[dev]
+```
+
+For macOS Apple Silicon with MPS:
+
+```bash
+git clone https://github.com/nicholas-camarda/endotheliosis_quantifier.git
+cd endotheliosis_quantifier
+
+mamba env create -f environment-macos.yml
+conda activate eq-mac
 
 pip install -e .[dev]
 ```
@@ -73,41 +115,73 @@ endotheliosis_quantifier/
 
 Everything under `data/`, `models/`, `logs/`, and `output/` is intentionally local-only and should stay out of Git.
 
+Operational data and run products live under the configured runtime root. The repo checkout's `data/` directories are placeholders for portable project layout and tests; runtime cohort work uses `EQ_RUNTIME_ROOT` or the local default recorded in `analysis_registry.yaml`.
+
+## Scored Cohort Manifest
+
+External scored cohorts use one runtime-local manifest:
+
+```text
+$EQ_RUNTIME_ROOT/
+├── raw_data/
+│   └── cohorts/
+│       ├── manifest.csv
+│       ├── masked_core/
+│       ├── vegfri_dox/
+│       │   ├── images/
+│       │   ├── masks/
+│       │   └── metadata/
+│       └── vegfri_mr/
+└── output/
+    └── cohorts/
+        └── <cohort_id>/
+```
+
+Build or refresh the runtime manifest with:
+
+```bash
+eq cohort-manifest
+```
+
+The manifest is the canonical linking surface for cohort ID, runtime-local image paths, optional mask paths, score linkage, lane assignment, mapping verification, hashes, and admission state. It does not carry original PhD or cloud source paths; source-location audit belongs in sidecar ingest artifacts.
+Source-location overrides are centralized in the shared path helpers: `EQ_DOX_LABEL_STUDIO_EXPORT`, `EQ_MR_SCORE_WORKBOOK`, and `EQ_MR_IMAGE_ROOT`.
+
+Manifest rows are image-level. Admitted rows require `cohort_id`, `image_path`, `score`, and a score locator such as `source_sample_id` or `source_score_row`; the pipeline appends `manifest_row_id`, `harmonized_id`, `join_status`, `verification_status`, `lane_assignment`, `admission_status`, `exclusion_reason`, `image_sha256`, and `mask_sha256`. Placeholder rows may be present before enrichment, but rows without a resolved runtime-local `image_path` cannot be admitted for training or quantification.
+
+Current cohort states:
+
+- `masked_core`: 88 current preeclampsia image/mask rows are localized as `manual_mask` and `admitted`.
+- `vegfri_dox`: 864 Label Studio export rows are represented. The 626 decoded brushlabel image/mask rows include 619 mask-quality-approved `masked_external` rows admitted for segmentation augmentation and 7 `unresolved` missing-score rows. The remaining scored-only rows include 228 `foreign` mixed-export rows and 10 unresolved rows without decoded runtime images.
+- `vegfri_mr`: 127 workbook image-level rows are represented from the external-drive whole-field TIFF batches. The 126 rows with localized TIFFs are `evaluation_only`; workbook row `8570-5` is unresolved because no matching TIFF was found in the discovered image root. Phase 1 use is concordance/evaluation only.
+
+Lucchi and other segmentation-install datasets stay outside `raw_data/cohorts/manifest.csv`.
+
 ## Set These Once
 
 The workflow below is much easier if you choose your project name and model names once, up front, and then reuse shell variables instead of retyping placeholder fragments.
 
 ```bash
-export GLOMERULI_PROJECT="my_glomeruli_project"
-export GLOMERULI_ROOT="data/raw_data/$GLOMERULI_PROJECT"
-export GLOMERULI_TRAIN_ROOT="$GLOMERULI_ROOT/training_pairs"
-export GLOMERULI_ANNOTATIONS="$GLOMERULI_ROOT/annotations/annotations.json"
+export EQ_RUNTIME_ROOT="/path/to/endotheliosis_quantifier_runtime"
+export GLOMERULI_ROOT="$EQ_RUNTIME_ROOT/raw_data/preeclampsia_project/data"
+export GLOMERULI_TRAIN_ROOT="$EQ_RUNTIME_ROOT/raw_data/cohorts"
+export GLOMERULI_ANNOTATIONS="$EQ_RUNTIME_ROOT/raw_data/preeclampsia_project/annotations/annotations.json"
 
-export MITO_MODEL_DIR="models/segmentation/mitochondria"
-export GLOMERULI_MODEL_DIR="models/segmentation/glomeruli"
+export MITO_MODEL_DIR="$EQ_RUNTIME_ROOT/models/segmentation/mitochondria"
+export GLOMERULI_MODEL_DIR="$EQ_RUNTIME_ROOT/models/segmentation/glomeruli"
 
+# Base names passed to --model-name during training.
 export MITO_MODEL_NAME="mitochondria_baseline"
-export MITO_RUN="${MITO_MODEL_NAME}-pretrain_e50_b24_lr1e-3_sz256"
-export MITO_BASE_MODEL="$MITO_MODEL_DIR/$MITO_RUN/$MITO_RUN.pkl"
-
 export GLOMERULI_TRANSFER_MODEL_NAME="glomeruli_transfer_baseline"
-export GLOMERULI_TRANSFER_RUN="${GLOMERULI_TRANSFER_MODEL_NAME}-transfer_s1lr1e-3_s2lr_lrfind_e30_b12_lr1e-3_sz256"
-export GLOMERULI_TRANSFER_MODEL="$GLOMERULI_MODEL_DIR/transfer/$GLOMERULI_TRANSFER_RUN/$GLOMERULI_TRANSFER_RUN.pkl"
-
 export GLOMERULI_SCRATCH_MODEL_NAME="glomeruli_scratch_baseline"
-export GLOMERULI_SCRATCH_RUN="${GLOMERULI_SCRATCH_MODEL_NAME}-scratch_e50_b12_lr1e-3_sz256"
-export GLOMERULI_SCRATCH_MODEL="$GLOMERULI_MODEL_DIR/scratch/$GLOMERULI_SCRATCH_RUN/$GLOMERULI_SCRATCH_RUN.pkl"
 ```
 
 What these mean:
 
-- `GLOMERULI_PROJECT` is your raw-data project folder under `data/raw_data/`
-- `MITO_BASE_MODEL` is the supported mitochondria `.pkl` produced in step 4
-- `GLOMERULI_TRANSFER_MODEL` is the transfer candidate `.pkl` produced in step 5
-- `GLOMERULI_SCRATCH_MODEL` is the scratch candidate `.pkl` produced in step 5
+- `GLOMERULI_ROOT` is Lauren's active preeclampsia project data root with direct `images/` and `masks/`
+- `GLOMERULI_TRAIN_ROOT` is the manifest-backed cohort registry root used to train on all admitted masked rows across current cohorts
+- `MITO_MODEL_NAME`, `GLOMERULI_TRANSFER_MODEL_NAME`, and `GLOMERULI_SCRATCH_MODEL_NAME` are the only values you pass to `--model-name`
 
-Define them at shell startup even if the later files do not exist yet. The point is that the paths become predictable and the later commands stay copy-pasteable.
-If you change `--model-name`, `--epochs`, `--batch-size`, `--learning-rate`, or `--image-size`, update the corresponding `*_RUN` variable so it still matches the artifact name the training code will write.
+The training code appends the descriptive run suffix automatically when it writes the artifact directory and `.pkl`. Those full artifact paths are outputs of training, not inputs you should hardcode up front.
 
 ## Workflow
 
@@ -147,6 +221,13 @@ python -m eq.training.train_mitochondria \
 
 On the powerful Apple Silicon MPS machine class, `24` is the current starting batch-size recommendation for `256x256` mitochondria training. Override it when throughput or stability requires a different value.
 
+After training finishes, inspect the produced artifact path and export the one you want to reuse:
+
+```bash
+find "$MITO_MODEL_DIR" -path "*${MITO_MODEL_NAME}-*" -name '*.pkl' | sort
+export MITO_BASE_MODEL="/absolute/path/to/the/mitochondria_model.pkl"
+```
+
 ### 5. Train glomeruli model
 
 Transfer candidate:
@@ -183,18 +264,44 @@ python -m eq.training.train_glomeruli \
 
 On the powerful Apple Silicon MPS machine class, `12` is the current starting batch-size recommendation for `512x512` glomeruli crops. Override it when throughput or stability requires a different value.
 
-The glomeruli training root must contain paired full-image `images/` and `masks/` directories under `raw_data`. Raw project backups such as `clean_backup` are source material; curate paired files into `training_pairs` before running model training. Generated manifests, audits, caches, and metrics belong under `derived_data`.
+For all-data glomeruli training, pass the manifest-backed cohort registry root: `$EQ_RUNTIME_ROOT/raw_data/cohorts`. The loader enumerates admitted manifest rows in the `manual_mask` and `masked_external` lanes, so the current training set is Lauren's 88 preeclampsia manual-mask rows plus the 619 approved Dox masked-external rows. A single active project root such as `$EQ_RUNTIME_ROOT/raw_data/preeclampsia_project/data` is also a valid paired root when you need to train only that project. Raw backup trees such as `clean_backup` are source material, not direct training roots. Generated manifests, audits, caches, and metrics belong under `derived_data` or `output`.
 
 For heavy training runs, the dedicated training modules above are the safest entrypoints. The `eq` CLI is still useful for validation, inspection, capabilities, and utility commands.
 
-The dedicated training module CLI is the canonical control surface for glomeruli candidate work. Choose the family explicitly with `--base-model` or `--from-scratch`; optional YAML files are overlays, not the authoritative promotion contract.
+The dedicated training module CLI is the canonical control surface for glomeruli candidate work. Choose the family explicitly with `--base-model` or `--from-scratch`; optional YAML files are overlays, not the authoritative promotion contract. A transfer run with `--base-model` must load that artifact and copy compatible weights or it stops with an error. The scratch candidate is the no-mitochondria-base baseline with an ImageNet-pretrained ResNet34 encoder, not a literal all-random initialization baseline.
+`--model-name` is only the base name. The trainer adds the run suffix automatically when it creates the output directory and `.pkl`, so inspect the produced artifacts after training instead of guessing the final directory name in advance.
+
+After transfer and scratch training finish, inspect the produced artifacts and export the exact paths you want to compare or quantify:
+
+```bash
+find "$GLOMERULI_MODEL_DIR/transfer" -path "*${GLOMERULI_TRANSFER_MODEL_NAME}-*" -name '*.pkl' | sort
+export GLOMERULI_TRANSFER_MODEL="/absolute/path/to/the/transfer_model.pkl"
+
+find "$GLOMERULI_MODEL_DIR/scratch" -path "*${GLOMERULI_SCRATCH_MODEL_NAME}-*" -name '*.pkl' | sort
+export GLOMERULI_SCRATCH_MODEL="/absolute/path/to/the/scratch_model.pkl"
+```
 
 ### 6. Compare glomeruli candidates
+
+Compare existing trained artifacts:
+
+```bash
+python -m eq.training.compare_glomeruli_candidates \
+  --data-dir "$GLOMERULI_TRAIN_ROOT" \
+  --transfer-model-path "$GLOMERULI_TRANSFER_MODEL" \
+  --scratch-model-path "$GLOMERULI_SCRATCH_MODEL" \
+  --seed 42 \
+  --crop-size 512
+```
+
+Train fresh transfer and scratch candidates inside the comparison workflow:
 
 ```bash
 python -m eq.training.compare_glomeruli_candidates \
   --data-dir "$GLOMERULI_TRAIN_ROOT" \
   --transfer-base-model "$MITO_BASE_MODEL" \
+  --transfer-model-name "$GLOMERULI_TRANSFER_MODEL_NAME" \
+  --scratch-model-name "$GLOMERULI_SCRATCH_MODEL_NAME" \
   --seed 42 \
   --crop-size 512
 ```
@@ -258,12 +365,27 @@ The main project configs live here:
 
 These files are optional overlays and engineering references. They are not the canonical control surface for glomeruli promotion or candidate comparison; use the dedicated training-module CLI commands above for authoritative execution and provenance.
 
-Path defaults should stay relative to the repo root unless there is a strong reason to use environment overrides. Supported overrides include:
+Path helpers centralize repo-local defaults, runtime roots, and external cohort sources. Use these environment variables instead of hardcoded local paths:
+
+Repo-local compatibility overrides:
 
 - `EQ_DATA_PATH`
 - `EQ_OUTPUT_PATH`
 - `EQ_CACHE_PATH`
 - `EQ_MODEL_PATH`
+- `EQ_LOG_PATH` or `EQ_LOGS_PATH`
+
+Runtime-root overrides:
+
+- `EQ_RUNTIME_ROOT`
+- `EQ_RUNTIME_OUTPUT_PATH`
+- `EQ_RUNTIME_MODEL_PATH`
+
+External cohort source overrides:
+
+- `EQ_DOX_LABEL_STUDIO_EXPORT`
+- `EQ_MR_SCORE_WORKBOOK`
+- `EQ_MR_IMAGE_ROOT`
 
 ## Development Notes
 
@@ -271,9 +393,3 @@ Path defaults should stay relative to the repo root unless there is a strong rea
 - Use `python -m pytest -q` for the local test pass.
 - Avoid hardcoded machine-specific paths in code, configs, or docs.
 - Keep datasets, trained models, notebooks, logs, and temporary artifacts out of Git.
-
-## Git Hygiene
-
-- Create focused branches for real work instead of piling changes into long-lived dirty working trees.
-- Treat branch comparisons explicitly when reviving old work. This repo has multiple historical lines of development.
-- Snapshot risky states before cleanup with a safety branch or stash.

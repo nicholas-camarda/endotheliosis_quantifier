@@ -3,22 +3,34 @@
 from __future__ import annotations
 
 import os
+import platform
 import subprocess
 import sys
 
 __version__ = '0.1.0'
 
 
+def _default_conda_environment() -> str:
+    """Return the supported default conda env for the current host OS."""
+    override = os.environ.get('EQ_CONDA_ENV')
+    if override:
+        return override
+    if platform.system() == "Darwin":
+        return "eq-mac"
+    return "eq"
+
+
 def ensure_conda_environment() -> bool:
-    """Restart the current command inside the ``eq`` conda env when available."""
+    """Restart the current command inside the supported conda env when available."""
+    target_env = _default_conda_environment()
     current_env = os.environ.get('CONDA_DEFAULT_ENV')
-    if current_env == 'eq' or 'envs/eq' in sys.executable:
+    if current_env == target_env or f'envs/{target_env}' in sys.executable:
         return True
 
     for launcher in ('conda', 'mamba'):
         try:
             result = subprocess.run(
-                [launcher, 'run', '-n', 'eq', 'python', '-c', 'import sys; print(sys.executable)'],
+                [launcher, 'run', '-n', target_env, 'python', '-c', 'import sys; print(sys.executable)'],
                 capture_output=True,
                 check=True,
                 text=True,

@@ -17,8 +17,12 @@ import numpy as np
 import torch
 from PIL import Image
 
-from eq.data_management.datablock_loader import validate_supported_segmentation_training_root
+from eq.data_management.datablock_loader import (
+    get_items_full_images,
+    validate_supported_segmentation_training_root,
+)
 from eq.data_management.model_loading import load_model_safely
+from eq.data_management.standard_getters import get_y_full
 from eq.evaluation.segmentation_metrics import pixel_accuracy
 from eq.inference.prediction_core import create_prediction_core
 from eq.training.promotion_gates import (
@@ -628,6 +632,20 @@ def _write_html_report(
     output_path.write_text(html_text, encoding="utf-8")
 
 
+def _validation_mask_paths(data_root: Path) -> List[Path]:
+    image_paths = get_items_full_images(data_root)
+    mask_paths: List[Path] = []
+    for image_path in image_paths:
+        mask_paths.append(get_y_full(image_path))
+    if not mask_paths:
+        raise ValueError(
+            f"No validation masks found for candidate comparison under {data_root}. "
+            "Use a supported paired full-image root or the manifest-backed "
+            "raw_data/cohorts registry root with admitted masked rows."
+        )
+    return mask_paths
+
+
 def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
     data_root = validate_supported_segmentation_training_root(args.data_dir, stage="glomeruli")
     output_root = Path(args.output_dir).expanduser()
@@ -638,7 +656,7 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
     asset_dir.mkdir(parents=True, exist_ok=True)
 
     manifest = deterministic_validation_manifest(
-        sorted(path for path in (data_root / "masks").rglob("*") if path.is_file()),
+        _validation_mask_paths(data_root),
         crop_size=args.crop_size,
         examples_per_category=args.examples_per_category,
     )
@@ -792,7 +810,11 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Compare glomeruli transfer and scratch candidates")
-    parser.add_argument("--data-dir", required=True, help="Supported raw_data/.../training_pairs root")
+    parser.add_argument(
+        "--data-dir",
+        required=True,
+        help="Supported glomeruli root: raw_data/cohorts, raw_data/cohorts/<cohort_id>, or an active paired raw_data project root",
+    )
     parser.add_argument(
         "--output-dir",
         default=str(get_runtime_output_path() / "glomeruli_candidate_comparison"),

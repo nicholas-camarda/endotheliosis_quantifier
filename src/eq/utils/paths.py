@@ -1,4 +1,4 @@
-"""Path helpers for the repository's current raw/derived data layout."""
+"""Path helpers for repository-local and runtime-root artifact layout."""
 
 from __future__ import annotations
 
@@ -14,6 +14,9 @@ DEFAULT_LOGS_PATH = "logs"
 DEFAULT_RUNTIME_ROOT_ENV = "EQ_RUNTIME_ROOT"
 DEFAULT_RUNTIME_OUTPUT_ENV = "EQ_RUNTIME_OUTPUT_PATH"
 DEFAULT_RUNTIME_MODELS_ENV = "EQ_RUNTIME_MODEL_PATH"
+DEFAULT_DOX_LABEL_STUDIO_EXPORT_ENV = "EQ_DOX_LABEL_STUDIO_EXPORT"
+DEFAULT_MR_SCORE_WORKBOOK_ENV = "EQ_MR_SCORE_WORKBOOK"
+DEFAULT_MR_IMAGE_ROOT_ENV = "EQ_MR_IMAGE_ROOT"
 
 
 def get_repo_root() -> Path:
@@ -36,8 +39,14 @@ def ensure_directory(path: Union[str, Path]) -> Path:
 
 
 def get_data_path() -> Path:
-    """Return the default raw-data directory for local training runs."""
-    return _resolve_repo_path(os.getenv('EQ_DATA_PATH', DEFAULT_DATA_PATH))
+    """Return the default raw-data directory, preferring the active runtime tree."""
+    override = os.getenv('EQ_DATA_PATH')
+    if override:
+        return _resolve_repo_path(override)
+    runtime_raw_data = get_active_runtime_root() / "raw_data"
+    if runtime_raw_data.exists():
+        return runtime_raw_data
+    return _resolve_repo_path(DEFAULT_DATA_PATH)
 
 
 def get_active_runtime_root() -> Path:
@@ -54,8 +63,14 @@ def get_active_runtime_root() -> Path:
 
 
 def get_output_path() -> Path:
-    """Return the default derived-data/output directory."""
-    return _resolve_repo_path(os.getenv('EQ_OUTPUT_PATH', DEFAULT_OUTPUT_PATH))
+    """Return the default derived-data directory, preferring the active runtime tree."""
+    override = os.getenv('EQ_OUTPUT_PATH')
+    if override:
+        return _resolve_repo_path(override)
+    runtime_derived_data = get_active_runtime_root() / "derived_data"
+    if runtime_derived_data.exists():
+        return runtime_derived_data
+    return _resolve_repo_path(DEFAULT_OUTPUT_PATH)
 
 
 def get_runtime_output_path() -> Path:
@@ -64,6 +79,76 @@ def get_runtime_output_path() -> Path:
     if output_override:
         return _resolve_repo_path(output_override)
     return get_active_runtime_root() / "output"
+
+
+def _runtime_root_or_active(runtime_root: Union[str, Path, None] = None) -> Path:
+    if runtime_root is None:
+        return get_active_runtime_root()
+    return _resolve_repo_path(runtime_root)
+
+
+def get_runtime_raw_data_path(runtime_root: Union[str, Path, None] = None) -> Path:
+    """Return the runtime raw-data root under the active runtime tree."""
+    return _runtime_root_or_active(runtime_root) / "raw_data"
+
+
+def get_runtime_cohorts_root(runtime_root: Union[str, Path, None] = None) -> Path:
+    """Return the canonical runtime cohort root."""
+    return get_runtime_raw_data_path(runtime_root) / "cohorts"
+
+
+def get_runtime_cohort_path(cohort_id: str, runtime_root: Union[str, Path, None] = None) -> Path:
+    """Return the localized runtime directory for a cohort."""
+    return get_runtime_cohorts_root(runtime_root) / str(cohort_id)
+
+
+def get_runtime_cohort_manifest_path(runtime_root: Union[str, Path, None] = None) -> Path:
+    """Return the unified runtime cohort manifest path."""
+    return get_runtime_cohorts_root(runtime_root) / "manifest.csv"
+
+
+def get_runtime_cohort_output_root(runtime_root: Union[str, Path, None] = None) -> Path:
+    """Return the runtime cohort-output root."""
+    if runtime_root is None:
+        return get_runtime_output_path() / "cohorts"
+    return _runtime_root_or_active(runtime_root) / "output" / "cohorts"
+
+
+def get_runtime_cohort_output_path(cohort_id: str, runtime_root: Union[str, Path, None] = None) -> Path:
+    """Return the output directory for a specific cohort."""
+    return get_runtime_cohort_output_root(runtime_root) / str(cohort_id)
+
+
+def get_dox_label_studio_export_path() -> Path:
+    """Return the latest Dox Label Studio export path used for cohort ingestion."""
+    override = os.getenv(DEFAULT_DOX_LABEL_STUDIO_EXPORT_ENV)
+    if override:
+        return _resolve_repo_path(override)
+    return (
+        Path.home()
+        / "Library/CloudStorage/OneDrive-Personal/phd/projects/VEGFRi and Dox/in-vivo mouse projects/kidney/2023-11-16_all-labeled-glom-data.json"
+    )
+
+
+def get_mr_score_workbook_path() -> Path:
+    """Return the MR kidney score workbook path used for cohort ingestion."""
+    override = os.getenv(DEFAULT_MR_SCORE_WORKBOOK_ENV)
+    if override:
+        return _resolve_repo_path(override)
+    return (
+        Path.home()
+        / "Library/CloudStorage/OneDrive-Personal/phd/projects/VEGFRi and MR/in-vivo projects/kidney/VEGFRi and MR kidney scoring.xlsx"
+    )
+
+
+def get_mr_image_root_path() -> Path:
+    """Return the MR external-drive whole-field TIFF root used for cohort ingestion."""
+    override = os.getenv(DEFAULT_MR_IMAGE_ROOT_ENV)
+    if override:
+        return _resolve_repo_path(override)
+    return Path(
+        "/Volumes/USB EXT2020/older-years/2020-2024 PhD/projects/VEGFRi and MR/in-vivo projects/kidney/images"
+    )
 
 
 def get_cache_path() -> Path:

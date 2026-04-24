@@ -197,6 +197,33 @@ For quantification, the current contract is also intentionally simple:
 - one union ROI built from all positive pixels in the mask
 - frozen segmentation-encoder embeddings extracted from that union ROI
 
+External scored cohorts use a separate runtime manifest contract. The active cohort table is:
+
+```text
+$EQ_RUNTIME_ROOT/raw_data/cohorts/manifest.csv
+```
+
+Each cohort has one localized working directory under:
+
+```text
+$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>/
+```
+
+The manifest is image-level and records runtime-local asset paths, score linkage, optional mask path, treatment group, lane assignment, verification state, admission state, and file hashes. Original PhD or cloud source folders remain provenance sources; normal cohort work uses the localized runtime cohort directories.
+
+Current external cohort rules:
+
+- `masked_core` currently contributes 88 admitted manual-mask rows from the active preeclampsia Label Studio workflow.
+- `vegfri_dox` currently contributes 864 Label Studio export rows: 619 decoded masked-external rows admitted after mask-quality review, 7 decoded rows missing scores, 228 foreign mixed-export rows, and 10 scored-only rows without decoded runtime images.
+- `vegfri_mr` currently contributes 127 workbook image-level rows from the external-drive whole-field TIFF batches. Of these, 126 are localized for concordance/evaluation only and one workbook row, `8570-5`, remains unresolved because the matching TIFF was not found.
+- Lucchi and other segmentation-install datasets are not part of the scored cohort manifest.
+
+Refresh the cohort manifest with:
+
+```bash
+eq cohort-manifest
+```
+
 ## Example Training Flow
 
 ### 1. Prepare Lucchi Images
@@ -223,11 +250,13 @@ On the powerful Apple Silicon MPS machine class, `24` is the current starting ba
 
 ### 3. Train The Glomeruli Model
 
+Use `--model-name` as a base name only. The trainer appends the descriptive run suffix automatically when it creates the artifact directory and exported `.pkl`. For example, `--model-name glomeruli_transfer_candidate` produces an artifact directory like `glomeruli_transfer_candidate-transfer_s1lr1e-3_s2lr_lrfind_e30_b12_lr1e-3_sz256/`; you do not pass that full suffixed name back into `--model-name`, and you should not hardcode the predicted final artifact path before training.
+
 Transfer candidate:
 
 ```bash
 python -m eq.training.train_glomeruli \
-  --data-dir /absolute/path/to/raw_data/project/training_pairs \
+  --data-dir /absolute/path/to/raw_data/cohorts \
   --model-dir /absolute/path/to/glomeruli_models \
   --base-model /absolute/path/to/mito_supported_base.pkl \
   --epochs 30 \
@@ -242,7 +271,7 @@ Scratch candidate:
 
 ```bash
 python -m eq.training.train_glomeruli \
-  --data-dir data/raw_data/your_project/training_pairs \
+  --data-dir data/raw_data/cohorts \
   --model-dir models/segmentation/glomeruli \
   --from-scratch \
   --epochs 50 \
@@ -255,9 +284,9 @@ python -m eq.training.train_glomeruli \
 
 On the powerful Apple Silicon MPS machine class, `12` is the current starting batch-size recommendation for `512x512` glomeruli crops. Override it when throughput or stability requires a different value.
 
-The glomeruli training root must contain paired full-image `images/` and `masks/` directories under `raw_data`. Raw project backups are source material; curate paired files into `training_pairs` before running model training. Generated manifests, audits, caches, and metrics belong under `derived_data`.
+For all-data glomeruli training, use the manifest-backed `raw_data/cohorts` registry root. It trains from admitted manifest rows in the `manual_mask` and `masked_external` lanes, so unresolved, foreign, MR concordance-only, and scored-only rows stay out. A single active paired project root such as `raw_data/preeclampsia_project/data` is valid for project-only training. Raw project backups are source material, not direct training roots. Generated manifests, audits, caches, and metrics belong under `derived_data` or `output`.
 
-The dedicated training module CLI is the authoritative control surface. Optional YAML files are overlays, not the promotion contract.
+The dedicated training module CLI is the authoritative control surface. Optional YAML files are overlays, not the promotion contract, and the later artifact path is derived from the base `--model-name` plus the auto-generated run suffix. Transfer training with `--base-model` must load that artifact and copy compatible weights or the run stops. The `--from-scratch` candidate is the no-mitochondria-base comparator with an ImageNet-pretrained ResNet34 encoder, not a literal all-random initialization baseline. After training, inspect the produced `.pkl` path and reuse that exact path in downstream comparison or quantification commands.
 
 ### 4. Run The Current Quantification Baseline
 

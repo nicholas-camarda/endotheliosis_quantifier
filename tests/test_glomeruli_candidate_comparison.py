@@ -8,6 +8,7 @@ import torch
 
 from eq.training.compare_glomeruli_candidates import (
     COMPARE_PREDICTION_THRESHOLD,
+    _validation_mask_paths,
     _predict_crop,
     build_arg_parser,
     compare_glomeruli_candidates,
@@ -166,6 +167,64 @@ def test_compare_glomeruli_candidates_writes_reports_for_tied_candidates(tmp_pat
     html_report = (output_root / "promotion_report.html").read_text()
     assert "Manifest Coverage" in html_report
     assert "panel order: raw | truth overlay | prediction overlay" in html_report
+
+
+def test_candidate_comparison_uses_manifest_backed_cohort_registry_masks(tmp_path):
+    runtime_root = tmp_path / "runtime"
+    cohorts_root = runtime_root / "raw_data" / "cohorts"
+    rows = []
+    samples = [
+        ("masked_core", "manual_mask", "core_empty", np.zeros((32, 32), dtype=np.uint8)),
+        (
+            "vegfri_dox",
+            "masked_external",
+            "dox_boundary",
+            np.pad(np.ones((8, 8), dtype=np.uint8), ((0, 24), (0, 24))),
+        ),
+        (
+            "vegfri_dox",
+            "masked_external",
+            "dox_positive",
+            np.pad(np.ones((8, 8), dtype=np.uint8), ((12, 12), (12, 12))),
+        ),
+    ]
+    for cohort_id, lane, stem, mask in samples:
+        image_dir = cohorts_root / cohort_id / "images"
+        mask_dir = cohorts_root / cohort_id / "masks"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        mask_dir.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(np.zeros((32, 32, 3), dtype=np.uint8)).save(image_dir / f"{stem}.jpg")
+        Image.fromarray((mask * 255).astype(np.uint8)).save(mask_dir / f"{stem}_mask.png")
+        rows.append(
+            {
+                "cohort_id": cohort_id,
+                "lane_assignment": lane,
+                "admission_status": "admitted",
+                "image_path": f"raw_data/cohorts/{cohort_id}/images/{stem}.jpg",
+                "mask_path": f"raw_data/cohorts/{cohort_id}/masks/{stem}_mask.png",
+            }
+        )
+    rows.append(
+        {
+            "cohort_id": "vegfri_mr",
+            "lane_assignment": "mr_concordance_only",
+            "admission_status": "evaluation_only",
+            "image_path": "raw_data/cohorts/vegfri_mr/images/heldout.tif",
+            "mask_path": "",
+        }
+    )
+    import pandas as pd
+
+    pd.DataFrame(rows).to_csv(cohorts_root / "manifest.csv", index=False)
+
+    mask_paths = _validation_mask_paths(cohorts_root)
+
+    assert len(mask_paths) == 3
+    assert {path.name for path in mask_paths} == {
+        "core_empty_mask.png",
+        "dox_boundary_mask.png",
+        "dox_positive_mask.png",
+    }
 
 
 def test_compare_parser_defaults_to_runtime_output_root(monkeypatch, tmp_path):

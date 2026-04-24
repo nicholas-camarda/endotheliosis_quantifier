@@ -131,7 +131,7 @@ The system SHALL organize every cohort under the active runtime root at `raw_dat
 - **THEN** those datasets SHALL remain outside `raw_data/cohorts/<cohort_id>/` and SHALL NOT require `manifest.csv` under this change unless a future quantification change explicitly brings them into scope
 
 #### Scenario: Repo-local placeholder data roots are not treated as active runtime storage
-- **WHEN** the current machine's repo checkout has empty or placeholder `data/raw_data` and `data/derived_data` directories while the active working state lives under `~/ProjectsRuntime/endotheliosis_quantifier`
+- **WHEN** the current machine's repo checkout has empty or placeholder `data/raw_data` and `data/derived_data` directories while the active working state lives under `$EQ_RUNTIME_ROOT`
 - **THEN** the cohort layout for this change SHALL target the active runtime root rather than creating a competing second data home inside the repo checkout
 
 ### Requirement: Repo-style cohort harmonization
@@ -340,12 +340,20 @@ The system SHALL treat `cohort_id=vegfri_dox` as the first external cohort with 
 - **THEN** the system SHALL prefer direct Label Studio mask export over reconstructed brushlabel decoding for mask recovery
 
 #### Scenario: Existing decoded Dox runtime masks are reused
-- **WHEN** the current machine already has decoded Dox brushlabel masks materialized under `~/ProjectsRuntime/endotheliosis_quantifier/raw_data/cohorts/vegfri_dox/`
+- **WHEN** the current machine already has decoded Dox brushlabel masks materialized under `$EQ_RUNTIME_ROOT/raw_data/cohorts/vegfri_dox/`
 - **THEN** the implementation SHALL treat that runtime-local `images/`, `masks/`, and `metadata/decoded_brushlabel_masks.csv` surface as the starting point for Dox mask-aware reconciliation rather than rebuilding an alternate active mask tree elsewhere
 
 #### Scenario: Verified masked Dox rows can improve segmentation
 - **WHEN** `cohort_id=vegfri_dox` rows have verified masks and clear the mask-quality and verification gates
 - **THEN** those rows SHALL be eligible for masked-external segmentation evaluation and, if explicitly approved by the workflow, segmentation training augmentation
+
+#### Scenario: All admitted masked rows can train one glomeruli candidate
+- **WHEN** the glomeruli trainer is pointed at the active runtime `raw_data/cohorts` registry root
+- **THEN** it SHALL enumerate admitted rows from the manual-mask and masked-external manifest lanes across current cohorts, including the active preeclampsia masked-core rows and approved Dox masked-external rows, while excluding scored-only, foreign, unresolved, and MR concordance-only rows from segmentation supervision
+
+#### Scenario: Requested transfer training fails closed on base-load failure
+- **WHEN** a glomeruli transfer run is given a base model path that cannot load in the active environment or cannot contribute any compatible weights
+- **THEN** the run SHALL stop with an explicit error and SHALL NOT proceed as a no-mitochondria-base scratch candidate; the no-base ImageNet-initialized comparator SHALL require the explicit scratch-training path
 
 #### Scenario: Scored-only Dox rows remain grading-only
 - **WHEN** `cohort_id=vegfri_dox` rows do not have verified masks but clear transport and verification gates
@@ -412,7 +420,7 @@ The system SHALL refactor the shared repo path helpers so the active runtime roo
 
 #### Scenario: Shared path helpers resolve active cohort surfaces
 - **WHEN** a repo workflow requests the runtime root or cohort data/output locations
-- **THEN** the shared path helpers SHALL resolve the active `~/ProjectsRuntime/endotheliosis_quantifier` cohort surfaces rather than defaulting to placeholder repo-local `data/` roots for this workflow
+- **THEN** the shared path helpers SHALL resolve the active `$EQ_RUNTIME_ROOT` cohort surfaces rather than defaulting to placeholder repo-local `data/` roots for this workflow
 
 ### Requirement: Touched pipeline surfaces have regression coverage
 The system SHALL add explicit tests for every quantification pipeline surface changed by the scored-only cohort workflow and SHALL preserve the existing masked-core contract behavior.

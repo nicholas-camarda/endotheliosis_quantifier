@@ -26,15 +26,15 @@ data:
   # Label Studio annotations
   annotations:
     json_file: "data/raw_data/preeclampsia_project/annotations/annotations.json"  # Path to Label Studio export - will be copied to data/derived_data/cache
-    processor: "load_annotations_from_json"  # Function from data_loader.py
+    processor: "recover_labelstudio_scores"  # Current score recovery lives in src/eq/quantification/labelstudio_scores.py
     
   # Curated training root.
   # Training consumes paired full-image images/ and masks/ directly, so the canonical
   # trainable root lives under raw_data rather than derived_data.
   processed:
-    train_dir: "data/raw_data/preeclampsia_project/training_pairs"
-    train_image_dir: "data/raw_data/preeclampsia_project/training_pairs/images"
-    train_mask_dir: "data/raw_data/preeclampsia_project/training_pairs/masks"
+    train_dir: "data/raw_data/cohorts"
+    train_image_dir: "data/raw_data/preeclampsia_project/data/images"
+    train_mask_dir: "data/raw_data/preeclampsia_project/data/masks"
     cache_dir: "data/derived_data/glomeruli_data/cache"
     training_mode: "dynamic_full_image_patching"
     
@@ -82,7 +82,7 @@ label_studio:
   
   # RLE mask processing
   rle_processing:
-    decode_function: "rle2mask"  # Function from data_loader.py
+    decode_function: "decode_label_studio_rle"  # Current Dox/cohort ingestion lives in src/eq/quantification/cohorts.py
     mask_resize: [256, 256]  # Match original training size
 
 # Data Augmentation (for fine-tuning)

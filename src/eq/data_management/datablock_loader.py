@@ -45,7 +45,6 @@ from eq.core.constants import (
 from eq.data_management.standard_getters import get_y_full, get_y_patch
 from eq.utils.logger import get_logger
 
-
 TRAINING_MODE_DYNAMIC_FULL_IMAGE = "dynamic_full_image_patching"
 STATIC_PATCH_DIR_NAMES = (
     "image_patches",
@@ -54,12 +53,87 @@ STATIC_PATCH_DIR_NAMES = (
     "mask_patch_validation",
 )
 GLOMERULI_TRAINING_STAGES = {"glomeruli", "glomeruli_transfer"}
+TRAINING_MASK_LANES = {"manual_mask", "masked_external"}
+BLOCKED_RAW_PROJECT_ROOT_PARTS = {
+    "_retired",
+    "backup",
+    "backup_before_reorganization",
+    "clean_backup",
+    "old",
+}
+
+
+def _is_raw_data_cohort_root(root: Path) -> bool:
+    return root.parent.name == "cohorts" and "raw_data" in set(root.parts)
+
+
+def _is_raw_data_cohort_registry_root(root: Path) -> bool:
+    return root.name == "cohorts" and root.parent.name == "raw_data"
+
+
+def _is_raw_data_training_pairs_root(root: Path) -> bool:
+    return root.name == "training_pairs" and "raw_data" in set(root.parts)
+
+
+def _is_raw_data_project_root(root: Path) -> bool:
+    if "raw_data" not in set(root.parts):
+        return False
+    if set(root.parts) & BLOCKED_RAW_PROJECT_ROOT_PARTS:
+        return False
+    if _is_raw_data_training_pairs_root(root) or _is_raw_data_cohort_root(root):
+        return False
+    return (root / "images").is_dir() and (root / "masks").is_dir()
+
+
+def _runtime_root_for_cohort_root(root: Path) -> Path:
+    # <runtime_root>/raw_data/cohorts/<cohort_id>
+    return root.parents[2]
+
+
+def _runtime_root_for_cohort_registry_root(root: Path) -> Path:
+    # <runtime_root>/raw_data/cohorts
+    return root.parents[1]
+
+
+def _manifest_admitted_cohort_images(root: Path) -> Optional[List[Any]]:
+    if _is_raw_data_cohort_registry_root(root):
+        manifest_path = root / "manifest.csv"
+        runtime_root = _runtime_root_for_cohort_registry_root(root)
+        cohort_name = None
+    elif _is_raw_data_cohort_root(root):
+        manifest_path = root.parent / "manifest.csv"
+        runtime_root = _runtime_root_for_cohort_root(root)
+        cohort_name = root.name
+    else:
+        return None
+    if not manifest_path.exists():
+        return None
+
+    import pandas as pd
+
+    manifest = pd.read_csv(manifest_path).fillna("")
+    lane_filter = manifest["lane_assignment"].astype(str).isin(TRAINING_MASK_LANES)
+    cohort_rows = manifest[
+        (manifest["admission_status"].astype(str) == "admitted")
+        & lane_filter
+        & (~manifest["image_path"].map(lambda value: str(value).strip() == ""))
+        & (~manifest["mask_path"].map(lambda value: str(value).strip() == ""))
+    ].copy()
+    if cohort_name is not None:
+        cohort_rows = cohort_rows[cohort_rows["cohort_id"].astype(str) == cohort_name]
+    return [
+        runtime_root / image_path
+        for image_path in cohort_rows["image_path"].astype(str).tolist()
+        if (runtime_root / image_path).exists()
+    ]
 
 
 def validate_supported_segmentation_training_root(data_root: Union[str, Path], *, stage: str = "segmentation") -> Path:
     """Validate the supported full-image dynamic-patching training contract."""
     root = Path(data_root).expanduser()
     static_dirs = [name for name in STATIC_PATCH_DIR_NAMES if (root / name).exists()]
+    is_glomeruli_stage = stage in GLOMERULI_TRAINING_STAGES
+    is_manifest_cohort_registry = _is_raw_data_cohort_registry_root(root) and (root / "manifest.csv").is_file()
     has_images = (root / "images").is_dir()
     has_masks = (root / "masks").is_dir()
 
@@ -72,6 +146,9 @@ def validate_supported_segmentation_training_root(data_root: Union[str, Path], *
             "`images/` and `masks/` directories. Use static patch data only for "
             "legacy audit, conversion, or historical inspection workflows."
         )
+
+    if is_glomeruli_stage and is_manifest_cohort_registry:
+        return root
 
     missing = []
     if not has_images:
@@ -87,15 +164,21 @@ def validate_supported_segmentation_training_root(data_root: Union[str, Path], *
             "`masks/` with dynamic patching."
         )
 
-    if stage in GLOMERULI_TRAINING_STAGES:
-        parts = set(root.parts)
-        if "raw_data" not in parts or root.name != "training_pairs":
+    if is_glomeruli_stage:
+        if not (
+            _is_raw_data_training_pairs_root(root)
+            or _is_raw_data_cohort_root(root)
+            or _is_raw_data_project_root(root)
+        ):
             raise ValueError(
                 f"Unsupported glomeruli training root for {stage}: {root}. "
-                "Canonical supported glomeruli training uses a curated paired "
-                "root under `raw_data/.../training_pairs` containing `images/` "
-                "and `masks/`. Raw backup trees such as `clean_backup` are "
-                "source material, not direct training roots."
+                "Supported glomeruli training uses an active paired project root "
+                "under `raw_data/<project>/...`, a legacy standalone "
+                "`raw_data/.../training_pairs` root, an admitted runtime cohort root "
+                "under `raw_data/cohorts/<cohort_id>`, or the manifest-backed "
+                "`raw_data/cohorts` registry root for all admitted masked rows. "
+                "Raw backup trees such as `clean_backup` are source material, not "
+                "direct training roots."
             )
 
     return root
@@ -413,10 +496,20 @@ def get_items_patches(path: Path) -> List[Any]:
 def get_items_full_images(path: Path) -> List[Any]:
     """
     Get image files from images/ directory for dynamic patching.
-    This function explicitly uses the images/ directory - no fallbacks.
+    Manifest-backed cohort roots use only admitted masked manifest rows; other
+    roots explicitly use the local images/ directory.
     """
     # Explicitly use images/ directory - no fallbacks for safety
-    images_dir = Path(path) / "images"
+    root = Path(path)
+    manifest_items = _manifest_admitted_cohort_images(root)
+    if manifest_items is not None:
+        logger = get_logger("eq.datablock_loader")
+        logger.info(
+            f"DataBlock (cohort full images): Found {len(manifest_items)} manifest-admitted image-mask pairs"
+        )
+        return manifest_items
+
+    images_dir = root / "images"
     
     if not images_dir.exists():
         raise FileNotFoundError(f"images/ directory not found in {path}. Expected: {images_dir}")
@@ -567,6 +660,7 @@ def build_segmentation_dls_dynamic_patching(
     positive_focus_p: float = DEFAULT_POSITIVE_FOCUS_P,
     min_pos_pixels: int = DEFAULT_MIN_POS_PIXELS,
     pos_crop_attempts: int = DEFAULT_POS_CROP_ATTEMPTS,
+    stage: str = "segmentation",
 ):
     """
     Create DataLoaders for binary segmentation with dynamic patching.
@@ -593,7 +687,7 @@ def build_segmentation_dls_dynamic_patching(
     Returns:
         DataLoaders object
     """
-    root = validate_supported_segmentation_training_root(data_root)
+    root = validate_supported_segmentation_training_root(data_root, stage=stage)
 
     # Preflight: ensure we have at least one valid image-mask pair
     prelim_items = get_items_full_images(root)

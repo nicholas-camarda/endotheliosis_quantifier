@@ -1,6 +1,6 @@
 ## Why
 
-The current glomeruli promotion workflow exposed a real limitation in the available supervision: the supported `training_pairs` cohort contains glomerulus-positive full images only, and the larger MR/TIFF source images that could supply background-only crop context do not have masks. That means the repository cannot currently treat arbitrary crops from those larger source images as defensible true negatives.
+The current glomeruli promotion workflow exposed a real limitation in the available supervision: the supported all-data training surface now comes from the manifest-backed `raw_data/cohorts` registry root, which enumerates admitted manual-mask and masked-external rows, and project-only training can use the direct paired root `raw_data/preeclampsia_project/data`. These full images contain glomeruli somewhere, and the larger MR/TIFF source images that could supply background-only crop context do not have masks. That means the repository cannot currently treat arbitrary crops from those larger source images as defensible true negatives.
 
 This should be tracked as a separate change rather than left as an implicit complaint inside glomeruli promotion. The problem is not "transfer versus scratch" anymore. The problem is that the repo lacks a supported contract for curating, auditing, and using explicitly annotated negative glomeruli crops from larger source images without turning the project back into a static-patch training workflow.
 

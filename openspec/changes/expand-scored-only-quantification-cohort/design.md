@@ -18,9 +18,9 @@ This does not include Lucchi or similar downloaded segmentation datasets. In the
 
 The localized cohort layout should be treated as the working runtime input surface for this repository, while PhD / cloud roots remain the immutable provenance-bearing source surfaces. Future users should be able to operate from the localized cohort directories and one unified `manifest.csv` without needing to rediscover the original distributed source layout. The localized dataset should be built by copying, never moving, needed source assets into the runtime cohort directories. The canonical manifest should be runtime-native and should not require original source paths once assets have been consolidated locally.
 
-The concrete path split matters here. In the current checkout, repo-local `data/raw_data` and `data/derived_data` are effectively empty placeholders, while the active raw projects, derived datasets, models, logs, and outputs already live under `~/ProjectsRuntime/endotheliosis_quantifier`. The new cohort layout should therefore be specified against the active runtime root, not against the git checkout's local `data/` tree.
+The concrete path split matters here. In the current checkout, repo-local `data/raw_data` and `data/derived_data` are effectively empty placeholders, while the active raw projects, derived datasets, models, logs, and outputs live under the active runtime root. The new cohort layout should therefore be specified against `$EQ_RUNTIME_ROOT`, not against the git checkout's local `data/` tree.
 
-There is now direct runtime evidence that Dox brushlabel mask recovery is feasible under that contract. On this machine, decoded Dox brushlabel masks have already been materialized under `~/ProjectsRuntime/endotheliosis_quantifier/raw_data/cohorts/vegfri_dox/` with runtime-local `images/`, `masks/`, and `metadata/decoded_brushlabel_masks.csv`. The current decoded pass recovered `626` Dox rows, skipped `228` foreign Lauren-style rows, and skipped `10` ambiguous multi-brush tasks pending explicit adjudication. That runtime cohort surface should be treated as the current starting point for Dox mask-aware reconciliation rather than as a hypothetical future option.
+There is now direct runtime evidence that Dox brushlabel mask recovery is feasible under that contract. Decoded Dox brushlabel masks have already been materialized under `$EQ_RUNTIME_ROOT/raw_data/cohorts/vegfri_dox/` with runtime-local `images/`, `masks/`, and `metadata/decoded_brushlabel_masks.csv`. The current decoded pass recovered `626` Dox rows, skipped `228` foreign Lauren-style rows, and skipped `10` ambiguous multi-brush tasks pending explicit adjudication. That runtime cohort surface should be treated as the current starting point for Dox mask-aware reconciliation rather than as a hypothetical future option.
 
 ## Goals / Non-Goals
 
@@ -85,7 +85,7 @@ There is now direct runtime evidence that Dox brushlabel mask recovery is feasib
    - Alternatives considered:
      - Audit and join directly from the original cloud-export filenames. Rejected because heterogeneous experiment naming would leak one-off parsing logic into every downstream step.
      - Introduce extra intermediate trees such as `quantification_contract`, `scored_only_cohorts`, or repeated project-name nesting. Rejected because they add abstraction without clarifying ownership.
-     - Put the new cohort layout under the repo checkout's local `data/` directories on this machine. Rejected because the current active data and outputs already live in `~/ProjectsRuntime/endotheliosis_quantifier`, while the repo-local `data/` directories are not the operational source of truth.
+     - Put the new cohort layout under the repo checkout's local `data/` directories on this machine. Rejected because the current active data and outputs already live under the active runtime root, while the repo-local `data/` directories are not the operational source of truth.
 
 6. **Require fail-closed, high-fidelity score-to-image verification before cohort admission.**
    - Rationale: these cohorts come from heterogeneous exports where filenames, workbook sample IDs, treatment assignments, and score rows can drift apart. Admission needs more than a successful parse; it needs explicit one-to-one mapping checks, duplicate/contradiction detection, and provenance strong enough to audit each admitted item back to the source row and staged image file.
@@ -166,7 +166,7 @@ There is now direct runtime evidence that Dox brushlabel mask recovery is feasib
      - Always require batch and date in `harmonized_id` for every cohort. Rejected because that would encode one legacy failure mode into the global contract and make cleaner future cohorts noisier than necessary.
 
 10. **Anchor the new cohort layout to the active runtime root, not the repo checkout.**
-   - Rationale: the existing endotheliosis working state already lives in `~/ProjectsRuntime/endotheliosis_quantifier` with active `raw_data/`, `derived_data/`, `models/`, `logs/`, and `output/` trees. Putting the new unified manifest under repo-local `data/` would create a second competing runtime topology.
+   - Rationale: the existing endotheliosis working state already lives under the active runtime root with active `raw_data/`, `derived_data/`, `models/`, `logs/`, and `output/` trees. Putting the new unified manifest under repo-local `data/` would create a second competing runtime topology.
    - Alternatives considered:
      - Treat repo-local `data/raw_data` and `data/derived_data` as the new active surface. Rejected because that would not match the current machine's actual runtime state.
 
@@ -247,14 +247,14 @@ There is now direct runtime evidence that Dox brushlabel mask recovery is feasib
 ## Concrete Rollout
 
 1. **`masked_core` cohort**
-   - Build `~/ProjectsRuntime/endotheliosis_quantifier/raw_data/cohorts/manifest.csv` entries for the existing active preeclampsia runtime under `cohort_id=masked_core`.
+   - Build `$EQ_RUNTIME_ROOT/raw_data/cohorts/manifest.csv` entries for the existing active preeclampsia runtime under `cohort_id=masked_core`.
    - Reconcile current masked-core image, mask, annotation, and mapping surfaces into the new manifest without changing the supported masked-core quantification behavior.
    - Success for this cohort: every currently supported masked-core row is represented in the manifest with explicit provenance and no regression of the current quantification path.
 
 2. **`vegfri_dox` cohort**
    - Start from the latest dated Dox Label Studio export as the primary export surface, then reconcile against older exports and the Dox Label Studio export directory only as needed to recover missing rows or provenance.
    - Prefer direct authoritative Label Studio mask export when available from the user’s setup; otherwise recover masks from embedded `brushlabels` exports.
-   - Use the existing decoded runtime Dox brushlabel surface at `~/ProjectsRuntime/endotheliosis_quantifier/raw_data/cohorts/vegfri_dox/` as the current starting point for mask-aware reconciliation on this machine, with `metadata/decoded_brushlabel_masks.csv` as the runtime-local recovery ledger.
+   - Use the existing decoded runtime Dox brushlabel surface at `$EQ_RUNTIME_ROOT/raw_data/cohorts/vegfri_dox/` as the current starting point for mask-aware reconciliation, with `metadata/decoded_brushlabel_masks.csv` as the runtime-local recovery ledger.
    - Recover both image-level score choices and `brushlabels` glomerulus masks where present.
    - Partition Dox rows into:
      - verified masked rows that can feed segmentation improvement/evaluation once mask quality is accepted
@@ -280,8 +280,8 @@ There is now direct runtime evidence that Dox brushlabel mask recovery is feasib
 
 This change is successful only if all of the following are true:
 
-- Localized runtime cohort directories exist for `masked_core`, `vegfri_dox`, and `vegfri_mr` under `~/ProjectsRuntime/endotheliosis_quantifier/raw_data/cohorts/`.
-- The unified `~/ProjectsRuntime/endotheliosis_quantifier/raw_data/cohorts/manifest.csv` is populated, not just an empty scaffold.
+- Localized runtime cohort directories exist for `masked_core`, `vegfri_dox`, and `vegfri_mr` under `$EQ_RUNTIME_ROOT/raw_data/cohorts/`.
+- The unified `$EQ_RUNTIME_ROOT/raw_data/cohorts/manifest.csv` is populated, not just an empty scaffold.
 - Each cohort directory contains the localized working assets needed for future use rather than only a manifest pointing back into scattered source roots.
 - Unified manifest rows for Dox explicitly separate recovered masked rows, recovered scored-only rows, foreign mixed rows, unresolved rows, and excluded rows.
 - The runtime Dox cohort directory is populated with decoded brushlabel-derived mask PNGs and paired copied images under `raw_data/cohorts/vegfri_dox/` rather than leaving mask recovery as a speculative step.

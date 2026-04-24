@@ -50,14 +50,14 @@ For mitochondria, keep the installed physical split explicit:
 
 The physical `testing/` root is not the FastAI validation split. Training-time validation is created inside the selected `training/` root.
 
-For glomeruli, train from a curated paired full-image root under `raw_data`, such as `raw_data/preeclampsia_project/training_pairs`. Raw project backup trees are source material and may contain images without masks; they should not be passed directly to training unless every image has a matching mask.
+For glomeruli, train all available admitted masked rows from the manifest-backed `raw_data/cohorts` registry root. For a project-only run, use an active paired full-image root under `raw_data`, such as `raw_data/preeclampsia_project/data`. Raw project backup trees are source material and may contain images without masks; they should not be passed directly to training.
 
 Path contract:
 
-- `raw_data/...`: source images, source masks, curated paired training roots
+- `raw_data/...`: source images, source masks, active paired training roots, and cohort registry inputs
 - `derived_data/...`: generated manifests, audits, caches, metrics, evaluation artifacts
 
-The current mitochondria runtime under `derived_data/mitochondria_data/{training,testing}` is a Lucchi-installed exception, not the generic naming rule for curated glomeruli training pairs.
+The current mitochondria runtime under `derived_data/mitochondria_data/{training,testing}` is a Lucchi-installed exception, not the generic naming rule for curated glomeruli training inputs.
 
 Local Apple Silicon starting points on the powerful MPS machine class:
 
@@ -79,6 +79,8 @@ A supported segmentation model artifact requires:
 - a current pipeline or inference test that depends on the supported artifact path
 
 Legacy `.pkl` artifacts that reference removed modules such as `eq.segmentation...`, old FastAI transform namespaces, or incompatible NumPy pickle namespaces are historical artifacts. Do not point new tests, specs, or default commands at them unless the work is explicitly a legacy-artifact compatibility change.
+
+Transfer training treats a requested base artifact as mandatory. If `--base-model` cannot load in the active environment or does not provide compatible weights, the run fails before training. The explicit scratch-training path is the no-mitochondria-base comparator and uses FastAI's ImageNet-pretrained ResNet34 encoder initialization.
 
 ## Model Promotion Gate
 

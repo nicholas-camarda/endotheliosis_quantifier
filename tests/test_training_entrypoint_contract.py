@@ -100,6 +100,7 @@ def test_mitochondria_training_entrypoint_smoke_uses_dynamic_full_image_root(tmp
 
     def fake_unet_learner(dls, *args, **kwargs):
         captured["dls"] = dls
+        captured["unet_kwargs"] = kwargs
         return _FakeLearner(dls)
 
     monkeypatch.setattr(train_mitochondria, "build_segmentation_dls_dynamic_patching", fake_build_dls)
@@ -119,12 +120,15 @@ def test_mitochondria_training_entrypoint_smoke_uses_dynamic_full_image_root(tmp
     assert learn.fit_calls
     assert captured["dls"] is learn.dls
     assert captured["dls_root"] == data_root
+    assert captured["unet_kwargs"]["pretrained"] is True
     metadata_files = list(output_root.glob("**/*_run_metadata.json"))
     assert metadata_files
     metadata = json.loads(metadata_files[0].read_text())
     assert metadata["training_mode"] == "dynamic_full_image_patching"
     assert metadata["data_root"] == str(data_root)
     assert metadata["model_path"] == str(model_path)
+    assert metadata["encoder_initialization"] == "imagenet_pretrained_resnet34"
+    assert metadata["candidate_family"] == "mitochondria_no_domain_base"
     assert metadata["package_versions"]["torch"]
     assert "torchvision" in metadata["package_versions"]
     assert "fastai" in metadata["package_versions"]
@@ -189,6 +193,121 @@ def test_glomeruli_transfer_training_smoke_validates_full_image_root(tmp_path, m
     assert "model_path" in metadata
 
 
+def test_transfer_learning_refuses_no_base_candidate_when_base_cannot_load(tmp_path, monkeypatch):
+    data_root = tmp_path / "raw_data" / "glomeruli" / "training_pairs"
+    _make_full_image_root(data_root)
+    base_model = tmp_path / "bad_base.pkl"
+    base_model.write_text("not a loadable base model")
+    captured = {}
+
+    def fake_build_dls(root, **kwargs):
+        items = sorted((Path(root) / "images").glob("*.jpg"))
+        return _FakeDls(items)
+
+    monkeypatch.setattr(
+        transfer_learning,
+        "load_supported_segmentation_artifact_metadata",
+        lambda path: {"training_mode": "dynamic_full_image_patching"},
+    )
+    monkeypatch.setattr(transfer_learning, "build_segmentation_dls_dynamic_patching", fake_build_dls)
+    def fake_unet_learner(dls, *args, **kwargs):
+        captured["unet_kwargs"] = kwargs
+        return _FakeLearner(dls)
+
+    monkeypatch.setattr(transfer_learning, "unet_learner", fake_unet_learner)
+    monkeypatch.setattr(
+        transfer_learning,
+        "load_learner",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ModuleNotFoundError("fasttransform")),
+    )
+    monkeypatch.setattr(transfer_learning.torch, "load", lambda *args, **kwargs: {})
+
+    with pytest.raises(RuntimeError, match="refusing to continue as a no-base scratch candidate"):
+        transfer_learning.load_model_for_transfer_learning(
+            base_model,
+            data_root,
+            batch_size=2,
+            image_size=64,
+        )
+
+    assert captured["unet_kwargs"]["pretrained"] is False
+
+
+def test_glomeruli_transfer_entrypoint_refuses_missing_base_before_scratch_training(tmp_path, monkeypatch):
+    data_root = tmp_path / "raw_data" / "glomeruli" / "training_pairs"
+    _make_full_image_root(data_root)
+    output_root = tmp_path / "models"
+    missing_base = tmp_path / "missing_mito.pkl"
+    scratch_called = False
+
+    def fail_if_scratch_called(*args, **kwargs):
+        nonlocal scratch_called
+        scratch_called = True
+        raise AssertionError("missing transfer base must not fall back to scratch training")
+
+    monkeypatch.setattr(train_glomeruli, "train_glomeruli_with_datablock", fail_if_scratch_called)
+
+    with pytest.raises(FileNotFoundError, match="Refusing to continue as a no-base scratch candidate"):
+        train_glomeruli.train_glomeruli_with_transfer_learning(
+            data_dir=str(data_root),
+            output_dir=str(output_root),
+            model_name="glom_transfer",
+            base_model_path=str(missing_base),
+            epochs=1,
+            batch_size=2,
+            image_size=64,
+        )
+
+    assert scratch_called is False
+
+
+def test_transfer_learning_refuses_no_base_candidate_when_base_has_no_compatible_weights(tmp_path, monkeypatch):
+    data_root = tmp_path / "raw_data" / "glomeruli" / "training_pairs"
+    _make_full_image_root(data_root)
+    base_model = tmp_path / "incompatible_base.pkl"
+    base_model.write_text("fake incompatible base model")
+
+    class _ModelLearner(_FakeLearner):
+        def __init__(self, dls, model):
+            super().__init__(dls)
+            self.model = model
+
+    def fake_build_dls(root, **kwargs):
+        items = sorted((Path(root) / "images").glob("*.jpg"))
+        return _FakeDls(items)
+
+    monkeypatch.setattr(
+        transfer_learning,
+        "load_supported_segmentation_artifact_metadata",
+        lambda path: {"training_mode": "dynamic_full_image_patching"},
+    )
+    monkeypatch.setattr(transfer_learning, "build_segmentation_dls_dynamic_patching", fake_build_dls)
+    monkeypatch.setattr(
+        transfer_learning,
+        "unet_learner",
+        lambda dls, *args, **kwargs: _ModelLearner(dls, transfer_learning.torch.nn.Linear(2, 2)),
+    )
+    monkeypatch.setattr(
+        transfer_learning,
+        "load_learner",
+        lambda *args, **kwargs: _ModelLearner(_FakeDls([]), transfer_learning.torch.nn.Linear(3, 3)),
+    )
+    monkeypatch.setattr(
+        transfer_learning.torch,
+        "load",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("not a checkpoint")),
+    )
+
+    with pytest.raises(RuntimeError, match="copied 0 compatible model parameters"):
+        transfer_learning.load_model_for_transfer_learning(
+            base_model,
+            data_root,
+            batch_size=2,
+            image_size=64,
+            load_encoder_only=False,
+        )
+
+
 def test_transfer_learning_enables_fp16_only_on_cuda(monkeypatch):
     learn = _FakeLearner(_FakeDls([]))
 
@@ -227,6 +346,7 @@ def test_glomeruli_scratch_training_preserves_requested_crop_size(tmp_path, monk
 
     def fake_unet_learner(dls, *args, **kwargs):
         captured["dls"] = dls
+        captured["unet_kwargs"] = kwargs
         return _FakeLearner(dls)
 
     monkeypatch.setattr(train_glomeruli, "get_segmentation_training_batch_size", fake_batch_size)
@@ -246,6 +366,7 @@ def test_glomeruli_scratch_training_preserves_requested_crop_size(tmp_path, monk
     )
 
     assert learn.fit_calls
+    assert captured["unet_kwargs"]["pretrained"] is True
     assert captured["batch_size_call"]["crop_size"] == 96
     assert captured["dls_call"]["crop_size"] == 96
     assert captured["dls_call"]["output_size"] == 64
@@ -254,6 +375,8 @@ def test_glomeruli_scratch_training_preserves_requested_crop_size(tmp_path, monk
     metadata = json.loads(metadata_files[0].read_text())
     assert metadata["invocation"]["crop_size"] == 96
     assert metadata["invocation"]["output_size"] == 64
+    assert metadata["encoder_initialization"] == "imagenet_pretrained_resnet34"
+    assert metadata["candidate_family"] == "no_mitochondria_base"
 
 
 def _make_static_patch_root(root: Path) -> None:

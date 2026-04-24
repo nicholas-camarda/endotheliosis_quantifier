@@ -19,16 +19,21 @@ Supported segmentation training SHALL use data roots that contain full-image `im
 - **THEN** training fails before model construction with an error that identifies the missing full-image training contract
 
 ### Requirement: Curated trainable image-mask roots use the raw-data contract
-When segmentation training consumes paired image/mask files directly, those curated trainable roots SHALL be treated as `raw_data` assets rather than `derived_data` artifacts.
+When segmentation training consumes paired image/mask files directly or through the unified admitted-mask cohort registry, those trainable roots SHALL be treated as `raw_data` assets rather than `derived_data` artifacts.
 
-#### Scenario: Glomeruli curated training root is defined
-- **WHEN** glomeruli full-image pairs are curated for supported training
-- **THEN** the canonical root lives under `raw_data/.../training_pairs` or an equivalent paired-root name
-- **AND** that root contains only trainable paired `images/` and `masks/`
+#### Scenario: Glomeruli all-data training root is defined
+- **WHEN** glomeruli training should use all currently admitted masked rows
+- **THEN** the canonical root is the manifest-backed `raw_data/cohorts` registry root
+- **AND** the loader enumerates admitted `manual_mask` and `masked_external` rows with runtime-local image and mask paths
+
+#### Scenario: Glomeruli project-only paired root is defined
+- **WHEN** glomeruli full-image pairs are curated for a project-only training run
+- **THEN** the supported root lives under `raw_data/...` and contains direct paired `images/` and `masks/`, such as `raw_data/preeclampsia_project/data`
+- **AND** that root contains only trainable paired images and masks
 
 #### Scenario: Raw backup source tree contains unpaired files
 - **WHEN** a raw backup tree such as `clean_backup` contains images without matching masks
-- **THEN** it is treated as source material to curate from, not as the canonical supported training root
+- **THEN** it is treated as source material to curate or localize from, not as the canonical supported training root
 
 #### Scenario: Derived data contract is inspected
 - **WHEN** manifests, audits, caches, metrics, or evaluation artifacts are produced from segmentation training data
@@ -235,7 +240,7 @@ Promoting a glomeruli segmentation model SHALL require a concrete comparison of 
 #### Scenario: Promotion workflow is executed
 - **WHEN** glomeruli promotion is attempted under the supported training contract
 - **THEN** the workflow compares at least two supported candidate families under a shared deterministic validation manifest
-- **AND** the compared families include transfer learning and scratch training unless one family is explicitly unavailable and reported as such
+- **AND** the compared families include mitochondria transfer learning and no-mitochondria-base ImageNet-initialized training unless one family is explicitly unavailable and reported as such
 
 #### Scenario: Promotion workflow control surface is evaluated
 - **WHEN** glomeruli candidate comparison is defined or documented
@@ -246,6 +251,7 @@ Promoting a glomeruli segmentation model SHALL require a concrete comparison of 
 - **WHEN** the canonical glomeruli training CLI is run with `--from-scratch`, `--image-size 256`, and `--crop-size 512`
 - **THEN** the scratch training path SHALL preserve the requested `512` crop size through batch-size sizing, dynamic patching, and exported provenance
 - **AND** it SHALL NOT silently replace the requested crop size with `256`
+- **AND** the exported provenance SHALL identify the candidate as the no-mitochondria-base ImageNet-pretrained ResNet34 baseline rather than a literal all-random initialization baseline
 
 #### Scenario: Promotion decision is recorded
 - **WHEN** candidate comparison completes
