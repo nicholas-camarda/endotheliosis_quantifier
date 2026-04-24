@@ -8,6 +8,7 @@ The current glomeruli segmentation evidence is not rigorous enough to support RE
 - Add reusable non-CLI audit helpers in `src/eq/training/segmentation_validation_audit.py` so tests can inspect data-contract, split-integrity, DataBlock sampling, augmentation, preprocessing, prediction-shape, metric-by-category, and documentation-claim behavior without exposing a new user-facing workflow.
 - Modify candidate-comparison promotion evidence so deterministic review panels are held-out-only and report train/validation/test overlap explicitly before any `promoted` or `insufficient_evidence` decision is allowed.
 - Modify segmentation-training provenance so exported glomeruli artifacts record enough split, sampler, augmentation, crop, preprocessing, and package information to audit whether training and promotion evaluation were statistically separable.
+- Audit mitochondria pretraining provenance because the mitochondria base artifact directly affects the glomeruli transfer candidate, even when the mitochondria model is not used for downstream inference.
 - Add hard failure behavior for biased promotion evidence: train/evaluation overlap, missing split provenance, foreground-heavy-only panels, all-foreground-like overcoverage, background false positives, or documentation claims that cite non-held-out evidence make a report not promotion-eligible for front-page claims.
 - Separate runtime availability from promotion eligibility so the current scratch and transfer artifacts can remain available research-use candidates even when they do not support scientific promotion or README-facing performance claims.
 - Keep `p2-add-negative-glomeruli-crop-supervision` separate: curated negative-crop supervision remains a related but distinct data-enrichment change, while this change hardens the validation and audit contract around whatever supervised data currently exists.
@@ -23,8 +24,8 @@ The current glomeruli segmentation evidence is not rigorous enough to support RE
 
 ## Impact
 
-- Affected CLI/config surfaces: no new user-facing CLI or YAML config; existing `configs/glomeruli_candidate_comparison.yaml` and `eq.training.compare_glomeruli_candidates` behavior may be hardened.
-- Affected modules: `src/eq/data_management/datablock_loader.py`, `src/eq/training/train_glomeruli.py`, `src/eq/training/transfer_learning.py`, `src/eq/training/compare_glomeruli_candidates.py`, `src/eq/training/promotion_gates.py`, and `src/eq/training/segmentation_validation_audit.py`.
+- Affected CLI/config surfaces: no new user-facing CLI or YAML config; current relevant surfaces include `configs/segmentation_fixedloader_full_retrain.yaml`, `configs/glomeruli_finetuning_config.yaml`, and `eq.training.compare_glomeruli_candidates`.
+- Affected modules: `src/eq/data_management/datablock_loader.py`, `src/eq/training/train_mitochondria.py`, `src/eq/training/train_glomeruli.py`, `src/eq/training/transfer_learning.py`, `src/eq/training/compare_glomeruli_candidates.py`, `src/eq/training/promotion_gates.py`, and `src/eq/training/segmentation_validation_audit.py`.
 - Affected tests: new or updated tests for split-overlap detection, deterministic manifest source restriction, DataBlock crop-distribution audit, augmentation alignment, preprocessing parity, prediction-shape gates, report schema generation, README/docs claim gating, and optional local runtime artifact checks.
 - Affected artifacts: model sidecar metadata, split manifests, promotion reports, review panels, pytest-generated audit reports under test temp directories, `candidate_summary.csv`, `candidate_predictions.csv`, and docs that summarize current segmentation performance.
 
@@ -37,6 +38,7 @@ The current glomeruli segmentation evidence is not rigorous enough to support RE
 - Pytest-generated audit reports are written under pytest-managed temporary directories, not under a stable runtime output root, unless candidate comparison itself is producing promotion artifacts.
 - Candidate-comparison promotion reports remain the user-facing artifact surface for actual model evidence.
 - Promotion-facing README or onboarding claims must cite only held-out promotion evidence that clears the hardened gates; compatibility-only, research-use-only, partly in-sample, not-promotion-eligible, or audit-failed reports may be discussed only as limitations or internal evidence.
+- Mitochondria base artifacts are audited as transfer-learning inputs. If the physical mitochondria `testing/` split is included in base-model training, mitochondria held-out performance claims become ineligible, but the base may still be eligible as representation pretraining for glomeruli transfer if the glomeruli promotion evidence is held out and audit-passing.
 
 ## Open Questions
 

@@ -32,6 +32,44 @@ The validation audit SHALL reconstruct the concrete image/mask rows, cohort lane
 - **THEN** the audit SHALL enumerate the `images/` and `masks/` contract directly
 - **AND** it SHALL fail closed if unpaired images or masks are present
 
+### Requirement: Validation audit reproduces current poor-performance panels
+The validation audit SHALL reproduce the current poor-performance evidence before classifying model quality or recommending retraining.
+
+#### Scenario: Current visual panels are audited
+- **WHEN** mitochondria, glomeruli transfer, or glomeruli no-base/scratch validation panels are used as evidence of poor performance
+- **THEN** the audit SHALL reconstruct the source artifact path, source image path, source mask path, crop box, resize policy, threshold, prediction tensor shape, prediction resize-back method, and overlay-generation path for each displayed example
+- **AND** it SHALL write `failure_reproduction_audit.csv` or an equivalent structured payload with one row per displayed example
+
+#### Scenario: Panel cannot be reproduced
+- **WHEN** a displayed poor-performance panel cannot be traced back to its model artifact, image, mask, crop, and preprocessing path
+- **THEN** the audit SHALL classify the panel evidence as `audit_missing`
+- **AND** it SHALL NOT allow the panel to justify retraining or documentation claims until the traceability gap is resolved
+
+#### Scenario: Reproduction reveals an implementation defect
+- **WHEN** reproduction shows image/mask pairing, transform alignment, mask binarization, class-channel, threshold, resize, or overlay-generation defects
+- **THEN** the audit SHALL classify the root cause accordingly
+- **AND** candidate retraining SHALL NOT be accepted as remediation until the implementation defect is fixed and the panel is regenerated
+
+### Requirement: Validation audit inspects mitochondria transfer-base provenance
+The validation audit SHALL inspect mitochondria base artifacts when they initialize a glomeruli transfer candidate.
+
+#### Scenario: Transfer candidate references a mitochondria base
+- **WHEN** a glomeruli transfer candidate is audited
+- **THEN** the audit SHALL read the referenced mitochondria base sidecar
+- **AND** it SHALL report the base artifact path, `mitochondria_training_scope`, `mitochondria_inference_claim_status`, physical training/testing counts, actual fitted image/mask counts, resize/preprocessing policy, and training command
+
+#### Scenario: Mitochondria testing data were included in base training
+- **WHEN** the mitochondria base reports `mitochondria_training_scope=all_available_pretraining`
+- **THEN** the audit SHALL allow the base for representation transfer
+- **AND** it SHALL block mitochondria held-out performance claims from that artifact
+- **AND** it SHALL keep glomeruli promotion eligibility dependent on held-out glomeruli validation rather than mitochondria validation
+
+#### Scenario: Mitochondria held-out claims are made
+- **WHEN** a report, README section, or model sidecar claims mitochondria held-out performance
+- **THEN** the audit SHALL require `mitochondria_training_scope=heldout_test_preserved`
+- **AND** it SHALL require that the physical `raw_data/mitochondria_data/testing` root was excluded from fitting
+- **AND** it SHALL mark the claim `not_promotion_eligible` if testing examples were included in training
+
 ### Requirement: Validation audit checks split integrity
 The validation audit SHALL determine whether deterministic promotion evidence is statistically separated from training evidence.
 
@@ -79,6 +117,41 @@ The validation audit SHALL verify that training and deterministic evaluation use
 - **THEN** the audit SHALL record whether evaluation uses learner-consistent preprocessing and threshold semantics
 - **AND** it SHALL mark promotion-facing claims not eligible if evaluation uses a bespoke transform path that cannot be justified against the learner's training preprocessing
 
+### Requirement: Validation audit treats resize policy as a promotion sensitivity
+The validation audit SHALL evaluate crop-to-network resizing as a methodological sensitivity rather than assuming the configured resize policy improves model performance.
+
+#### Scenario: Resize policy is recorded
+- **WHEN** glomeruli training or deterministic candidate evaluation is audited
+- **THEN** the audit SHALL record source image size, source mask size, `crop_size`, `output_size`, crop-to-output resize ratio, aspect-ratio policy, resize method, image interpolation, mask interpolation, mask binarization after resize, prediction resize-back method, and whether predictions were thresholded before or after resize-back
+- **AND** those fields SHALL be available in the structured audit payload used by pytest and candidate-comparison reports
+- **AND** those fields SHALL be summarized by split, cohort ID, lane assignment when available, and deterministic review category
+
+#### Scenario: Resize policy differs between training and evaluation
+- **WHEN** deterministic evaluation uses crop, resize, interpolation, mask-binarization, threshold, or prediction resize-back semantics that differ from candidate training provenance
+- **THEN** the audit SHALL mark promotion-facing evidence as `not_promotion_eligible`
+- **AND** the report SHALL identify the mismatch as a resize-policy failure rather than a generic preprocessing warning
+
+#### Scenario: Source-resolution distributions differ across evidence splits
+- **WHEN** train, validation, or deterministic promotion examples have materially different source image dimensions, source mask dimensions, crop-to-output resize ratios, or physical-resolution metadata when available
+- **THEN** the audit SHALL mark promotion-facing evidence as `insufficient_evidence_for_promotion`
+- **AND** the report SHALL identify the affected split, cohort ID, lane assignment, or review category rather than pooling the metric silently
+
+#### Scenario: Current downsampling policy is promotion-facing
+- **WHEN** a glomeruli candidate trained with the current `crop_size=512` and `output_size=256` policy is proposed for promotion or README-facing performance claims
+- **THEN** the audit SHALL compare held-out metrics, prediction-shape summaries, resize-ratio distributions, and threshold/resize ordering against a no-downsample or less-downsample sensitivity when local memory and supported hardware permit
+- **AND** if the sensitivity cannot be run, the report SHALL record `resize_benefit_unproven`
+- **AND** the claim SHALL NOT state or imply that `512 -> 256` resizing improves performance unless the held-out sensitivity supports that conclusion
+
+#### Scenario: Resize corrupts binary mask semantics
+- **WHEN** image/mask transform fixtures show that mask resizing produces non-binary labels, changes foreground area beyond declared tolerance for simple shapes, or misaligns mask geometry from image geometry
+- **THEN** the audit SHALL fail the transform/preprocessing contract
+- **AND** candidate promotion SHALL be blocked until the resize and mask-binarization path is corrected or explicitly revalidated
+
+#### Scenario: Resize changes foreground burden
+- **WHEN** downsampling or resize-back materially changes truth foreground fraction, prediction foreground fraction, boundary thickness, or background-crop false-positive burden
+- **THEN** `resize_policy_audit.csv` or equivalent structured fields SHALL report the direction and size of the change by candidate family and review category
+- **AND** candidate promotion SHALL fail when the favorable aggregate metric depends on a resize-induced overcoverage or background false-positive artifact
+
 ### Requirement: Validation audit uses Research Partner review lanes
 The validation audit SHALL organize conclusions into implementation, statistical, scientific, robustness, and documentation-consistency lanes.
 
@@ -91,6 +164,24 @@ The validation audit SHALL organize conclusions into implementation, statistical
 - **WHEN** a report or README claim is audited
 - **THEN** the audit SHALL classify the claim as descriptive, predictive/prognostic, associational, causal, or external-validity related
 - **AND** it SHALL block unsupported causal or external-validity language for internal segmentation panels
+
+### Requirement: Validation audit classifies poor-performance root causes before remediation
+The validation audit SHALL classify why candidate performance is poor before the implementation treats retraining or new supervision as the solution.
+
+#### Scenario: Poor performance is detected
+- **WHEN** aggregate metrics, category metrics, prediction-shape gates, or visual panels show poor mitochondria or glomeruli segmentation performance
+- **THEN** the audit SHALL assign one or more root-cause classes from `image_mask_pairing_error`, `transform_alignment_error`, `mask_binarization_error`, `class_channel_or_threshold_error`, `resize_policy_artifact`, `split_or_panel_bias`, `training_signal_insufficient`, `mitochondria_base_defect`, `negative_background_supervision_missing`, or `true_model_underfit`
+- **AND** it SHALL record the evidence supporting each class
+
+#### Scenario: Root cause implies a code or evaluation defect
+- **WHEN** the root cause is pairing, transform, binarization, class-channel, threshold, resize, split, or panel-generation related
+- **THEN** the remediation SHALL be code/evaluation correction followed by reevaluation
+- **AND** fresh training SHALL NOT be considered a valid fix until the defect is corrected
+
+#### Scenario: Root cause implies insufficient supervision
+- **WHEN** the root cause is `negative_background_supervision_missing` or `training_signal_insufficient`
+- **THEN** the report SHALL identify whether `p2-add-negative-glomeruli-crop-supervision` is the required remediation path
+- **AND** it SHALL keep current artifacts available only as research-use candidates until the supervision gap is addressed and reevaluated
 
 ### Requirement: Documentation claims are gated by validation audit evidence
 README and onboarding performance summaries SHALL cite only held-out, audit-passing validation evidence for current segmentation performance tables.

@@ -49,6 +49,25 @@ Candidate comparison reports SHALL expose split-overlap evidence directly in the
 - **THEN** the report SHALL set `promotion_evidence_status=not_promotion_eligible`
 - **AND** it SHALL set a machine-readable flag that prevents README-facing current-performance tables from citing its aggregate Dice, Jaccard, precision, or recall as current model performance
 
+### Requirement: Candidate comparison reports transfer-base provenance
+Candidate comparison reports SHALL expose the mitochondria base provenance used by transfer candidates.
+
+#### Scenario: Transfer candidate is evaluated
+- **WHEN** the transfer candidate is included in candidate comparison
+- **THEN** `promotion_report.json`, `promotion_report.md`, and `promotion_report.html` SHALL report the mitochondria base artifact path, `mitochondria_training_scope`, `mitochondria_inference_claim_status`, physical training/testing counts, actual fitted image/mask counts, and base resize/preprocessing policy
+- **AND** missing transfer-base provenance SHALL set the transfer candidate's `promotion_evidence_status=audit_missing`
+
+#### Scenario: Base used all mitochondria data
+- **WHEN** the transfer base reports `mitochondria_training_scope=all_available_pretraining`
+- **THEN** candidate comparison MAY evaluate glomeruli transfer against scratch
+- **AND** it SHALL NOT cite mitochondria held-out metrics as validation evidence for the base
+- **AND** the final glomeruli decision SHALL depend on glomeruli held-out evidence only
+
+#### Scenario: Base claims held-out mitochondria validation
+- **WHEN** candidate comparison or documentation describes the base as validated on held-out mitochondria data
+- **THEN** the report SHALL require `mitochondria_training_scope=heldout_test_preserved`
+- **AND** it SHALL mark the base claim ineligible if the physical mitochondria testing root was included in fitting
+
 ### Requirement: Candidate comparison gates foreground-heavy and overcoverage failures
 Candidate comparison SHALL include prediction-shape gates that detect broad oversegmentation and excessive foreground burden by review category.
 
@@ -79,6 +98,47 @@ Candidate comparison reports SHALL include per-category and per-cohort/lane metr
 - **WHEN** a candidate performs well on positive and boundary crops but fails background or low-foreground examples
 - **THEN** the promotion report SHALL mark the candidate `promotion_evidence_status=not_promotion_eligible`
 - **AND** it SHALL NOT summarize the candidate as performing well overall without that limitation
+
+### Requirement: Candidate comparison reports resize-policy sensitivity
+Candidate comparison reports SHALL expose whether crop-to-network resizing is helping, hurting, or unproven on held-out deterministic evidence.
+
+#### Scenario: Current resize policy is evaluated
+- **WHEN** candidate comparison evaluates a candidate trained with the current `crop_size=512` and `image_size=256` glomeruli policy
+- **THEN** the report SHALL include the candidate's resize policy fields and prediction resize-back method
+- **AND** `resize_policy_audit.csv` or equivalent structured fields SHALL report source image size, source mask size, crop-to-output resize ratio, held-out metrics, prediction-shape summaries, and threshold/resize ordering by candidate family and review category
+
+#### Scenario: Resolution normalization is imbalanced across splits
+- **WHEN** candidate comparison detects materially different source-resolution or resize-ratio distributions between training, validation, and deterministic promotion examples
+- **THEN** the report SHALL set `promotion_evidence_status=insufficient_evidence_for_promotion`
+- **AND** it SHALL identify the affected cohort ID, lane assignment, split, or review category when available
+
+#### Scenario: Resize sensitivity cannot be run
+- **WHEN** no-downsample or less-downsample comparison is infeasible because of memory, runtime, or missing artifact constraints
+- **THEN** the report SHALL record `resize_benefit_unproven`
+- **AND** promotion-facing documentation SHALL NOT state that the resize policy improves performance
+
+#### Scenario: Resize sensitivity changes the promotion decision
+- **WHEN** the resize sensitivity shows that aggregate performance depends on resize-induced foreground inflation, boundary smoothing, or background false positives
+- **THEN** the candidate SHALL be marked `promotion_evidence_status=not_promotion_eligible`
+- **AND** the report SHALL identify the resize sensitivity as a decision driver
+
+#### Scenario: Threshold and resize ordering changes the decision
+- **WHEN** threshold-before-resize versus resize-before-threshold changes category gates, foreground burden gates, or the final candidate decision
+- **THEN** the candidate SHALL be marked `promotion_evidence_status=not_promotion_eligible`
+- **AND** the report SHALL identify threshold/resize ordering as a decision driver
+
+### Requirement: Candidate comparison reports poor-performance root cause
+Candidate comparison reports SHALL explain poor performance with explicit root-cause classes before recommending remediation.
+
+#### Scenario: Candidate performance is poor
+- **WHEN** a candidate fails aggregate metrics, category-specific metrics, prediction-shape gates, or visual-panel review
+- **THEN** `promotion_report.json`, `promotion_report.md`, and `promotion_report.html` SHALL include the root-cause class, supporting evidence, and next remediation path
+- **AND** the report SHALL distinguish code/evaluation defects from true training or supervision limitations
+
+#### Scenario: Retraining is proposed
+- **WHEN** the report proposes fresh transfer, scratch, or mitochondria-base training as remediation
+- **THEN** it SHALL first show that image/mask pairing, transform alignment, mask binarization, class-channel selection, thresholding, resize policy, split integrity, and panel reproduction checks passed
+- **AND** it SHALL identify the remaining root cause as `true_model_underfit`, `mitochondria_base_defect`, `training_signal_insufficient`, or `negative_background_supervision_missing`
 
 ### Requirement: Candidate comparison is linked to validation audit artifacts
 Candidate comparison SHALL satisfy the pytest-backed validation-audit contract before promotion-facing decisions are accepted.
