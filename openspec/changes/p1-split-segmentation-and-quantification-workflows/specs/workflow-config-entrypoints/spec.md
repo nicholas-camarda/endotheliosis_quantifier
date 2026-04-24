@@ -1,22 +1,28 @@
 ## ADDED Requirements
 
 ### Requirement: Workflow-config families are stage-specific
-The repository SHALL expose separate workflow-config families for glomeruli candidate comparison, external-cohort segmentation transport audit, and downstream endotheliosis quantification. Each workflow config SHALL correspond to exactly one stage with one scientific meaning, and SHALL NOT silently execute a different stage as part of the same run.
+The repository SHALL expose separate workflow-config families for glomeruli candidate comparison, standard external-cohort segmentation transport audit, high-resolution concordance on large-field microscope images, and downstream endotheliosis quantification. Each workflow config SHALL correspond to exactly one stage with one scientific meaning, and SHALL NOT silently execute a different stage as part of the same run.
 
 #### Scenario: Candidate-comparison workflow is executed
-- **WHEN** `eq run-config` executes a config with `workflow: segmentation_candidate_comparison`
+- **WHEN** `eq run-config` executes a config with `workflow: glomeruli_candidate_comparison`
 - **THEN** the run refreshes only the prerequisite manifest or training state needed for candidate comparison, trains or loads the candidate families needed for promotion evidence, and writes promotion artifacts under the segmentation-evaluation and model roots
 - **AND** it SHALL NOT launch external-cohort transport audit, MR concordance grading, or downstream endotheliosis quantification as part of that same workflow
 
 #### Scenario: Transport-audit workflow is executed
-- **WHEN** `eq run-config` executes a config with `workflow: segmentation_transport_audit`
+- **WHEN** `eq run-config` executes a config with `workflow: glomeruli_transport_audit`
 - **THEN** the run evaluates an explicit supported segmentation artifact on the specified cohort or manifest slice, writes evaluation artifacts under `output/segmentation_evaluation/`, and writes any reusable prediction assets under `output/predictions/`
-- **AND** it SHALL NOT train candidate-comparison artifacts or launch ordinal quantification as part of that same workflow
+- **AND** it SHALL NOT train candidate-comparison artifacts, run the high-resolution concordance workflow, or launch ordinal quantification as part of that same workflow
+
+#### Scenario: High-resolution concordance workflow is executed
+- **WHEN** `eq run-config` executes a config with a dedicated high-resolution concordance workflow `workflow: highres_glomeruli_concordance`
+- **THEN** the run accepts explicit large-field image inputs, tiling or preprocessing parameters, and a supported segmentation artifact reference
+- **AND** it writes concordance and transport-evaluation artifacts under `output/segmentation_evaluation/`
+- **AND** it SHALL NOT be treated as a standard transport-audit workflow or as downstream quantification
 
 #### Scenario: Quantification workflow is executed
 - **WHEN** `eq run-config` executes a config with `workflow: endotheliosis_quantification`
 - **THEN** the run executes the contract-first quantification pipeline against explicit accepted ROI or segmentation inputs and writes outputs under `output/quantification_results/`
-- **AND** it SHALL NOT retrain segmentation candidates or run cohort-transport audit as an implicit side effect
+- **AND** it SHALL NOT retrain segmentation candidates, run cohort-transport audit, or run the high-resolution concordance workflow as an implicit side effect
 
 ### Requirement: Workflow handoffs are explicit and fail closed
 Downstream workflow configs SHALL consume explicit upstream artifact references and SHALL fail closed when those references are missing, unsupported, or scientifically blocked. The repository SHALL NOT auto-discover a latest artifact, retrain a missing segmentation model, or silently skip a required gate in order to complete a downstream run.
@@ -42,3 +48,4 @@ The repository SHALL retire mixed-purpose workflow names that obscure stage boun
 - **WHEN** the committed repository workflow configs are inspected after this change
 - **THEN** they use stage-specific names that describe candidate comparison, transport audit, or quantification directly
 - **AND** the repository does not present `fixedloader_full` as a supported current workflow name
+- **AND** the committed exact workflow IDs are `glomeruli_candidate_comparison`, `glomeruli_transport_audit`, `highres_glomeruli_concordance`, and `endotheliosis_quantification`

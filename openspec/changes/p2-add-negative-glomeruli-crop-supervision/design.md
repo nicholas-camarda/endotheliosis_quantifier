@@ -19,7 +19,7 @@ That means the repo is currently missing a clean way to say "this crop is a true
 - Treat pseudo-negative unlabeled MR/TIFF crops as scientifically equivalent to annotated negatives.
 - Require full segmentation masks for the larger MR/TIFF source images.
 
-## Decisions
+## Explicit Decisions
 
 1. **Negative glomeruli crops from unmasked source images require explicit annotation.**
    - Rationale: without a mask, box annotation, or reliable source-to-mask mapping, the repo cannot defensibly claim that a crop contains no glomerulus.

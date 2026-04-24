@@ -14,4 +14,4 @@
 
 - [ ] 3.1 Add or update specs so unlabeled large-image crops are never treated as supported true negatives.
 - [ ] 3.2 Document the crop-level, not whole-image, interpretation of curated negative supervision.
-- [ ] 3.3 Run `env OPENSPEC_TELEMETRY=0 openspec validate add-negative-glomeruli-crop-supervision --strict`.
+- [ ] 3.3 Run `env OPENSPEC_TELEMETRY=0 openspec validate p2-add-negative-glomeruli-crop-supervision --strict`.

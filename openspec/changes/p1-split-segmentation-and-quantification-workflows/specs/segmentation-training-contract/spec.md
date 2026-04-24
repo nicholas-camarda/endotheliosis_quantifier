@@ -10,7 +10,7 @@ Promoting a glomeruli segmentation model SHALL require a concrete comparison of 
 
 #### Scenario: Promotion workflow control surface is evaluated
 - **WHEN** glomeruli candidate comparison is defined or documented
-- **THEN** the supported top-level control surface is a dedicated candidate-comparison workflow config executed through `eq run-config`
+- **THEN** the supported top-level control surface is the dedicated candidate-comparison workflow config `configs/glomeruli_candidate_comparison.yaml` executed through `eq run-config`
 - **AND** stale mixed workflow names such as `segmentation_fixedloader_full_retrain` and `fixedloader_full` are retired if they conflict with the supported training contract
 - **AND** the underlying training-module commands remain recorded in provenance rather than serving as competing orchestration contracts
 

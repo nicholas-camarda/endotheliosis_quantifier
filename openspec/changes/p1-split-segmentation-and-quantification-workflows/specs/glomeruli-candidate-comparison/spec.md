@@ -5,7 +5,7 @@ The repository SHALL treat a dedicated candidate-comparison workflow config run 
 
 #### Scenario: Candidate comparison is configured
 - **WHEN** transfer and no-mitochondria-base candidate runs are defined for promotion comparison
-- **THEN** the authoritative recipe is expressed through a dedicated workflow config with `workflow: segmentation_candidate_comparison`
+- **THEN** the authoritative recipe is expressed through the dedicated workflow config `configs/glomeruli_candidate_comparison.yaml` with `workflow: glomeruli_candidate_comparison`
 - **AND** the workflow provenance records the exact underlying training and comparison commands that were launched
 
 #### Scenario: Candidate comparison output location is not supplied
