@@ -106,7 +106,7 @@ reproducibility:
 logging:
   level: "INFO"
   save_plots: true
-  plot_dir: "output/segmentation_results/mitochondria_training/plots"
+  plot_dir: "models/segmentation/mitochondria/<run_id>"
 
 next_step:
   description: "Use the exported mitochondria .pkl as the explicit base model for glomeruli transfer."

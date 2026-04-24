@@ -115,18 +115,32 @@ def get_runtime_mitochondria_data_path(runtime_root: Union[str, Path, None] = No
     return get_runtime_raw_data_path(runtime_root) / "mitochondria_data"
 
 
-def get_runtime_segmentation_results_root(runtime_root: Union[str, Path, None] = None) -> Path:
-    """Return the runtime segmentation-result root."""
+def get_runtime_segmentation_evaluation_root(runtime_root: Union[str, Path, None] = None) -> Path:
+    """Return the runtime segmentation-evaluation root."""
     if runtime_root is None:
-        return get_runtime_output_path() / "segmentation_results"
-    return _runtime_root_or_active(runtime_root) / "output" / "segmentation_results"
+        return get_runtime_output_path() / "segmentation_evaluation"
+    return _runtime_root_or_active(runtime_root) / "output" / "segmentation_evaluation"
 
 
-def get_runtime_segmentation_result_path(
+def get_runtime_segmentation_evaluation_path(
     result_name: str, runtime_root: Union[str, Path, None] = None
 ) -> Path:
-    """Return a segmentation-result directory."""
-    return get_runtime_segmentation_results_root(runtime_root) / str(result_name)
+    """Return a segmentation-evaluation directory."""
+    return get_runtime_segmentation_evaluation_root(runtime_root) / str(result_name)
+
+
+def get_runtime_predictions_root(runtime_root: Union[str, Path, None] = None) -> Path:
+    """Return the runtime model-prediction root."""
+    if runtime_root is None:
+        return get_runtime_output_path() / "predictions"
+    return _runtime_root_or_active(runtime_root) / "output" / "predictions"
+
+
+def get_runtime_prediction_path(
+    task_name: str, runtime_root: Union[str, Path, None] = None
+) -> Path:
+    """Return a task-specific model-prediction directory."""
+    return get_runtime_predictions_root(runtime_root) / str(task_name)
 
 
 def get_runtime_quantification_results_root(runtime_root: Union[str, Path, None] = None) -> Path:

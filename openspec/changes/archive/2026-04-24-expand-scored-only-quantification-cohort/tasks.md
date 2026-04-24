@@ -7,7 +7,7 @@
 - [x] 1.1 Add a scored-only cohort inventory utility that records runtime-local asset paths, filename and sample-ID join fields, treatment groups, score coverage, and unmapped or foreign rows.
 - [x] 1.2 Add a CLI entrypoint or subcommand that writes deterministic cohort inventories and the unified `raw_data/cohorts/manifest.csv` under the active runtime root without mutating raw source data in place and without moving source assets out of their original locations.
 - [x] 1.3 Add tests that verify mixed-export cohorts are reported with explicit unmapped or foreign rows rather than silently merged.
-- [x] 1.4 Inventory and register the user's currently relevant accessible scored quantification cohorts, including the existing masked-core cohort and the currently identified VEGFRi Dox and VEGFRi MR cohorts.
+- [x] 1.4 Inventory and register the user's currently relevant accessible scored quantification cohorts, including the existing Lauren preeclampsia cohort and the currently identified VEGFRi Dox and VEGFRi MR cohorts.
 - [x] 1.5 Keep Lucchi and other segmentation-install datasets out of the cohort inventory path for this change, with regression coverage so they are not pulled into runtime `raw_data/cohorts/` accidentally.
 - [x] 1.6 Define the authoritative starting source for each current cohort, including latest-export precedence for Dox and workbook-first precedence for MR.
 - [x] 1.7 For Dox, prefer direct authoritative Label Studio mask export when available from the user's setup and fall back to embedded brushlabel recovery otherwise.
@@ -45,7 +45,7 @@
 - [x] 4.5 Add tests that verify recoverable rows remain pending additional discovery after an initial failed join and only become unresolved or excluded after the configured discovery coverage is exhausted.
 - [x] 4.6 For Dox, recover and classify brushlabel masks separately from image-level score choices and foreign mixed rows.
 - [x] 4.6 For Dox, recover and classify brushlabel masks separately from image-level score choices and foreign mixed rows, and partition reconciled Dox rows into masked-external versus scored-only lanes.
-- [x] 4.11 Add a mask-quality gate for recovered masked external rows so verified masked Dox rows can be admitted into segmentation improvement only after explicit quality review.
+- [x] 4.11 Record Dox recovered-mask provenance while treating verified Dox masks as first-class manual-mask glomeruli training labels.
 - [x] 4.7 For MR, implement and test the within-image replicate-to-median reduction with explicit provenance fields in the manifest.
 - [x] 4.8 For MR, preserve the raw within-image replicate vector in a sidecar ingest artifact and test that the canonical manifest row remains image-level.
 - [x] 4.9 Require and test the full admission-check bundle: uniqueness, single image path, single score assignment, no conflicting duplicates, required locator fields, readable assets, file hashes, and sampled manual mapping review.
@@ -67,12 +67,12 @@
 - [x] 6.4 Add MR-specific transport-audit coverage for giant TIFF preprocessing or tiling so the cohort cannot be admitted through a Dox-scale inference path by accident.
 - [x] 6.5 Add MR-specific gating so `vegfri_mr` is held out from training admission in phase 1 even if harmonization and transport audit succeed.
 - [x] 6.6 Make `vegfri_dox` the first scored-only training-expansion candidate once it clears the full admission bundle.
-- [x] 6.7 Make verified masked `vegfri_dox` rows the first external masked cohort eligible for segmentation evaluation and, if approved, segmentation training augmentation once they clear mask-quality and verification gates.
+- [x] 6.7 Make verified masked `vegfri_dox` rows co-equal with Lauren manual-mask rows for glomeruli segmentation training once harmonization and verification pass.
 
 ## 7. Predicted-ROI Grading Inputs
 
 - [x] 7.1 Add a predicted-ROI grading dataset builder for admitted scored-only cohorts that preserves image, score, harmonization-manifest, mapping-verification artifact, cohort-manifest, and segmentation provenance.
-- [x] 7.2 Keep predicted-ROI grading artifacts separate from canonical masked-core artifacts in file outputs and provenance fields.
+- [x] 7.2 Keep predicted-ROI grading artifacts separate from canonical manual-mask artifacts in file outputs and provenance fields.
 - [x] 7.3 Add tests that ensure excluded cohorts are omitted from grading dataset builds and admitted cohorts are marked as predicted-ROI inputs rather than manual-mask supervision.
 - [x] 7.4 Add an MR concordance workflow that aggregates inferred glomerulus grades to an image-level median and compares that inferred median against the human image-level median from the workbook.
 - [x] 7.5 Add tests that confirm MR phase 1 outputs are concordance/evaluation artifacts and not training-set expansion artifacts.
@@ -82,8 +82,8 @@
 
 ## 8. Regression And Validation
 
-- [x] 8.1 Add regression tests covering `src/eq/quantification/dataset.py`, `src/eq/quantification/pipeline.py`, any new CLI surface, and any touched ROI / grading builders so scored-only changes do not break the existing masked-core path.
-- [x] 8.1 Add regression tests covering `src/eq/quantification/dataset.py`, `src/eq/quantification/pipeline.py`, any new CLI surface, and any touched ROI / grading builders so external-cohort changes do not break the existing masked-core path.
+- [x] 8.1 Add regression tests covering `src/eq/quantification/dataset.py`, `src/eq/quantification/pipeline.py`, any new CLI surface, and any touched ROI / grading builders so scored-only changes do not break the existing Lauren manual-mask path.
+- [x] 8.1 Add regression tests covering `src/eq/quantification/dataset.py`, `src/eq/quantification/pipeline.py`, any new CLI surface, and any touched ROI / grading builders so external-cohort changes do not break the existing Lauren manual-mask path.
 - [x] 8.2 Run targeted validation for the changed CLI, manifest generation, harmonization, verification, localized dataset-building, and regression paths plus relevant unit tests.
 - [x] 8.3 Run `openspec validate expand-scored-only-quantification-cohort --strict` and resolve any remaining artifact issues.
 - [x] 8.4 Refactor the shared repo path helpers to resolve the active runtime root, unified cohort manifest, cohort input tree, segmentation result tree, and quantification result tree consistently across the repository, with regression coverage.
@@ -91,7 +91,7 @@
 ## 9. Documentation
 
 - [x] 9.1 Update user-facing documentation to describe the flat cohort layout, the scored-only manifest contract, harmonization rules, mapping-verification requirements, and admission limits in current-state terms.
-- [x] 9.2 Update any CLI help text or workflow docs touched by the new cohort-admission surfaces so runtime `raw_data/cohorts/manifest.csv`, runtime `raw_data/cohorts/<cohort_id>/`, runtime `output/segmentation_results/...`, runtime `output/quantification_results/...`, and failure states are obvious.
+- [x] 9.2 Update any CLI help text or workflow docs touched by the new cohort-admission surfaces so runtime `raw_data/cohorts/manifest.csv`, runtime `raw_data/cohorts/<cohort_id>/`, runtime `output/segmentation_evaluation/...`, runtime `output/predictions/...`, runtime `output/quantification_results/...`, and failure states are obvious.
 - [x] 9.3 Document which of the user's current cohorts were populated under the new layout, which remain unresolved or excluded, and why.
 - [x] 9.4 Document the iterative discovery policy so unresolved or excluded rows are clearly understood as "searched and still not recoverable" rather than "failed one pass."
 - [x] 9.5 Document that PhD / cloud roots remain untouched provenance sources while `raw_data/cohorts/<cohort_id>/` becomes the localized working dataset future users should operate from, with cohort assets copied rather than moved into runtime and with `raw_data/cohorts/manifest.csv` treated as the runtime-local canonical table.

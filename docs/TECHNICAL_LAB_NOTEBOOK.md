@@ -125,6 +125,28 @@ $EQ_RUNTIME_ROOT/raw_data/mitochondria_data/
 
 The `training/` root is the training input; the dynamic dataloader creates the train/validation split internally. The `testing/` root is held out for explicit evaluation.
 
+## Local Cohort Manifest Snapshot
+
+This section records the current local lab data state for this checkout. It is intentionally specific to the active runtime data and should be read as a lab notebook snapshot, not as a generic public dataset requirement.
+
+The scored cohort manifest lives at:
+
+```text
+$EQ_RUNTIME_ROOT/raw_data/cohorts/manifest.csv
+```
+
+The current local manifest state is:
+
+- `lauren_preeclampsia`: 88 current preeclampsia image/mask rows are localized as `manual_mask_core` and `admitted`.
+- `vegfri_dox`: 864 Label Studio export rows are represented. The 626 decoded brushlabel image/mask rows include 619 accepted `manual_mask_external` rows used as first-class glomeruli training labels and 7 `unresolved` missing-score rows. The remaining scored-only rows include 228 `foreign` mixed-export rows and 10 unresolved rows without decoded runtime images.
+- `vegfri_mr`: 127 workbook image-level rows are represented from the external-drive whole-field TIFF batches. The 126 rows with localized TIFFs are `evaluation_only`; workbook row `8570-5` is unresolved because no matching TIFF was found in the discovered image root. Phase 1 use is concordance/evaluation only.
+
+The Dox runtime surface contains copied images, copied recovered brushlabel masks, copied score exports, and `metadata/decoded_brushlabel_masks.csv` under `raw_data/cohorts/vegfri_dox/`. Dox and Lauren admitted manual-mask rows are co-equal inputs when training from the manifest-backed `raw_data/cohorts` root.
+
+MR is handled as a whole-field TIFF cohort. Manifest rows are image-level, workbook replicates are reduced to a human image-level median, raw replicate vectors are preserved in sidecar ingest artifacts, external-drive source provenance is recorded under `raw_data/cohorts/vegfri_mr/metadata/`, segmentation evaluation belongs under `output/segmentation_evaluation/`, model-generated masks belong under `output/predictions/`, and grading outputs belong under `output/quantification_results/vegfri_mr/`.
+
+MR phase 1 inference has an explicit contract: whole-field TIFF tiling, glomerulus segmentation, component-area filtering, accepted ROI extraction, ROI grading, image-level median aggregation, and human-versus-inferred concordance. Rows with zero accepted inferred ROIs are non-evaluable, not silently admitted.
+
 ## Data Preparation Workflow
 
 ### Raw Data Validation
@@ -365,13 +387,11 @@ For all-data glomeruli training, use the manifest-backed `raw_data/cohorts` regi
 
 Important nuance:
 
-- the README example above is the recommended workflow documentation
+- the README YAML-first workflow is the recommended workflow documentation
 - the `train_glomeruli.py` module resolves a machine-aware default batch size and currently starts at `12` on the powerful Apple Silicon MPS machine class when using `512x512` crops
-- the canonical control surface is the dedicated training module CLI with explicit `--base-model` or `--from-scratch`
+- `eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml` is the normal candidate-comparison control surface
 - transfer training with `--base-model` must load that artifact and copy compatible weights; `--from-scratch` means no mitochondria/base artifact and currently uses an ImageNet-pretrained ResNet34 encoder
-- `configs/glomeruli_finetuning_config.yaml` is an optional overlay and engineering reference, not the authoritative promotion-workflow contract
-
-So the notebook should describe the explicit CLI path as canonical and treat YAML only as optional overlay material.
+- the direct training module CLI remains useful for targeted runs outside the full YAML workflow
 
 ### Dynamic Patching
 
@@ -478,7 +498,7 @@ eq metadata-process \
 
 ### What Exists
 
-The current `master` branch now contains a maintained baseline quantification path under [`src/eq/quantification/pipeline.py`](../src/eq/quantification/pipeline.py) plus supporting contract and score-recovery utilities.
+The current `master` branch contains a maintained baseline quantification path under [`src/eq/quantification/pipeline.py`](../src/eq/quantification/pipeline.py) plus supporting contract and score-recovery utilities.
 
 What exists today:
 
@@ -490,7 +510,7 @@ What exists today:
 - grouped ordinal image-level endotheliosis prediction
 - prediction exports with class probabilities, expected score, top-two margin, and entropy
 - an HTML review artifact with selected example cases
-- the older openness heuristic in [`src/eq/evaluation/quantification_metrics.py`](../src/eq/evaluation/quantification_metrics.py), now best treated as an audit feature rather than the primary learned model
+- the older openness heuristic in [`src/eq/evaluation/quantification_metrics.py`](../src/eq/evaluation/quantification_metrics.py), best treated as an audit feature rather than the primary learned model
 
 ### What Does Not Yet Exist As A Matured Workflow
 

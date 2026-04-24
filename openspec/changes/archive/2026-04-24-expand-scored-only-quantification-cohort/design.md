@@ -3,14 +3,14 @@
 The repository currently has two distinct needs that must not be conflated. First, the active glomeruli change must determine whether the segmenter is scientifically usable under the supported training contract. Second, the active ordinal change must stabilize the grading model before further cohort expansion changes are treated as reliable evidence. External scored kidney-image cohorts already exist in the PhD project roots, especially under the VEGFRi+doxazosin and VEGFRi+MR folders, but those cohorts are not in the active quantification contract because they do not provide segmentation masks in the canonical project layout.
 
 Those external cohorts are still attractive for downstream grading because they contain many scored images across treatment groups. The Dox cohort already contains explicit `vehicle`, `sorafenib`, `sor + dox`, and `sor + lis` groups, while the MR lane contains a populated raw kidney-scoring workbook plus BL6 spironolactone summary outputs. The central constraint is that truly scored-only images cannot be treated as segmentation supervision. However, Dox is no longer purely scored-only here: recovered brushlabel-derived masks now exist in the runtime cohort tree. That means the change must explicitly separate two Dox sublanes:
-- verified masked Dox rows, which can become external masked evidence for segmentation improvement/evaluation if their recovered masks are good enough
+- verified masked Dox rows, which are first-class manual-mask glomeruli training labels alongside Lauren rows
 - Dox rows without verified masks, which remain predicted-ROI grading candidates only
 
 MR remains different. It should not enter training in phase 1. Its first use should be external concordance: run inference on the giant TIFF images, aggregate inferred glomerulus grades to an image-level median, and compare that inferred median against the human image-level median derived from the workbook.
 
 MR now needs to be treated as a materially different acquisition regime, not as a minor variant of Dox. On the external image drive, the Dox image folders contain many `2448 x 2048` RGB JPGs per sample folder, while the MR kidney image batches contain giant whole-field RGB TIFFs around `25,000 x 9,000` pixels. The raw MR workbook is also image-associated but not image-flat: each sample/image column carries repeated glomerular replicate grades. So MR needs an image-level manifest row contract, an explicit within-image replicate-to-score reduction, preserved raw replicate vectors in sidecar ingest artifacts, and cohort-specific preprocessing or tiling review before segmentation transport can be trusted.
 
-This change therefore needs to define an external cohort-admission contract, not just a scored-only grading change. It should inventory external cohorts, harmonize each one into a single localized cohort-owned directory, register all rows in one unified manifest, partition rows into verified masked versus scored-only sublanes, audit segmentation transport on a cohort slice, admit verified masked rows into segmentation improvement/evaluation when justified, produce predicted-ROI grading inputs for scored-only rows when the audit passes, and preserve explicit exclusion artifacts when any lane fails.
+This change therefore needs to define an external cohort-admission contract, not just a scored-only grading change. It should inventory external cohorts, harmonize each one into a single localized cohort-owned directory, register all rows in one unified manifest, partition rows into verified masked versus scored-only sublanes, audit segmentation transport on a cohort slice, use verified masked rows as first-class manual-mask training labels, produce predicted-ROI grading inputs for scored-only rows when the audit passes, and preserve explicit exclusion artifacts when any lane fails.
 
 For this repository, the change should not stop at defining the contract in the abstract. It should build the cohort-first layout and unified manifest for the currently relevant data holdings the user already has access to, so the runtime ends the change with real cohort directories rather than an unused framework.
 
@@ -29,7 +29,7 @@ There is now direct runtime evidence that Dox brushlabel mask recovery is feasib
 - Make one unified manifest the canonical row-level linking surface for external cohort identity, provenance, score linkage, asset paths, mask availability, admission state, and downstream use.
 - Keep the unified `manifest.csv` practical to author or repair by hand by separating minimal required input columns from pipeline-generated enrichment and state columns.
 - Make `harmonized_id` a cohort-scoped runtime key derived from the minimal uniqueness-preserving discriminator set, rather than a direct copy of any one source field.
-- Define one cohort-first runtime input layout that keeps localized cohort-owned inputs and manifest state under the active runtime root's `raw_data/cohorts/<cohort_id>/`, with rebuildable run outputs split by result family under `output/segmentation_results/` and `output/quantification_results/`.
+- Define one cohort-first runtime input layout that keeps localized cohort-owned inputs and manifest state under the active runtime root's `raw_data/cohorts/<cohort_id>/`, with segmentation evaluation under `output/segmentation_evaluation/`, model-generated masks under `output/predictions/`, and grading artifacts under `output/quantification_results/`.
 - Materialize that layout and manifest contract for the currently relevant accessible cohorts instead of leaving cohort population as future manual work.
 - Preserve PhD / cloud sources in place and avoid treating this change as an in-place source migration.
 - Build localized cohort-owned runtime assets as a required part of cohort consolidation so the runtime dataset is self-contained for future use.
@@ -37,7 +37,7 @@ There is now direct runtime evidence that Dox brushlabel mask recovery is feasib
 - Require the full admission-check set for admitted rows, including asset readability, file hashing, and sampled manual review rather than join logic alone.
 - Require iterative discovery passes over the accessible source files, workbooks, metadata logs, and naming clues before declaring a row or cohort unresolved or excluded.
 - Require cohort-specific segmentation transport evidence before scored-only images are converted into predicted-ROI grading inputs.
-- Require a separate mask-quality and contract check before recovered masked external rows are treated as segmentation-improvement evidence.
+- Treat verified Dox recovered masks as first-class manual-mask glomeruli training labels equivalent in stature to Lauren masks.
 - Require MR-specific transport evidence that explicitly handles giant whole-field TIFF preprocessing or tiling rather than assuming the Dox-scale image path generalizes.
 - Restrict MR phase 1 use to inference/concordance artifacts rather than training-set expansion.
 - Make Dox the first scored-only cohort eligible for training-set expansion once it passes harmonization, verification, mask recovery, and transport gates.
@@ -45,7 +45,7 @@ There is now direct runtime evidence that Dox brushlabel mask recovery is feasib
 - Refactor shared repo path helpers rather than introducing cohort-specific path exceptions.
 - Produce one explicit dataset-wide manifest that records provenance, admission status, treatment-group membership, and `cohort_id` for every row.
 - Define predicted-ROI grading artifacts that remain distinct from canonical manual-mask quantification artifacts.
-- Prevent scored-only rows from being silently treated as segmentation labels, and prevent recovered masked rows from being silently treated as contract-equivalent to the current masked-core cohort before explicit admission.
+- Prevent scored-only rows from being silently treated as segmentation labels while treating verified Lauren and Dox manual-mask rows as co-equal glomeruli training labels.
 
 **Non-Goals:**
 - Improving the glomeruli segmenter itself in this change.
@@ -114,10 +114,10 @@ There is now direct runtime evidence that Dox brushlabel mask recovery is feasib
      - one score row plus multiple plausible images: unresolved unless later evidence resolves it
      - same Dox task across multiple dated exports: latest export wins; older exports only recover missing fields
 
-6f. **Use recovered masked Dox rows to improve segmentation only after explicit mask-quality admission.**
-   - Rationale: now that Dox brushlabels have been decoded into real runtime masks, those rows can provide external segmentation evidence. But recovered brushlabel masks are not automatically equivalent to the canonical masked-core contract. They need explicit quality screening, harmonization, and provenance so segmentation improvement does not quietly ingest weak masks.
+6f. **Use verified Dox masks as co-equal manual-mask glomeruli training labels.**
+   - Rationale: now that Dox brushlabels have been decoded into real runtime masks and accepted, those rows are equivalent in training stature to Lauren manual-mask rows. They need harmonization and provenance, not a separate quality gate.
    - Policy:
-     - verified masked Dox rows can enter segmentation evaluation and, if they clear quality gates, segmentation training augmentation
+     - verified masked Dox rows enter the same manual-mask glomeruli training pool as Lauren rows
      - Dox rows without verified masks remain in the scored-only/predicted-ROI grading lane
      - the manifest must distinguish these lanes explicitly
 
@@ -128,7 +128,7 @@ There is now direct runtime evidence that Dox brushlabel mask recovery is feasib
      - Promote each raw MR replicate to its own manifest row. Rejected because the current data do not support clean replicate-to-subimage localization.
 
 6b. **Use MR as an external concordance cohort before any training admission.**
-   - Rationale: MR differs from masked-core and Dox on both image regime and label structure. Using it for training immediately would blur segmentation transport, grading performance, and within-image aggregation behavior. Phase 1 should therefore ask the narrower question: does the inferred image-level median agree with the human image-level median on giant TIFF images?
+   - Rationale: MR differs from Lauren and Dox on both image regime and label structure. Using it for training immediately would blur segmentation transport, grading performance, and within-image aggregation behavior. Phase 1 should therefore ask the narrower question: does the inferred image-level median agree with the human image-level median on giant TIFF images?
    - Alternatives considered:
      - Admit MR directly into grading training once images and scores are harmonized. Rejected because the cohort is too different and the labels are already image-level aggregates over multiple glomeruli.
      - Exclude MR entirely until a future change. Rejected because MR is still valuable as an external concordance and transport-evaluation surface.
@@ -181,8 +181,8 @@ There is now direct runtime evidence that Dox brushlabel mask recovery is feasib
      - Leave the cohort as a manifest-only view over distributed source paths. Rejected because it preserves the operational complexity the user wants to eliminate.
      - Move source assets into the runtime cohort tree. Rejected because it would alter the original source holdings and break the provenance-preserving contract.
 
-13. **Write model-derived outputs under result-family output roots.**
-   - Rationale: transport audits, prediction panels, candidate comparisons, predicted ROI assets, embeddings, and grader outputs are rebuildable run products and should stay separate from cohort-owned input state. Segmentation evidence belongs under `output/segmentation_results/`; quantification evidence belongs under `output/quantification_results/`.
+13. **Write model-derived outputs under operation-specific output roots.**
+   - Rationale: transport audits, candidate comparisons, model-generated masks, predicted ROI assets, embeddings, and grader outputs are rebuildable run products and should stay separate from cohort-owned input state. Segmentation evaluation belongs under `output/segmentation_evaluation/`, model-generated masks belong under `output/predictions/`, and quantification evidence belongs under `output/quantification_results/`.
    - Alternatives considered:
       - Write model outputs next to the manifest in the data tree. Rejected because it mixes durable dataset state with disposable run artifacts.
 
@@ -235,13 +235,13 @@ There is now direct runtime evidence that Dox brushlabel mask recovery is feasib
 - [Risk] A staged image could still be linked to the wrong score row even after harmonization if workbook IDs, filenames, or treatment logs disagree. → Mitigation: require multiple independent mapping checks, contradiction detection, file-level provenance, and explicit exclusion for any non one-to-one mapping.
 - [Risk] Encoding legacy batch/date collisions into every runtime key would make future cleaner cohorts harder to use. → Mitigation: derive `harmonized_id` from the minimal cohort-specific uniqueness set and keep batch/date as provenance fields unless they are needed for uniqueness.
 - [Risk] The pipeline could mark real recoverable rows unresolved too early because information is spread across multiple source surfaces. → Mitigation: require iterative discovery and reconciliation attempts with logged search coverage before unresolved or excluded status is finalized.
-- [Risk] Predicted ROIs could make the grading model appear to improve while actually learning segmentation artifacts. → Mitigation: persist predicted-ROI provenance, stratify review by treatment group, and keep masked-core evaluation separate from scored-only expansion evaluation.
+- [Risk] Predicted ROIs could make the grading model appear to improve while actually learning segmentation artifacts. → Mitigation: persist predicted-ROI provenance, stratify review by treatment group, and keep manual-mask evaluation separate from scored-only expansion evaluation.
 - [Risk] Heterogeneous filenames and sample metadata could silently join the wrong scores to the wrong images. → Mitigation: require deterministic join reports and explicit row-level exclusion states in the unified manifest rather than permissive fallback joins.
 - [Risk] New scored-only logic could regress Lauren's current preeclampsia quantification path. -> Mitigation: require stage-level regression tests for the existing canonical pipeline and keep scored-only admission surfaces additive rather than replacing core preeclampsia joins.
 - [Risk] The spec could create a second competing runtime layout inside the repo checkout. → Mitigation: anchor the cohort contract to the active runtime root and document that repo-local `data/` is not the operational data home on this machine.
 - [Risk] Users may over-interpret successful pipeline execution as evidence that the expanded grading model is scientifically valid across cohorts. → Mitigation: state external-validity limits directly in admission artifacts and require review outputs to distinguish compatibility from methodological support.
 - [Risk] Old runtime input trees could remain in circulation after the new cohort tree is built. → Mitigation: archive them, document them as retired, and route shared path helpers only to the new active surfaces.
-- [Risk] Recovered Dox brushlabel masks could be treated as segmentation truth before their quality is assessed. -> Mitigation: require explicit mask-quality admission and keep Dox `manual_mask_external` rows separated from both Lauren `manual_mask_core` rows and scored-only Dox rows in the manifest.
+- [Risk] Dox scored-only rows could be silently treated as segmentation truth. -> Mitigation: only admitted Dox rows with verified runtime masks enter the manual-mask training pool; scored-only, foreign, unresolved, and MR rows remain excluded from segmentation supervision.
 - [Risk] Large multi-surface implementation work could drift into inconsistent partial solutions. → Mitigation: allow delegated specialist lanes for fidelity, but require all outputs to collapse back into one canonical manifest/runtime contract and one shared path layer.
 
 ## Concrete Rollout
@@ -257,13 +257,13 @@ There is now direct runtime evidence that Dox brushlabel mask recovery is feasib
    - Use the existing decoded runtime Dox brushlabel surface at `$EQ_RUNTIME_ROOT/raw_data/cohorts/vegfri_dox/` as the current starting point for mask-aware reconciliation, with `metadata/decoded_brushlabel_masks.csv` as the runtime-local recovery ledger.
    - Recover both image-level score choices and `brushlabels` glomerulus masks where present.
    - Partition Dox rows into:
-     - verified `manual_mask_external` rows that can feed segmentation improvement/evaluation once mask quality is accepted
+     - verified `manual_mask_external` rows that feed the same manual-mask glomeruli training pool as Lauren rows
      - scored-only rows that remain predicted-ROI grading candidates
    - Filter out foreign or mixed rows explicitly rather than silently folding them into the Dox cohort.
    - Use batch/date discriminators in `harmonized_id` only where reused IDs make them necessary.
-   - If mask-quality and segmentation gates pass, allow verified masked Dox rows to become the first external segmentation-improvement cohort.
+   - Verified masked Dox rows are first-class manual-mask glomeruli training labels once harmonization and mapping verification pass.
    - If transport passes, allow the remaining scored-only Dox rows to become the first predicted-ROI grading-expansion cohort.
-   - Success for this cohort: a populated manifest with rows classified as masked-scored, scored-only, unresolved, excluded, or foreign, documented counts for each class, a segmentation-improvement lane for verified masked rows only if mask-quality and verification gates pass, and a predicted-ROI lane for scored-only rows only if transport and verification gates pass.
+   - Success for this cohort: a populated manifest with rows classified as masked-scored, scored-only, unresolved, excluded, or foreign, documented counts for each class, a manual-mask training lane for verified masked rows, and a predicted-ROI lane for scored-only rows only if transport and verification gates pass.
 
 3. **`vegfri_mr` cohort**
    - Start from `VEGFRi and MR kidney scoring.xlsx` as the primary score source, using experiment logs and score-result workbooks only as supporting reconciliation surfaces.
@@ -285,12 +285,12 @@ This change is successful only if all of the following are true:
 - Each cohort directory contains the localized working assets needed for future use rather than only a manifest pointing back into scattered source roots.
 - Unified manifest rows for Dox explicitly separate recovered masked rows, recovered scored-only rows, foreign mixed rows, unresolved rows, and excluded rows.
 - The runtime Dox cohort directory is populated with decoded brushlabel-derived mask PNGs and paired copied images under `raw_data/cohorts/vegfri_dox/` rather than leaving mask recovery as a speculative step.
-- Verified Dox `manual_mask_external` rows are eligible for segmentation improvement only after explicit mask-quality admission; they are not silently collapsed into Lauren `manual_mask_core` or scored-only lanes.
+- Verified Dox `manual_mask_external` rows and Lauren `manual_mask_core` rows are co-equal manual-mask glomeruli training labels while retaining cohort identity in `cohort_id`.
 - Unified manifest rows for MR explicitly document the replicate aggregation rule and preserve the runtime linkage fields needed to reproduce each score assignment.
 - Unified manifest rows for MR explicitly use image-level row semantics, while separate ingest artifacts preserve the raw replicate vectors used to compute each image-level score.
 - MR transport review explicitly addresses giant whole-field TIFF preprocessing or tiling rather than assuming Dox-scale inference behavior.
 - MR phase 1 artifacts stop at external concordance and transport evaluation; MR is not silently added to training-set expansion.
-- Dox is the only current external cohort eligible for phase 1 training-set expansion, but in two distinct ways: verified masked rows for segmentation improvement and scored-only rows for predicted-ROI grading expansion, each behind its own gates.
+- Dox contributes verified masked rows to glomeruli training and scored-only rows to predicted-ROI grading expansion only after transport gates.
 - The implementation writes a cohort-level summary of row counts by status so the user can see exactly what was recovered and what was not.
 - Old overlapping runtime quantification-input directories are archived and documented as retired, and the new cohort tree becomes the only supported active input surface.
 - Existing Lauren preeclampsia quantification behavior still passes regression checks and does not start depending on the new cohort workflow implicitly.
@@ -307,12 +307,12 @@ This change is successful only if all of the following are true:
 7. Run iterative discovery and reconciliation passes across the accessible source surfaces until linkage either passes verification or is explicitly documented as still unresolved.
 8. Materialize localized runtime cohort assets so each in-scope cohort has a self-contained working directory under `raw_data/cohorts/<cohort_id>/`.
 9. Run the full high-fidelity mapping-verification bundle and exclude only the rows or cohort slices that still do not pass it after those discovery passes.
-10. Run a segmentation transport audit on a stratified harmonized cohort slice and emit review artifacts under the active runtime root's `output/segmentation_results/<cohort_id>/`.
-11. Admit verified masked external rows into segmentation improvement/evaluation only after mask-quality and verification gates pass, and admit scored-only rows into predicted-ROI grading inputs only after transport and verification gates pass.
+10. Run a segmentation transport audit on a stratified harmonized scored-only cohort slice and emit review artifacts under the active runtime root's `output/segmentation_evaluation/<task>/<run_id>/`.
+11. Use verified masked rows as manual-mask glomeruli training labels after harmonization and verification, and admit scored-only rows into predicted-ROI grading inputs only after transport and verification gates pass.
 12. For MR, generate only inference/concordance artifacts in phase 1 by comparing human image-level median against inferred image-level median on the copied giant TIFF images.
 13. Archive older overlapping runtime quantification-input directories and mark them retired once the new cohort tree is verified.
 14. Refactor shared path helpers so the repo resolves the new active runtime cohort surfaces consistently.
-15. Keep existing masked-core grading artifacts unchanged; add scored-only predicted-ROI artifacts as a separate downstream input family.
+15. Keep existing manual-mask grading artifacts unchanged; add scored-only predicted-ROI artifacts as a separate downstream input family.
 
 ## Open Questions
 

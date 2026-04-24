@@ -10,6 +10,7 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
@@ -34,7 +35,7 @@ from eq.training.promotion_gates import (
     trivial_baseline_metrics,
 )
 from eq.utils.logger import get_logger
-from eq.utils.paths import get_runtime_output_path
+from eq.utils.paths import get_runtime_segmentation_evaluation_path
 from eq.utils.run_io import metadata_path_for_model
 
 
@@ -43,6 +44,11 @@ DEFAULT_EXAMPLES_PER_CATEGORY = 2
 COMPARE_PREDICTION_THRESHOLD = 0.01
 
 logger = get_logger("eq.glomeruli_candidate_comparison")
+
+
+def _generated_run_id(seed: int) -> str:
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    return f"{timestamp}_all_manual_mask_glomeruli_seed{seed}"
 
 
 @dataclass
@@ -648,7 +654,8 @@ def _validation_mask_paths(data_root: Path) -> List[Path]:
 
 def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
     data_root = validate_supported_segmentation_training_root(args.data_dir, stage="glomeruli")
-    output_root = Path(args.output_dir).expanduser()
+    run_id = str(args.run_id or _generated_run_id(args.seed))
+    output_root = Path(args.output_dir).expanduser() / run_id
     output_root.mkdir(parents=True, exist_ok=True)
     candidate_root = output_root / "candidates"
     candidate_root.mkdir(parents=True, exist_ok=True)
@@ -781,6 +788,8 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
     ]
     decision_payload = {
         "decision": decision,
+        "run_id": run_id,
+        "output_dir": str(output_root),
         "manifest_path": str(manifest_path),
         "manifest_audit": manifest_audit,
         "candidate_summaries": candidate_summaries,
@@ -817,12 +826,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-dir",
-        default=str(get_runtime_output_path() / "glomeruli_candidate_comparison"),
+        default=str(get_runtime_segmentation_evaluation_path("glomeruli_candidate_comparison")),
         help=(
-            "Directory for candidate comparison artifacts "
-            "(defaults to the active runtime output root)"
+            "Root directory for candidate-comparison runs "
+            "(the run id is always appended)"
         ),
     )
+    parser.add_argument("--run-id", help="Run directory name to create under --output-dir")
     parser.add_argument("--transfer-base-model", help="Explicit mitochondria base artifact for transfer training")
     parser.add_argument("--transfer-model-path", help="Existing transfer candidate artifact to evaluate instead of training")
     parser.add_argument("--scratch-model-path", help="Existing scratch candidate artifact to evaluate instead of training")

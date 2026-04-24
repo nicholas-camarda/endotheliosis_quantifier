@@ -107,7 +107,7 @@ def _load_build_current_accessible_cohorts():
 
 
 def _load_build_dox_mask_quality_audit():
-    """Import Dox mask-quality audit helpers lazily."""
+    """Import optional Dox mask-provenance helpers lazily."""
     from eq.quantification import build_dox_mask_quality_audit
 
     return build_dox_mask_quality_audit
@@ -683,7 +683,7 @@ def run_config_command(args):
 
 @log_function_call
 def dox_mask_quality_audit_command(args):
-    """Build the Dox mask-quality audit and visual review panels."""
+    """Build optional Dox mask import-provenance panels."""
     logger = get_logger("eq.dox_mask_quality_audit")
     build_dox_mask_quality_audit = _load_build_dox_mask_quality_audit()
 
@@ -693,8 +693,8 @@ def dox_mask_quality_audit_command(args):
         audit_path=Path(args.audit_path) if args.audit_path else None,
         panel_dir=Path(args.panel_dir) if args.panel_dir else None,
     )
-    logger.info("✅ Dox mask-quality audit written to %s", outputs['audit'])
-    print("✅ Dox mask-quality audit written:")
+    logger.info("✅ Dox mask provenance audit written to %s", outputs['audit'])
+    print("✅ Dox mask provenance audit written:")
     print(f"  audit: {outputs['audit']}")
     print(f"  summary: {outputs['summary']}")
     print(f"  panel_dir: {outputs['panel_dir']}")
@@ -1145,8 +1145,8 @@ Examples:
 
     dox_mask_quality_parser = subparsers.add_parser(
         'dox-mask-quality-audit',
-        help='Build the Dox masked-external mask-quality audit and review panels',
-        description='Audit Dox recovered brushlabel masks and write approval artifacts used by cohort-manifest.',
+        help='Build optional Dox mask import-provenance panels',
+        description='Document Dox recovered brushlabel masks that are already accepted as manual-mask training labels.',
     )
     dox_mask_quality_parser.add_argument(
         '--runtime-root',
@@ -1162,7 +1162,7 @@ Examples:
     )
     dox_mask_quality_parser.add_argument(
         '--panel-dir',
-        help='Directory for visual review panel PNGs. Defaults to output/segmentation_results/vegfri_dox/mask_quality.',
+        help='Directory for visual provenance panel PNGs. Defaults to raw_data/cohorts/vegfri_dox/metadata/mask_quality_panels.',
     )
     dox_mask_quality_parser.set_defaults(func=dox_mask_quality_audit_command)
 

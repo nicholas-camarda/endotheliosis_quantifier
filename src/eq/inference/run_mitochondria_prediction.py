@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from eq.utils.logger import get_logger
 from eq.utils.hardware_detection import get_device_info
-from eq.utils.paths import get_runtime_output_path
+from eq.utils.paths import get_runtime_prediction_path
 
 
 def run_mitochondria_prediction(
@@ -54,7 +54,7 @@ def run_mitochondria_prediction(
     
     # Set up output directory
     if output_dir is None:
-        output_dir = get_runtime_output_path() / "mitochondria_predictions"
+        output_dir = get_runtime_prediction_path("mitochondria") / "ad_hoc"
     else:
         output_dir = Path(output_dir)
     

@@ -23,13 +23,11 @@ $EQ_RUNTIME_ROOT/
 ├── raw_data/
 │   ├── cohorts/
 │   │   ├── manifest.csv
-│   │   ├── lauren_preeclampsia/
-│   │   │   ├── images/
-│   │   │   ├── masks/
-│   │   │   ├── scores/
-│   │   │   └── metadata/
-│   │   ├── vegfri_dox/
-│   │   └── vegfri_mr/
+│   │   └── <cohort_id>/
+│   │       ├── images/
+│   │       ├── masks/
+│   │       ├── scores/
+│   │       └── metadata/
 │   ├── lucchi/
 │   └── mitochondria_data/
 │       ├── training/
@@ -54,10 +52,10 @@ $EQ_RUNTIME_ROOT/
 ## Purpose Of Each Directory
 
 - `$EQ_RUNTIME_ROOT/raw_data/`
-  Original source datasets and localized cohort inputs. For the current Lauren preeclampsia quantification baseline, the active image/mask pairs and Label Studio-derived score material live in the localized cohort directory:
+  Original source datasets and localized cohort inputs. For scored cohorts, active image/mask pairs and Label Studio-derived score material live in localized cohort directories:
 
   ```text
-  $EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia/
+  $EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>/
   ├── images/
   ├── masks/
   ├── scores/
@@ -67,7 +65,7 @@ $EQ_RUNTIME_ROOT/
       └── subject_metadata.xlsx
   ```
 
-  Do not document or use a separate active Lauren project tree for segmentation training. Lauren-only training uses `raw_data/cohorts/lauren_preeclampsia`; all-available masked training uses `raw_data/cohorts`.
+  Do not document or use separate active project trees for segmentation training. Single-cohort training uses `raw_data/cohorts/<cohort_id>`; all-available masked training uses `raw_data/cohorts`.
 
 - `$EQ_RUNTIME_ROOT/raw_data/mitochondria_data/`
   Installed Lucchi mitochondria full-image training and held-out testing data. This dataset is a segmentation-install dataset, not a scored quantification cohort, so it stays outside `raw_data/cohorts/manifest.csv`.
@@ -116,12 +114,11 @@ $EQ_RUNTIME_ROOT/
 ├── raw_data/
 │   └── cohorts/
 │       ├── manifest.csv
-│       ├── lauren_preeclampsia/
-│       ├── vegfri_dox/
-│       │   ├── images/
-│       │   ├── masks/
-│       │   └── metadata/
-│       └── vegfri_mr/
+│       └── <cohort_id>/
+│           ├── images/
+│           ├── masks/
+│           ├── scores/
+│           └── metadata/
 ├── derived_data/
 │   └── cohort_manifest/
 │       └── manifest_summary.json
@@ -141,14 +138,14 @@ $EQ_RUNTIME_ROOT/
             └── review/
 ```
 
-`raw_data/cohorts/manifest.csv` is the dataset-wide table. It records runtime-local paths, cohort identity, score linkage, lane assignment, hashes, verification state, and admission state. It does not carry original PhD or cloud source paths.
+`raw_data/cohorts/manifest.csv` is the dataset-wide table. It records runtime-local paths, cohort identity, score linkage, lane assignment, hashes, verification state, and admission state. It does not carry original source or cloud source paths.
 
 The naming contract is:
 
-- `cohort_id` is the project or biological cohort identity. Current values are `lauren_preeclampsia`, `vegfri_dox`, and `vegfri_mr`.
-- `lane_assignment` is the workflow/admission lane. Current values are `manual_mask_core`, `manual_mask_external`, `scored_only`, and `mr_concordance_only`.
-- `manual_mask_core` and `manual_mask_external` are both first-class manual-mask glomeruli training lanes. They preserve source provenance; they do not make Dox lower-stature training data.
-- Do not encode mask state in a generic cohort ID such as `masked_core`.
+- `cohort_id` is the project or biological cohort identity.
+- `lane_assignment` is the workflow/admission lane, such as `manual_mask_core`, `manual_mask_external`, `scored_only`, or `mr_concordance_only`.
+- `manual_mask_core` and `manual_mask_external` are both first-class manual-mask glomeruli training lanes when admitted. They preserve source provenance and workflow role.
+- Do not encode mask state in cohort identity; preserve the source cohort ID and use `lane_assignment` for workflow role.
 
 The supported admission states are explicit:
 
@@ -158,27 +155,17 @@ The supported admission states are explicit:
 - `foreign`: the row came from a mixed export and does not belong to the intended cohort.
 - `admitted`: mapping verification passed and the row is usable for the lane stated in `lane_assignment`.
 - `pending_transport_audit`: a scored-only row needs cohort-specific segmentation transport review before predicted-ROI grading use.
-- `evaluation_only`: MR phase 1 rows are available for transport/concordance evaluation, not training-set expansion.
+- `evaluation_only`: rows are available for evaluation or concordance checks, not training-set expansion.
 
-Current runtime cohort counts are recorded in `derived_data/cohort_manifest/manifest_summary.json`:
-
-- `lauren_preeclampsia`: 88 `manual_mask_core` rows, all `admitted`.
-- `vegfri_dox`: 864 rows total, with 619 decoded `manual_mask_external` rows accepted as first-class glomeruli training labels, 7 decoded rows missing scores, 228 foreign mixed-export rows, and 10 scored-only rows without decoded runtime images.
-- `vegfri_mr`: 127 `mr_concordance_only` rows, with 126 localized whole-field TIFF rows marked `evaluation_only` and one unresolved workbook row, `8570-5`, without a matching discovered TIFF.
-
-The current Dox runtime surface contains copied images, copied recovered brushlabel masks, copied score exports, and `metadata/decoded_brushlabel_masks.csv` under `raw_data/cohorts/vegfri_dox/`. Dox and Lauren admitted manual-mask rows are co-equal inputs when training from the manifest-backed `raw_data/cohorts` root.
-
-MR is handled as a whole-field TIFF cohort. Manifest rows are image-level, workbook replicates are reduced to a human image-level median, raw replicate vectors are preserved in sidecar ingest artifacts, external-drive source provenance is recorded under `raw_data/cohorts/vegfri_mr/metadata/`, segmentation evaluation belongs under `output/segmentation_evaluation/`, model-generated masks belong under `output/predictions/`, and grading outputs belong under `output/quantification_results/vegfri_mr/`.
-
-MR phase 1 inference has an explicit contract: whole-field TIFF tiling, glomerulus segmentation, component-area filtering, accepted ROI extraction, ROI grading, image-level median aggregation, and human-versus-inferred concordance. Rows with zero accepted inferred ROIs are non-evaluable, not silently admitted.
+Generated cohort summaries are written under `derived_data/cohort_manifest/`. The current local cohort snapshot, including concrete cohort IDs, row counts, and unresolved-source notes, is recorded in [TECHNICAL_LAB_NOTEBOOK.md](TECHNICAL_LAB_NOTEBOOK.md#local-cohort-manifest-snapshot).
 
 Lucchi and other segmentation-install datasets remain outside `raw_data/cohorts/manifest.csv`.
 
 ## Retired Runtime Input Surfaces
 
-The active scored-cohort input surface is only `raw_data/cohorts/manifest.csv` plus `raw_data/cohorts/<cohort_id>/`. During the current rollout no overlapping active quantification-input directory was found under the runtime root. Retired historical static-patch trees remain under `<runtime_root>/_retired/` and are reference surfaces only, not active cohort or training inputs.
+The active scored-cohort input surface is `raw_data/cohorts/manifest.csv` plus `raw_data/cohorts/<cohort_id>/`. Retired historical static-patch trees remain under `<runtime_root>/_retired/` and are reference surfaces only, not active cohort or training inputs.
 
-For quantification runs, a typical output subtree now looks like:
+For quantification runs, a typical output subtree looks like:
 
 ```text
 output/quantification_results/<cohort_id>/
@@ -229,8 +216,5 @@ The project supports a small set of path overrides when needed:
 - `EQ_RUNTIME_ROOT`
 - `EQ_RUNTIME_OUTPUT_PATH`
 - `EQ_RUNTIME_MODEL_PATH`
-- `EQ_DOX_LABEL_STUDIO_EXPORT`
-- `EQ_MR_SCORE_WORKBOOK`
-- `EQ_MR_IMAGE_ROOT`
 
-These should be the exception rather than the default.
+These should be the exception rather than the default. Site-specific cohort-source overrides are local data plumbing and are documented in the technical lab notebook or path-helper code when needed.

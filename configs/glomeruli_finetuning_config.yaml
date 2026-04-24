@@ -130,7 +130,7 @@ reproducibility:
 logging:
   level: "INFO"
   save_plots: true
-  plot_dir: "output/segmentation_results/glomeruli_transfer/plots"
+  plot_dir: "models/segmentation/glomeruli/transfer/<run_id>"
   metrics:
     - "dice_coefficient"
     - "iou"
@@ -143,7 +143,7 @@ evaluation:
     - "sensitivity"
     - "specificity"
   save_predictions: true
-  prediction_dir: "output/segmentation_results/glomeruli_transfer/predictions"
+  prediction_dir: "output/predictions/glomeruli/<model_run_id>/<input_set>"
 
 final_model:
   description: "Glomeruli segmentation transfer candidate"

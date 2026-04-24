@@ -20,7 +20,7 @@ The system SHALL use one row-level manifest as the canonical linking surface for
 
 #### Scenario: Manifest supports both masked and unmasked cohorts
 - **WHEN** an external manifest row has or does not have a verified mask
-- **THEN** the manifest SHALL preserve a nullable mask field and explicit lane/admission fields rather than forcing the row into either the canonical masked-core contract or the scored-only predicted-ROI lane by default
+- **THEN** the manifest SHALL preserve a nullable mask field and explicit lane/admission fields rather than forcing the row into either the manual-mask training contract or the scored-only predicted-ROI lane by default
 
 #### Scenario: Manifest records admission states explicitly
 - **WHEN** a scored-only manifest row has not passed harmonization, mapping verification, or cohort admission
@@ -168,12 +168,16 @@ The system SHALL build each in-scope runtime cohort directory as a self-containe
 - **WHEN** a downstream stage such as segmentation inference, predicted-ROI generation, or grading dataset build runs against an admitted cohort
 - **THEN** it SHALL be able to operate from the localized cohort directory and manifest without requiring ad hoc traversal of the original PhD / cloud directories
 
-### Requirement: Model-derived artifacts live under result-family outputs
-The system SHALL write model-derived artifacts under result-family directories, not under a generic cohort-named output tree. Segmentation artifacts such as mask-quality panels, transport audits, prediction reviews, and candidate-comparison evidence SHALL live under `output/segmentation_results/`. Quantification artifacts such as predicted ROI grading inputs, embeddings, grader outputs, and review reports SHALL live under `output/quantification_results/`.
+### Requirement: Model-derived artifacts live under operation-specific outputs
+The system SHALL write model-derived artifacts under operation-specific directories, not under a generic cohort-named output tree. Segmentation evaluation artifacts such as transport audits and candidate-comparison evidence SHALL live under `output/segmentation_evaluation/`. Model-generated masks and overlays SHALL live under `output/predictions/`. Quantification artifacts such as predicted ROI grading inputs, embeddings, grader outputs, and review reports SHALL live under `output/quantification_results/`.
 
 #### Scenario: Segmentation artifact layout is deterministic
 - **WHEN** the system materializes model-derived cohort artifacts
-- **THEN** it SHALL write segmentation evidence to deterministic subdirectories under the runtime root's `output/segmentation_results/<result_or_cohort_id>/`
+- **THEN** it SHALL write segmentation evaluation to deterministic subdirectories under the runtime root's `output/segmentation_evaluation/<task>/<run_id>/`
+
+#### Scenario: Prediction artifact layout is deterministic
+- **WHEN** the system materializes model-generated masks or overlays
+- **THEN** it SHALL write prediction artifacts under the runtime root's `output/predictions/<task>/<model_run_id>/<input_set>/`
 
 #### Scenario: Quantification artifact layout is deterministic
 - **WHEN** the system materializes predicted-ROI grading, embedding, grader, or review artifacts
@@ -244,20 +248,20 @@ The system SHALL require a cohort-specific segmentation transport audit before a
 - **WHEN** the cohort uses giant whole-field source images such as the MR TIFF batches
 - **THEN** the transport audit SHALL explicitly record the preprocessing or tiling strategy used for inference and SHALL fail closed if the cohort cannot be processed reliably under that strategy
 
-### Requirement: Masked external rows require explicit mask-quality admission
-The system SHALL require an explicit mask-quality and contract check before recovered masked external rows are used for segmentation evaluation or training improvement. Recovered external masks SHALL NOT be treated as contract-equivalent to masked-core rows by default.
+### Requirement: Verified Dox masks are first-class manual-mask training labels
+The system SHALL treat verified Dox recovered masks as equivalent-stature manual-mask glomeruli training labels alongside Lauren manual-mask rows.
 
-#### Scenario: Recovered masked Dox rows remain separate from masked-core
+#### Scenario: Recovered masked Dox rows retain cohort identity
 - **WHEN** the implementation ingests recovered masked Dox rows
-- **THEN** it SHALL keep them in a distinct masked-external lane rather than silently merging them into the existing masked-core cohort
+- **THEN** it SHALL retain `cohort_id=vegfri_dox` while allowing admitted rows to enter the manual-mask glomeruli training pool
 
-#### Scenario: Masked external rows fail mask-quality admission
-- **WHEN** recovered external masks are unreadable, structurally implausible, or otherwise fail the mask-quality gate
-- **THEN** those rows SHALL be excluded from segmentation improvement even if they remain usable for other documented purposes
+#### Scenario: Scored-only Dox rows remain excluded from segmentation supervision
+- **WHEN** Dox rows lack verified runtime masks
+- **THEN** those rows SHALL remain scored-only predicted-ROI candidates and SHALL NOT be treated as segmentation labels
 
-#### Scenario: Masked external rows clear admission
-- **WHEN** recovered external masks pass harmonization, mapping verification, and mask-quality review
-- **THEN** those rows SHALL be eligible for external segmentation evaluation and, if explicitly allowed by the cohort policy, segmentation training augmentation
+#### Scenario: Verified masked Dox rows enter training
+- **WHEN** recovered Dox masks pass harmonization and mapping verification
+- **THEN** those rows SHALL be eligible for the same glomeruli training workflows as Lauren manual-mask rows
 
 ### Requirement: MR image-level scoring contract
 The system SHALL treat MR kidney inputs as an image-level cohort with within-image repeated glomerular grades, not as a simple one-score-per-sample table. The canonical MR manifest rows SHALL map to the copied giant TIFF image files, while raw workbook replicates SHALL be preserved in a sidecar ingest artifact and reduced deterministically into one image-level median score per manifest row.
@@ -321,7 +325,7 @@ The system SHALL represent admitted scored-only cohorts as predicted-ROI grading
 
 #### Scenario: Manual-mask and predicted-ROI artifacts stay separate
 - **WHEN** the repository prepares downstream grading inputs
-- **THEN** scored-only predicted-ROI artifacts SHALL remain distinguishable from canonical masked-core artifacts in both file outputs and provenance fields
+- **THEN** scored-only predicted-ROI artifacts SHALL remain distinguishable from canonical manual-mask artifacts in both file outputs and provenance fields
 
 ### Requirement: Admission and exclusion states are explicit
 The system SHALL persist explicit admission or exclusion decisions for each scored-only cohort. A cohort that is not admitted SHALL NOT be silently included in downstream grading datasets, reports, or evaluation summaries.
@@ -330,13 +334,13 @@ The system SHALL persist explicit admission or exclusion decisions for each scor
 - **WHEN** a cohort has no admission artifact or has an explicit exclusion artifact
 - **THEN** the grading dataset build SHALL omit that cohort and SHALL report the omission reason
 
-#### Scenario: Admitted cohort is reported separately from masked-core data
+#### Scenario: Admitted cohort is reported separately from manual-mask data
 - **WHEN** a grading dataset includes an admitted scored-only cohort
 - **THEN** the resulting report SHALL state that the cohort entered through the scored-only predicted-ROI path and SHALL NOT describe it as masked segmentation supervision
 
-### Requirement: Dox is the first external cohort with two admission lanes
+### Requirement: Dox is the first external cohort with two use lanes
 The system SHALL treat `cohort_id=vegfri_dox` as the first external cohort with both:
-- a masked-external lane for recovered verified masks that may improve segmentation evaluation or training
+- a manual-mask lane for recovered verified masks that feed glomeruli segmentation training
 - a scored-only lane for predicted-ROI grading expansion when verified masks are absent
 
 #### Scenario: Dox mask recovery prefers direct Label Studio export
@@ -347,13 +351,13 @@ The system SHALL treat `cohort_id=vegfri_dox` as the first external cohort with 
 - **WHEN** the current machine already has decoded Dox brushlabel masks materialized under `$EQ_RUNTIME_ROOT/raw_data/cohorts/vegfri_dox/`
 - **THEN** the implementation SHALL treat that runtime-local `images/`, `masks/`, and `metadata/decoded_brushlabel_masks.csv` surface as the starting point for Dox mask-aware reconciliation rather than rebuilding an alternate active mask tree elsewhere
 
-#### Scenario: Verified masked Dox rows can improve segmentation
-- **WHEN** `cohort_id=vegfri_dox` rows have verified masks and clear the mask-quality and verification gates
-- **THEN** those rows SHALL be eligible for masked-external segmentation evaluation and, if explicitly approved by the workflow, segmentation training augmentation
+#### Scenario: Verified masked Dox rows train with Lauren rows
+- **WHEN** `cohort_id=vegfri_dox` rows have verified masks and pass mapping verification
+- **THEN** those rows SHALL be eligible for the same glomeruli segmentation training workflows as Lauren manual-mask rows
 
 #### Scenario: All admitted masked rows can train one glomeruli candidate
 - **WHEN** the glomeruli trainer is pointed at the active runtime `raw_data/cohorts` registry root
-- **THEN** it SHALL enumerate admitted rows from the manual-mask and masked-external manifest lanes across current cohorts, including the active preeclampsia masked-core rows and approved Dox masked-external rows, while excluding scored-only, foreign, unresolved, and MR concordance-only rows from segmentation supervision
+- **THEN** it SHALL enumerate admitted manual-mask rows across current cohorts, including `lauren_preeclampsia` and `vegfri_dox`, while excluding scored-only, foreign, unresolved, and MR concordance-only rows from segmentation supervision
 
 #### Scenario: Requested transfer training fails closed on base-load failure
 - **WHEN** a glomeruli transfer run is given a base model path that cannot load in the active environment or cannot contribute any compatible weights
@@ -380,7 +384,7 @@ The system SHALL implement a cohort-specific rollout plan for the current access
 #### Scenario: Lauren preeclampsia is named by cohort identity
 - **WHEN** the implementation processes Lauren's active preeclampsia runtime data
 - **THEN** it SHALL produce `cohort_id=lauren_preeclampsia` rows in the unified manifest with `lane_assignment=manual_mask_core`
-- **AND** it SHALL NOT use a generic cohort identity such as `masked_core` to encode mask availability
+- **AND** it SHALL preserve the source cohort identity rather than encoding mask availability as a cohort name
 
 #### Scenario: Manual-mask lanes distinguish role, not drawing method
 - **WHEN** Lauren preeclampsia and Dox rows both have manually drawn Label Studio-style masks
@@ -395,7 +399,7 @@ The system SHALL implement a cohort-specific rollout plan for the current access
 - **THEN** it SHALL document the image-level median reduction used to produce manifest rows, preserve the raw replicate vector in sidecar ingest artifacts, and explicitly acknowledge the giant whole-field TIFF acquisition regime used by the copied MR images
 
 ### Requirement: Success is artifact- and count-based
-The system SHALL define success for this change in terms of populated cohort artifacts, explicit status counts, and masked-core regression safety, not merely in terms of shipping reusable code.
+The system SHALL define success for this change in terms of populated cohort artifacts, explicit status counts, and Lauren manual-mask regression safety, not merely in terms of shipping reusable code.
 
 #### Scenario: Unified manifest is required
 - **WHEN** the change is considered complete
@@ -413,9 +417,9 @@ The system SHALL define success for this change in terms of populated cohort art
 - **WHEN** the implementation completes for the current MR cohort
 - **THEN** it SHALL report the preprocessing or tiling path used for giant TIFF handling and the concordance between human image-level median and inferred image-level median in addition to the normal recovery counts
 
-#### Scenario: Existing masked-core behavior remains intact
+#### Scenario: Existing Lauren manual-mask behavior remains intact
 - **WHEN** the change is considered successful
-- **THEN** regression checks SHALL confirm that the pre-existing masked-core quantification path still works without depending implicitly on the new unified manifest unless explicitly routed through it
+- **THEN** regression checks SHALL confirm that the pre-existing Lauren manual-mask quantification path still works without depending implicitly on the new unified manifest unless explicitly routed through it
 
 ### Requirement: Old runtime input surfaces are archived and retired
 The system SHALL archive overlapping pre-existing runtime quantification-input directories once the new cohort tree is populated and verified, and SHALL treat those archived directories as retired reference surfaces rather than supported active inputs.
@@ -432,11 +436,11 @@ The system SHALL refactor the shared repo path helpers so the active runtime roo
 - **THEN** the shared path helpers SHALL resolve the active `$EQ_RUNTIME_ROOT` cohort surfaces rather than defaulting to placeholder repo-local `data/` roots for this workflow
 
 ### Requirement: Touched pipeline surfaces have regression coverage
-The system SHALL add explicit tests for every quantification pipeline surface changed by the scored-only cohort workflow and SHALL preserve the existing masked-core contract behavior.
+The system SHALL add explicit tests for every quantification pipeline surface changed by the scored-only cohort workflow and SHALL preserve the existing Lauren manual-mask contract behavior.
 
-#### Scenario: New scored-only logic does not break masked-core scoring
+#### Scenario: New scored-only logic does not break Lauren manual-mask scoring
 - **WHEN** scored-only manifest, harmonization, verification, audit, or predicted-ROI features are added
-- **THEN** regression tests SHALL confirm that the existing canonical masked-core quantification path still produces the expected scored-example joins and does not start reading scored-only artifacts implicitly
+- **THEN** regression tests SHALL confirm that the existing canonical Lauren manual-mask quantification path still produces the expected scored-example joins and does not start reading scored-only artifacts implicitly
 
 #### Scenario: Stage-level artifacts are validated
 - **WHEN** the system writes scored-only inventory, manifest, harmonization, mapping-verification, transport-audit, or predicted-ROI artifacts

@@ -13,7 +13,7 @@
 workflow: segmentation_fixedloader_full_retrain
 
 run:
-  name: fixedloader_full_retrain_all_admitted_seed42
+  name: all_manual_mask_glomeruli_seed42
   seed: 42
   runtime_root_env: EQ_RUNTIME_ROOT
   runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
@@ -23,7 +23,7 @@ run:
     MPLCONFIGDIR: /tmp/mpl_eq
   notes:
     - Use the eq-mac environment on macOS.
-    - Run real MPS training outside the Codex sandbox.
+    - Run real MPS training from a normal macOS terminal.
     - Glomeruli training uses every admitted manual-mask row in raw_data/cohorts.
 
 paths:
@@ -37,7 +37,7 @@ paths:
   # Model and comparison artifact roots, all resolved under EQ_RUNTIME_ROOT.
   mito_model_dir: models/segmentation/mitochondria
   glomeruli_model_dir: models/segmentation/glomeruli
-  comparison_output_dir: output/segmentation_results/glomeruli_candidate_comparison
+  comparison_output_dir: output/segmentation_evaluation/glomeruli_candidate_comparison
 
   # Cohort registry surfaces refreshed at the start of the run.
   cohort_manifest: raw_data/cohorts/manifest.csv

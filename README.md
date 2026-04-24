@@ -12,6 +12,7 @@ For the full curated documentation set, see [docs/README.md](docs/README.md).
 | Development target | WSL on Windows with CUDA-capable PyTorch |
 | macOS local execution | Apple Silicon/MPS through the `eq-mac` conda environment |
 | Package source | `src/eq/` |
+| Workflow control surface | YAML workflow files in `configs/`, run with `eq run-config --config <file>` |
 | Runtime root | `EQ_RUNTIME_ROOT`, with this checkout's local default recorded in `analysis_registry.yaml` |
 | Runtime inputs | Raw datasets under `$EQ_RUNTIME_ROOT/raw_data/` |
 | Runtime outputs | Derived data, trained models, logs, and generated reports under `$EQ_RUNTIME_ROOT/derived_data/`, `$EQ_RUNTIME_ROOT/models/`, `$EQ_RUNTIME_ROOT/logs/`, and `$EQ_RUNTIME_ROOT/output/` |
@@ -106,19 +107,14 @@ Committed configs and docs use runtime-root-relative paths such as `raw_data/...
 
 ## Scored Cohort Manifest
 
-Scored cohorts use one runtime-local manifest:
+Segmentation and quantification workflows use one runtime-local scored-cohort manifest:
 
 ```text
 $EQ_RUNTIME_ROOT/
 ├── raw_data/
 │   └── cohorts/
 │       ├── manifest.csv
-│       ├── lauren_preeclampsia/
-│       ├── vegfri_dox/
-│       │   ├── images/
-│       │   ├── masks/
-│       │   └── metadata/
-│       └── vegfri_mr/
+│       └── <cohort_id>/
 ├── models/segmentation/
 └── output/
     ├── segmentation_evaluation/
@@ -132,65 +128,39 @@ Build or refresh the runtime manifest with:
 eq cohort-manifest
 ```
 
-The manifest is the canonical linking surface for cohort ID, runtime-local image paths, optional mask paths, score linkage, lane assignment, mapping verification, hashes, and admission state. It does not carry original PhD or cloud source paths; source-location audit belongs in sidecar ingest artifacts.
-Source-location overrides are centralized in the shared path helpers: `EQ_DOX_LABEL_STUDIO_EXPORT`, `EQ_MR_SCORE_WORKBOOK`, and `EQ_MR_IMAGE_ROOT`.
+The manifest is the project-local data contract for cohort ID, runtime-local image paths, optional mask paths, score linkage, lane assignment, mapping verification, hashes, and admission state. It is not a generic public dataset format. Original source-folder provenance belongs in sidecar ingest artifacts, while normal training and quantification use the localized runtime cohort directories.
 
 Manifest rows are image-level. Admitted rows require `cohort_id`, `image_path`, `score`, and a score locator such as `source_sample_id` or `source_score_row`; the pipeline appends `manifest_row_id`, `harmonized_id`, `join_status`, `verification_status`, `lane_assignment`, `admission_status`, `exclusion_reason`, `image_sha256`, and `mask_sha256`. Placeholder rows may be present before enrichment, but rows without a resolved runtime-local `image_path` cannot be admitted for training or quantification.
 
-Manifest naming separates cohort identity from admission lane:
+Manifest naming separates cohort identity from workflow role:
 
-- `cohort_id` names the biological/project cohort, such as `lauren_preeclampsia`, `vegfri_dox`, or `vegfri_mr`.
+- `cohort_id` names the biological or project cohort.
 - `lane_assignment` names the workflow lane, such as `manual_mask_core`, `manual_mask_external`, `scored_only`, or `mr_concordance_only`.
-- Lauren's preeclampsia masks and Dox masks are equivalent-stature manual-mask glomeruli training labels. The lane names preserve provenance; they do not make Dox a lower-stature or separately gated training source.
-
-Current cohort states:
-
-- `lauren_preeclampsia`: 88 current preeclampsia image/mask rows are localized as `manual_mask_core` and `admitted`.
-- `vegfri_dox`: 864 Label Studio export rows are represented. The 626 decoded brushlabel image/mask rows include 619 accepted `manual_mask_external` rows used as first-class glomeruli training labels and 7 `unresolved` missing-score rows. The remaining scored-only rows include 228 `foreign` mixed-export rows and 10 unresolved rows without decoded runtime images.
-- `vegfri_mr`: 127 workbook image-level rows are represented from the external-drive whole-field TIFF batches. The 126 rows with localized TIFFs are `evaluation_only`; workbook row `8570-5` is unresolved because no matching TIFF was found in the discovered image root. Phase 1 use is concordance/evaluation only.
+- Manual-mask lanes are first-class glomeruli training inputs when admitted; lane names preserve provenance and workflow role.
 
 Lucchi and other segmentation-install datasets stay outside `raw_data/cohorts/manifest.csv`.
 
-## Set These Once
+For the generic runtime layout, see [docs/OUTPUT_STRUCTURE.md](docs/OUTPUT_STRUCTURE.md#runtime-scored-cohort-layout). For this checkout's current local cohort counts and unresolved-source notes, see [docs/TECHNICAL_LAB_NOTEBOOK.md](docs/TECHNICAL_LAB_NOTEBOOK.md#local-cohort-manifest-snapshot).
 
-The workflow below is much easier if you choose your project name and model names once, up front, and then reuse shell variables instead of retyping placeholder fragments.
+## YAML-First Workflow
 
-```bash
-export EQ_RUNTIME_ROOT="/path/to/endotheliosis_quantifier_runtime"
-export GLOMERULI_ROOT="$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia"
-export GLOMERULI_TRAIN_ROOT="$EQ_RUNTIME_ROOT/raw_data/cohorts"
-export GLOMERULI_ANNOTATIONS="$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia/scores/labelstudio_annotations.json"
+The normal segmentation workflow is controlled by YAML files in `configs/`. Edit the YAML for run names, roots, paths, model names, training settings, and comparison outputs; then run it through one CLI entrypoint.
 
-export MITO_MODEL_DIR="$EQ_RUNTIME_ROOT/models/segmentation/mitochondria"
-export GLOMERULI_MODEL_DIR="$EQ_RUNTIME_ROOT/models/segmentation/glomeruli"
-
-# Base names passed to --model-name during training.
-export MITO_MODEL_NAME="mitochondria_baseline"
-export GLOMERULI_TRANSFER_MODEL_NAME="glomeruli_transfer_baseline"
-export GLOMERULI_SCRATCH_MODEL_NAME="glomeruli_scratch_baseline"
-```
-
-What these mean:
-
-- `GLOMERULI_ROOT` is Lauren's active preeclampsia cohort root with direct `images/` and `masks/`
-- `GLOMERULI_TRAIN_ROOT` is the manifest-backed cohort registry root used to train on all admitted masked rows across current cohorts
-- `MITO_MODEL_NAME`, `GLOMERULI_TRANSFER_MODEL_NAME`, and `GLOMERULI_SCRATCH_MODEL_NAME` are the only values you pass to `--model-name`
-
-The training code appends the descriptive run suffix automatically when it writes the artifact directory and `.pkl`. Those full artifact paths are outputs of training, not inputs you should hardcode up front.
-
-## Workflow
-
-### Configured full segmentation run
-
-The full fixed-loader retraining workflow is run from its YAML config:
+The all-in-one segmentation run is:
 
 ```bash
 eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
 ```
 
-That command refreshes the cohort manifest, trains the mitochondria base, selects the exported base artifact, trains the glomeruli transfer and no-mitochondria-base candidates, and writes comparison evidence under `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/<run_id>/`.
+That command reads `configs/segmentation_fixedloader_full_retrain.yaml`, refreshes the cohort manifest, trains a fresh mitochondria base, uses that exported base artifact for glomeruli transfer, trains the no-mitochondria-base comparator, and writes comparison evidence under the configured runtime output tree.
 
-All YAML workflow configs in `configs/` use the same entrypoint:
+Dry-run the resolved commands before launching training:
+
+```bash
+eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml --dry-run
+```
+
+Supported workflow configs use the same entrypoint:
 
 ```bash
 eq run-config --config configs/mito_pretraining_config.yaml
@@ -198,151 +168,77 @@ eq run-config --config configs/glomeruli_finetuning_config.yaml
 eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
 ```
 
-### 1. Inspect hardware and mode
+Use the full retraining YAML when you want candidate evidence for the current glomeruli segmentation baseline. Use the mitochondria or glomeruli YAMLs only when you intentionally want to run one stage.
+
+The YAML owns the routine settings:
+
+- `run.name`, `run.seed`, `run.python`, and `run.required_env`
+- `run.runtime_root_default`, unless `EQ_RUNTIME_ROOT` is set for this shell
+- runtime-relative input/output paths under `paths:` or `data:`
+- model names, batch sizes, learning rates, image sizes, crop sizes, and comparison settings
+
+Environment variables are only local overrides. In the common case, you do not need to define model names, model directories, training roots, annotation paths, or MPS fallback flags by hand. Set `EQ_RUNTIME_ROOT` only when you want to run the same YAML against a different runtime tree than the checkout default:
+
+```bash
+EQ_RUNTIME_ROOT=/path/to/runtime eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
+```
+
+Site-specific source-location overrides are defined in `src/eq/utils/paths.py` for local cohort ingestion. Treat those as local data plumbing, not as part of the ordinary run recipe.
+
+## Typical Run
+
+1. Activate the supported environment for the machine.
+2. Run the sanity checks.
+3. Review or edit the workflow YAML.
+4. Dry-run the workflow.
+5. Run the workflow from YAML.
 
 ```bash
 eq capabilities
 eq mode --show
+eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml --dry-run
+eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
 ```
 
-### 2. Validate raw glomeruli naming
+The comparison output reports explicit decision states: `promoted`, `blocked`, or `insufficient_evidence`. If transfer and no-mitochondria-base candidates are within the configured practical tie margin, neither becomes the sole promoted default and both remain explicit research-use comparators.
+
+## Utility Commands
+
+These commands are useful for inspection, data preparation, or targeted checks. They are not the normal way to stitch together a full training run.
 
 ```bash
-eq validate-naming --data-dir "$GLOMERULI_ROOT"
-```
-
-### 3. Prepare Lucchi mitochondria images
-
-```bash
+eq cohort-manifest
+eq validate-naming --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>"
 eq organize-lucchi \
   --input-dir "$EQ_RUNTIME_ROOT/raw_data/lucchi" \
   --output-dir "$EQ_RUNTIME_ROOT/raw_data/mitochondria_data"
+eq visualize --mask path/to/mask.png --output "$EQ_RUNTIME_ROOT/output/mask_preview.png"
 ```
 
-### 4. Train mitochondria model
+## Quantification
 
-```bash
-python -m eq.training.train_mitochondria \
-  --data-dir "$EQ_RUNTIME_ROOT/raw_data/mitochondria_data/training" \
-  --model-dir "$MITO_MODEL_DIR" \
-  --model-name "$MITO_MODEL_NAME" \
-  --epochs 50 \
-  --batch-size 24 \
-  --learning-rate 1e-3 \
-  --image-size 256
-```
-
-On the powerful Apple Silicon MPS machine class, `24` is the current starting batch-size recommendation for `256x256` mitochondria training. Override it when throughput or stability requires a different value.
-
-After training finishes, inspect the produced artifact path and export the one you want to reuse:
-
-```bash
-find "$MITO_MODEL_DIR" -path "*${MITO_MODEL_NAME}-*" -name '*.pkl' | sort
-export MITO_BASE_MODEL="/absolute/path/to/the/mitochondria_model.pkl"
-```
-
-### 5. Train glomeruli model
-
-Transfer candidate:
-
-```bash
-python -m eq.training.train_glomeruli \
-  --data-dir "$GLOMERULI_TRAIN_ROOT" \
-  --model-dir "$GLOMERULI_MODEL_DIR" \
-  --model-name "$GLOMERULI_TRANSFER_MODEL_NAME" \
-  --base-model "$MITO_BASE_MODEL" \
-  --epochs 30 \
-  --batch-size 12 \
-  --learning-rate 1e-3 \
-  --image-size 256 \
-  --crop-size 512 \
-  --seed 42
-```
-
-Scratch candidate:
-
-```bash
-python -m eq.training.train_glomeruli \
-  --data-dir "$GLOMERULI_TRAIN_ROOT" \
-  --model-dir "$GLOMERULI_MODEL_DIR" \
-  --model-name "$GLOMERULI_SCRATCH_MODEL_NAME" \
-  --from-scratch \
-  --epochs 50 \
-  --batch-size 12 \
-  --learning-rate 1e-3 \
-  --image-size 256 \
-  --crop-size 512 \
-  --seed 42
-```
-
-On the powerful Apple Silicon MPS machine class, `12` is the current starting batch-size recommendation for `512x512` glomeruli crops. Override it when throughput or stability requires a different value.
-
-For all-data glomeruli training, pass the manifest-backed cohort registry root: `$EQ_RUNTIME_ROOT/raw_data/cohorts`. The loader enumerates admitted manifest rows in the `manual_mask_core` and `manual_mask_external` lanes, so the current training set is Lauren's 88 preeclampsia manual-mask rows plus the 619 Dox manual-mask rows. For a Lauren-only run, use `$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia`. Raw backup trees are source material, not direct training roots. Generated manifest summaries, caches, evaluation artifacts, and prediction outputs belong under `derived_data` or `output`.
-
-For heavy training runs, the dedicated training modules above are the safest entrypoints. The `eq` CLI is still useful for validation, inspection, capabilities, and utility commands.
-
-The dedicated training module CLI is the canonical control surface for glomeruli candidate work. Choose the family explicitly with `--base-model` or `--from-scratch`; optional YAML files are overlays, not the authoritative promotion contract. A transfer run with `--base-model` must load that artifact and copy compatible weights or it stops with an error. The scratch candidate is the no-mitochondria-base baseline with an ImageNet-pretrained ResNet34 encoder, not a literal all-random initialization baseline.
-`--model-name` is only the base name. The trainer adds the run suffix automatically when it creates the output directory and `.pkl`, so inspect the produced artifacts after training instead of guessing the final directory name in advance.
-
-After transfer and scratch training finish, inspect the produced artifacts and export the exact paths you want to compare or quantify:
-
-```bash
-find "$GLOMERULI_MODEL_DIR/transfer" -path "*${GLOMERULI_TRANSFER_MODEL_NAME}-*" -name '*.pkl' | sort
-export GLOMERULI_TRANSFER_MODEL="/absolute/path/to/the/transfer_model.pkl"
-
-find "$GLOMERULI_MODEL_DIR/scratch" -path "*${GLOMERULI_SCRATCH_MODEL_NAME}-*" -name '*.pkl' | sort
-export GLOMERULI_SCRATCH_MODEL="/absolute/path/to/the/scratch_model.pkl"
-```
-
-### 6. Compare glomeruli candidates
-
-Compare existing trained artifacts:
-
-```bash
-python -m eq.training.compare_glomeruli_candidates \
-  --data-dir "$GLOMERULI_TRAIN_ROOT" \
-  --transfer-model-path "$GLOMERULI_TRANSFER_MODEL" \
-  --scratch-model-path "$GLOMERULI_SCRATCH_MODEL" \
-  --seed 42 \
-  --crop-size 512
-```
-
-Train fresh transfer and scratch candidates inside the comparison workflow:
-
-```bash
-python -m eq.training.compare_glomeruli_candidates \
-  --data-dir "$GLOMERULI_TRAIN_ROOT" \
-  --transfer-base-model "$MITO_BASE_MODEL" \
-  --transfer-model-name "$GLOMERULI_TRANSFER_MODEL_NAME" \
-  --scratch-model-name "$GLOMERULI_SCRATCH_MODEL_NAME" \
-  --seed 42 \
-  --crop-size 512
-```
-
-If `--output-dir` is omitted, this workflow writes its deterministic validation manifest, per-candidate metrics, review panels, and promotion report under the active runtime output root's `glomeruli_candidate_comparison/` subtree on this machine. The decision states remain explicit: `promoted`, `blocked`, or `insufficient_evidence`. If transfer and scratch are within the practical tie margin, neither becomes the sole promoted default and both remain explicit research-use comparators.
-
-### 7. Run the Label Studio-first quantification baseline
+Quantification runs against an explicit segmentation model artifact produced by the YAML workflow. Use the model path from the completed run's model directory or comparison report.
 
 ```bash
 eq prepare-quant-contract \
-  --data-dir "$GLOMERULI_ROOT" \
-  --segmentation-model "$GLOMERULI_TRANSFER_MODEL" \
+  --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>" \
+  --segmentation-model /absolute/path/to/glomeruli_model.pkl \
   --score-source labelstudio \
-  --annotation-source "$GLOMERULI_ANNOTATIONS"
+  --annotation-source "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>/scores/labelstudio_annotations.json"
 
 eq quant-endo \
-  --data-dir "$GLOMERULI_ROOT" \
-  --segmentation-model "$GLOMERULI_TRANSFER_MODEL" \
+  --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>" \
+  --segmentation-model /absolute/path/to/glomeruli_model.pkl \
   --score-source labelstudio \
-  --annotation-source "$GLOMERULI_ANNOTATIONS" \
-  --output-dir "output/quantification/$GLOMERULI_PROJECT"
+  --annotation-source "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>/scores/labelstudio_annotations.json" \
+  --output-dir "$EQ_RUNTIME_ROOT/output/quantification_results/<cohort_id>"
 ```
 
-If you want to quantify with the scratch candidate instead, replace `"$GLOMERULI_TRANSFER_MODEL"` with `"$GLOMERULI_SCRATCH_MODEL"`.
+To quantify with a different candidate, use that candidate's `.pkl` path.
 
-This path currently treats the Label Studio image-level grade as the supervised target for each image/mask pair. ROI extraction uses the full multi-component mask bounding box with context padding, then builds frozen segmentation-backbone embeddings and a canonical penalized multiclass ordinal baseline from `src/eq/quantification/ordinal.py`.
+This path treats the Label Studio image-level grade as the supervised target for each image/mask pair. ROI extraction uses the full multi-component mask bounding box with context padding, then builds frozen segmentation-backbone embeddings and a canonical penalized multiclass ordinal baseline from `src/eq/quantification/ordinal.py`.
 
-The current local runtime audit cohort is numerically stable under that estimator, but it only populates scores `0.0`, `0.5`, `1.0`, and `1.5`. The pipeline therefore reports incomplete seven-bin target support until a richer scored cohort resolves the missing upper-score support. Treat the current outputs as a predictive audit baseline with explicit cohort-shape metadata, not as full target-support validation.
+The pipeline reports cohort-shape and target-support metadata with each run. Treat these outputs as a predictive audit baseline unless the scored cohort provides the target support and validation evidence needed for the intended scientific claim.
 
 Current ordinal implementation surfaces:
 
@@ -351,52 +247,22 @@ Current ordinal implementation surfaces:
 - CLI entrypoint: `eq quant-endo`
 - Regression surfaces: `tests/unit/test_quantification_pipeline.py` and `tests/integration/test_local_runtime_quantification_pipeline.py`
 
-## Useful Commands
-
-```bash
-eq cohort-manifest
-eq prepare-quant-contract --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia" --segmentation-model "$GLOMERULI_TRANSFER_MODEL" --score-source labelstudio --annotation-source "$GLOMERULI_ANNOTATIONS"
-eq quant-endo --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia" --segmentation-model "$GLOMERULI_TRANSFER_MODEL" --score-source labelstudio --annotation-source "$GLOMERULI_ANNOTATIONS"
-eq visualize --mask path/to/mask.png --output "$EQ_RUNTIME_ROOT/output/mask_preview.png"
-```
-
-`quant-endo` now writes:
+`quant-endo` writes:
 
 - `labelstudio_scores/` with recovered per-image grades and duplicate-resolution audit tables
 - `roi_crops/` with union-ROI crops over the full multi-component mask
 - `embeddings/` with frozen segmentation-encoder embeddings
 - `ordinal_model/` with predictions, probabilities, metrics, confusion matrix, and `review_report/ordinal_review.html`
 
-## Configuration
+## Configuration Files
 
-The main project configs live here:
+The main workflow configs live here:
 
 - `configs/mito_pretraining_config.yaml`
 - `configs/glomeruli_finetuning_config.yaml`
+- `configs/segmentation_fixedloader_full_retrain.yaml`
 
-These files are optional overlays and engineering references. They are not the canonical control surface for glomeruli promotion or candidate comparison; use the dedicated training-module CLI commands above for authoritative execution and provenance.
-
-Path helpers centralize repo-local defaults, runtime roots, and external cohort sources. Use these environment variables instead of hardcoded local paths:
-
-Repo-local compatibility overrides:
-
-- `EQ_DATA_PATH`
-- `EQ_OUTPUT_PATH`
-- `EQ_CACHE_PATH`
-- `EQ_MODEL_PATH`
-- `EQ_LOG_PATH` or `EQ_LOGS_PATH`
-
-Runtime-root overrides:
-
-- `EQ_RUNTIME_ROOT`
-- `EQ_RUNTIME_OUTPUT_PATH`
-- `EQ_RUNTIME_MODEL_PATH`
-
-External cohort source overrides:
-
-- `EQ_DOX_LABEL_STUDIO_EXPORT`
-- `EQ_MR_SCORE_WORKBOOK`
-- `EQ_MR_IMAGE_ROOT`
+Path helpers centralize repo-local defaults, runtime roots, and external cohort sources. Prefer YAML-relative paths and the path helpers in `src/eq/utils/paths.py` over hardcoded machine-specific paths.
 
 ## Development Notes
 

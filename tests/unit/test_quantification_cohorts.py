@@ -338,24 +338,25 @@ def test_discovery_reconciliation_keeps_recoverable_rows_pending():
     assert reconciled.loc[1, 'admission_status'] == 'unresolved'
 
 
-def test_manual_mask_external_dox_requires_mask_quality_gate():
+def test_manual_mask_external_dox_rows_remain_training_admitted():
     manifest = pd.DataFrame(
         [
             {
                 'cohort_id': 'vegfri_dox',
                 'lane_assignment': 'manual_mask_external',
                 'admission_status': 'admitted',
+                'exclusion_reason': '',
             }
         ]
     )
 
     policy = apply_cohort_admission_policy(manifest)
 
-    assert policy.loc[0, 'admission_status'] == 'pending_mask_quality'
-    assert policy.loc[0, 'exclusion_reason'] == 'manual_mask_external_requires_mask_quality_review'
+    assert policy.loc[0, 'admission_status'] == 'admitted'
+    assert policy.loc[0, 'exclusion_reason'] == ''
 
 
-def test_dox_mask_quality_audit_admits_approved_manual_external_rows(tmp_path):
+def test_dox_mask_quality_audit_records_provenance_for_admitted_manual_external_rows(tmp_path):
     runtime_root = tmp_path / 'runtime'
     image = _write_image(runtime_root / 'raw_data/cohorts/vegfri_dox/images/M1/M1_Image0.jpg')
     mask = _write_mask(runtime_root / 'raw_data/cohorts/vegfri_dox/masks/M1/M1_Image0_mask.png')
@@ -382,6 +383,7 @@ def test_dox_mask_quality_audit_admits_approved_manual_external_rows(tmp_path):
     assert audited['mask_quality_decision'].tolist() == ['approved']
     assert approved.loc[0, 'admission_status'] == 'admitted'
     assert approved.loc[0, 'mask_quality_review_status'] == 'approved'
+    assert outputs['panel_dir'] == runtime_root / 'raw_data/cohorts/vegfri_dox/metadata/mask_quality_panels'
     assert list(outputs['panel_dir'].glob('*.png'))
 
 

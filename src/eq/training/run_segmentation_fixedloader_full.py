@@ -139,6 +139,8 @@ def run_fixedloader_full(config_path: Path, *, dry_run: bool = False) -> Path:
                 str(_runtime_path(runtime_root, paths["glomeruli_data_dir"])),
                 "--output-dir",
                 str(_runtime_path(runtime_root, paths["comparison_output_dir"])),
+                "--run-id",
+                str(config["run"]["name"]),
                 "--transfer-base-model",
                 str(mito_base_model),
                 "--seed",

@@ -23,14 +23,12 @@ from eq.utils.paths import (
     get_runtime_cohort_manifest_path,
     get_runtime_cohort_manifest_summary_path,
     get_runtime_cohort_path,
-    get_runtime_segmentation_result_path,
 )
 
 IMAGE_SUFFIXES = {'.jpg', '.jpeg', '.png', '.tif', '.tiff'}
 MASK_SUFFIXES = {'.png', '.tif', '.tiff'}
 
 COHORT_LAUREN_PREECLAMPSIA = 'lauren_preeclampsia'
-LEGACY_COHORT_MASKED_CORE = 'masked_core'
 LANE_MANUAL_MASK_CORE = 'manual_mask_core'
 LANE_MANUAL_MASK_EXTERNAL = 'manual_mask_external'
 LANE_SCORED_ONLY = 'scored_only'
@@ -96,10 +94,6 @@ DEFAULT_DISCOVERY_SURFACES = (
 )
 COHORT_DISCOVERY_REQUIREMENTS = {
     COHORT_LAUREN_PREECLAMPSIA: (
-        'active_preeclampsia_runtime',
-        'labelstudio_annotations',
-    ),
-    LEGACY_COHORT_MASKED_CORE: (
         'active_preeclampsia_runtime',
         'labelstudio_annotations',
     ),
@@ -443,8 +437,7 @@ def enrich_unified_manifest(
             if mask_path_value and mask_exists:
                 lane = (
                     LANE_MANUAL_MASK_CORE
-                    if _clean_str(row.get('cohort_id'))
-                    in {COHORT_LAUREN_PREECLAMPSIA, LEGACY_COHORT_MASKED_CORE}
+                    if _clean_str(row.get('cohort_id')) == COHORT_LAUREN_PREECLAMPSIA
                     else LANE_MANUAL_MASK_EXTERNAL
                 )
             else:
@@ -884,20 +877,6 @@ def build_lauren_preeclampsia_runtime_cohort(
     )
 
 
-def build_masked_core_runtime_cohort(
-    *,
-    runtime_root: Path | None = None,
-    project_dir: Path | None = None,
-    annotation_source: Path | None = None,
-) -> pd.DataFrame:
-    """Build the Lauren preeclampsia cohort; legacy API name kept for callers."""
-    return build_lauren_preeclampsia_runtime_cohort(
-        runtime_root=runtime_root,
-        project_dir=project_dir,
-        annotation_source=annotation_source,
-    )
-
-
 def build_dox_runtime_cohort(
     *,
     runtime_root: Path | None = None,
@@ -1032,16 +1011,6 @@ def inventory_lauren_preeclampsia_from_score_table(
             }
         )
     return pd.DataFrame(rows)
-
-
-def inventory_masked_core_from_score_table(
-    score_table: pd.DataFrame, *, runtime_root: Path | None = None
-) -> pd.DataFrame:
-    """Translate Lauren preeclampsia rows; legacy API name kept for callers."""
-    return inventory_lauren_preeclampsia_from_score_table(
-        score_table,
-        runtime_root=runtime_root,
-    )
 
 
 def inventory_image_files_as_unresolved(
@@ -1288,7 +1257,7 @@ def verify_mapping_bundle(manifest: pd.DataFrame, *, runtime_root: Path | None =
 
 
 def apply_cohort_admission_policy(manifest: pd.DataFrame) -> pd.DataFrame:
-    """Apply Dox/MR lane policy after mapping verification."""
+    """Apply cohort lane policy after mapping verification."""
     result = manifest.copy()
     for index, row in result.iterrows():
         cohort_id = _clean_str(row.get('cohort_id'))
@@ -1299,10 +1268,6 @@ def apply_cohort_admission_policy(manifest: pd.DataFrame) -> pd.DataFrame:
             if _clean_str(row.get('admission_status')) == 'admitted':
                 result.at[index, 'admission_status'] = 'evaluation_only'
                 result.at[index, 'exclusion_reason'] = 'mr_phase1_concordance_only_not_training_admitted'
-        elif cohort_id == 'vegfri_dox' and lane == LANE_MANUAL_MASK_EXTERNAL:
-            if _clean_str(row.get('admission_status')) == 'admitted':
-                result.at[index, 'admission_status'] = 'pending_mask_quality'
-                result.at[index, 'exclusion_reason'] = 'manual_mask_external_requires_mask_quality_review'
         elif lane == LANE_SCORED_ONLY and _clean_str(row.get('admission_status')) == 'admitted':
             result.at[index, 'admission_status'] = 'pending_transport_audit'
             result.at[index, 'exclusion_reason'] = 'scored_only_requires_segmentation_transport_audit'
@@ -1311,6 +1276,10 @@ def apply_cohort_admission_policy(manifest: pd.DataFrame) -> pd.DataFrame:
 
 def _default_dox_mask_quality_audit_path(runtime_root: Path) -> Path:
     return runtime_root / 'raw_data' / 'cohorts' / 'vegfri_dox' / 'metadata' / 'mask_quality_audit.csv'
+
+
+def _default_dox_mask_quality_panel_dir(runtime_root: Path) -> Path:
+    return runtime_root / 'raw_data' / 'cohorts' / 'vegfri_dox' / 'metadata' / 'mask_quality_panels'
 
 
 def _mask_connected_component_count(mask_array: np.ndarray) -> int:
@@ -1391,7 +1360,7 @@ def build_dox_mask_quality_audit(
     audit_path: Path | None = None,
     panel_dir: Path | None = None,
 ) -> dict[str, Path]:
-    """Build the Dox masked-external quality audit and visual review panels."""
+    """Build optional Dox mask import-provenance audit panels."""
     runtime_root = Path(runtime_root) if runtime_root else get_active_runtime_root()
     manifest = (
         manifest.copy()
@@ -1402,14 +1371,14 @@ def build_dox_mask_quality_audit(
     panel_dir = (
         Path(panel_dir)
         if panel_dir
-        else get_runtime_segmentation_result_path('vegfri_dox', runtime_root) / 'mask_quality'
+        else _default_dox_mask_quality_panel_dir(runtime_root)
     )
 
     lane_series = manifest['lane_assignment'].map(normalize_lane_assignment)
     candidates = manifest[
         (manifest['cohort_id'].astype(str) == 'vegfri_dox')
         & (lane_series == LANE_MANUAL_MASK_EXTERNAL)
-        & (manifest['admission_status'].astype(str).isin({'pending_mask_quality', 'admitted'}))
+        & (manifest['admission_status'].astype(str) == 'admitted')
     ].copy()
     rows: list[dict[str, Any]] = []
     for row in candidates.itertuples(index=False):
@@ -1482,7 +1451,7 @@ def build_dox_mask_quality_audit(
         'foreground_fraction_median': float(audit['foreground_fraction'].median()) if not audit.empty else None,
         'foreground_fraction_max': float(audit['foreground_fraction'].max()) if not audit.empty else None,
         'panel_pages': panel_paths,
-        'training_admission_rule': 'approved rows are admitted for masked-external segmentation augmentation',
+        'training_admission_rule': 'Dox manual-mask rows are accepted as first-class glomeruli training labels; this audit is provenance only',
     }
     summary_path = audit_path.with_name('mask_quality_summary.json')
     summary_path.write_text(json.dumps(summary, indent=2), encoding='utf-8')
@@ -1495,7 +1464,7 @@ def apply_dox_mask_quality_approval(
     runtime_root: Path | None = None,
     audit_path: Path | None = None,
 ) -> pd.DataFrame:
-    """Admit Dox masked-external rows approved by the mask-quality audit."""
+    """Attach optional Dox mask-audit provenance without changing admission."""
     runtime_root = Path(runtime_root) if runtime_root else get_active_runtime_root()
     audit_path = Path(audit_path) if audit_path else _default_dox_mask_quality_audit_path(runtime_root)
     result = manifest.copy()
@@ -1526,13 +1495,9 @@ def apply_dox_mask_quality_approval(
             and normalize_lane_assignment(row.get('lane_assignment')) == LANE_MANUAL_MASK_EXTERNAL
         ):
             if row_id in approved:
-                result.at[index, 'admission_status'] = 'admitted'
-                result.at[index, 'exclusion_reason'] = ''
                 result.at[index, 'mask_quality_review_status'] = 'approved'
                 result.at[index, 'mask_quality_audit_path'] = audit_rel
             elif row_id in blocked:
-                result.at[index, 'admission_status'] = 'excluded'
-                result.at[index, 'exclusion_reason'] = 'mask_quality_audit_blocked'
                 result.at[index, 'mask_quality_review_status'] = 'blocked'
                 result.at[index, 'mask_quality_audit_path'] = audit_rel
     return result
@@ -1548,7 +1513,7 @@ def apply_discovery_reconciliation(
     result = manifest.copy()
     for index, row in result.iterrows():
         admission = _clean_str(row.get('admission_status'))
-        if admission in {'admitted', 'foreign', 'excluded', 'evaluation_only', 'pending_mask_quality'}:
+        if admission in {'admitted', 'foreign', 'excluded', 'evaluation_only'}:
             continue
         cohort_id = _clean_str(row.get('cohort_id'))
         required = tuple(requirements.get(cohort_id, DEFAULT_DISCOVERY_SURFACES))

@@ -12,7 +12,6 @@ def test_can_import_eq_and_subpackages():
         'evaluation',
         'training',
         'inference',
-        'models',
         'utils',
     ]:
         module = importlib.import_module(f'eq.{subpackage}')

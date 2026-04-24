@@ -154,17 +154,21 @@ def test_compare_glomeruli_candidates_writes_reports_for_tied_candidates(tmp_pat
             examples_per_category=1,
             transfer_model_name="transfer_candidate",
             scratch_model_name="scratch_candidate",
+            run_id="unit_test_run",
         )
     )
 
+    run_output = output_root / "unit_test_run"
     assert payload["decision"]["decision_state"] == "insufficient_evidence"
-    assert (output_root / "deterministic_validation_manifest.json").exists()
-    assert (output_root / "candidate_summary.csv").exists()
-    assert (output_root / "candidate_predictions.csv").exists()
-    assert (output_root / "promotion_report.json").exists()
-    assert (output_root / "promotion_report.md").exists()
-    assert (output_root / "promotion_report.html").exists()
-    html_report = (output_root / "promotion_report.html").read_text()
+    assert payload["run_id"] == "unit_test_run"
+    assert payload["output_dir"] == str(run_output)
+    assert (run_output / "deterministic_validation_manifest.json").exists()
+    assert (run_output / "candidate_summary.csv").exists()
+    assert (run_output / "candidate_predictions.csv").exists()
+    assert (run_output / "promotion_report.json").exists()
+    assert (run_output / "promotion_report.md").exists()
+    assert (run_output / "promotion_report.html").exists()
+    html_report = (run_output / "promotion_report.html").read_text()
     assert "Manifest Coverage" in html_report
     assert "panel order: raw | truth overlay | prediction overlay" in html_report
 
@@ -240,7 +244,7 @@ def test_compare_parser_defaults_to_runtime_output_root(monkeypatch, tmp_path):
     parser = build_arg_parser()
     args = parser.parse_args(["--data-dir", str(tmp_path / "raw_data" / "project" / "training_pairs")])
 
-    assert args.output_dir == str(runtime_root / "output" / "glomeruli_candidate_comparison")
+    assert args.output_dir == str(runtime_root / "output" / "segmentation_evaluation" / "glomeruli_candidate_comparison")
 
 
 def test_predict_crop_uses_learner_preprocessing_and_underconfident_threshold(monkeypatch):

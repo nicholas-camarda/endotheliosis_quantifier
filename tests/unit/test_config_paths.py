@@ -22,9 +22,11 @@ from eq.utils.paths import (
     get_runtime_cohorts_root,
     get_runtime_mitochondria_data_path,
     get_runtime_output_path,
+    get_runtime_prediction_path,
+    get_runtime_predictions_root,
     get_runtime_raw_data_path,
-    get_runtime_segmentation_result_path,
-    get_runtime_segmentation_results_root,
+    get_runtime_segmentation_evaluation_path,
+    get_runtime_segmentation_evaluation_root,
 )
 
 
@@ -56,8 +58,13 @@ def test_path_helpers_resolve_from_repo_root(monkeypatch):
     assert get_runtime_cohort_manifest_summary_path() == active_root / "derived_data/cohort_manifest/manifest_summary.json"
     assert get_runtime_cohort_path("vegfri_dox") == active_root / "raw_data/cohorts/vegfri_dox"
     assert get_runtime_mitochondria_data_path() == active_root / "raw_data/mitochondria_data"
-    assert get_runtime_segmentation_results_root() == active_root / "output/segmentation_results"
-    assert get_runtime_segmentation_result_path("vegfri_dox") == active_root / "output/segmentation_results/vegfri_dox"
+    assert get_runtime_segmentation_evaluation_root() == active_root / "output/segmentation_evaluation"
+    assert (
+        get_runtime_segmentation_evaluation_path("glomeruli_candidate_comparison")
+        == active_root / "output/segmentation_evaluation/glomeruli_candidate_comparison"
+    )
+    assert get_runtime_predictions_root() == active_root / "output/predictions"
+    assert get_runtime_prediction_path("glomeruli") == active_root / "output/predictions/glomeruli"
     assert get_runtime_quantification_results_root() == active_root / "output/quantification_results"
     assert get_runtime_quantification_result_path("lauren_preeclampsia") == active_root / "output/quantification_results/lauren_preeclampsia"
 
@@ -81,8 +88,13 @@ def test_path_helpers_prefer_runtime_root_when_present(tmp_path, monkeypatch):
     assert get_runtime_cohort_path("lauren_preeclampsia") == runtime_root / "raw_data/cohorts/lauren_preeclampsia"
     assert get_runtime_mitochondria_data_path() == runtime_root / "raw_data/mitochondria_data"
     assert get_runtime_output_path() == runtime_root / "output"
-    assert get_runtime_segmentation_results_root() == runtime_root / "output/segmentation_results"
-    assert get_runtime_segmentation_result_path("vegfri_dox") == runtime_root / "output/segmentation_results/vegfri_dox"
+    assert get_runtime_segmentation_evaluation_root() == runtime_root / "output/segmentation_evaluation"
+    assert (
+        get_runtime_segmentation_evaluation_path("glomeruli_candidate_comparison")
+        == runtime_root / "output/segmentation_evaluation/glomeruli_candidate_comparison"
+    )
+    assert get_runtime_predictions_root() == runtime_root / "output/predictions"
+    assert get_runtime_prediction_path("mitochondria") == runtime_root / "output/predictions/mitochondria"
     assert get_runtime_quantification_results_root() == runtime_root / "output/quantification_results"
     assert get_runtime_quantification_result_path("lauren_preeclampsia") == runtime_root / "output/quantification_results/lauren_preeclampsia"
 
@@ -96,8 +108,13 @@ def test_runtime_cohort_helpers_accept_explicit_runtime_root(tmp_path):
     assert get_runtime_cohort_manifest_summary_path(runtime_root) == runtime_root / "derived_data/cohort_manifest/manifest_summary.json"
     assert get_runtime_cohort_path("vegfri_dox", runtime_root) == runtime_root / "raw_data/cohorts/vegfri_dox"
     assert get_runtime_mitochondria_data_path(runtime_root) == runtime_root / "raw_data/mitochondria_data"
-    assert get_runtime_segmentation_results_root(runtime_root) == runtime_root / "output/segmentation_results"
-    assert get_runtime_segmentation_result_path("vegfri_dox", runtime_root) == runtime_root / "output/segmentation_results/vegfri_dox"
+    assert get_runtime_segmentation_evaluation_root(runtime_root) == runtime_root / "output/segmentation_evaluation"
+    assert (
+        get_runtime_segmentation_evaluation_path("glomeruli", runtime_root)
+        == runtime_root / "output/segmentation_evaluation/glomeruli"
+    )
+    assert get_runtime_predictions_root(runtime_root) == runtime_root / "output/predictions"
+    assert get_runtime_prediction_path("glomeruli", runtime_root) == runtime_root / "output/predictions/glomeruli"
     assert get_runtime_quantification_results_root(runtime_root) == runtime_root / "output/quantification_results"
     assert get_runtime_quantification_result_path("vegfri_dox", runtime_root) == runtime_root / "output/quantification_results/vegfri_dox"
 
@@ -114,6 +131,30 @@ def test_external_cohort_source_paths_are_overridable(monkeypatch, tmp_path):
     assert get_dox_label_studio_export_path() == dox_export
     assert get_mr_score_workbook_path() == mr_workbook
     assert get_mr_image_root_path() == mr_images
+
+
+def test_current_docs_and_configs_use_operation_specific_output_roots():
+    checked_paths = [
+        Path("README.md"),
+        Path("docs/OUTPUT_STRUCTURE.md"),
+        Path("docs/ONBOARDING_GUIDE.md"),
+        Path("configs/segmentation_fixedloader_full_retrain.yaml"),
+        Path("configs/glomeruli_finetuning_config.yaml"),
+        Path("configs/mito_pretraining_config.yaml"),
+        Path("openspec/changes/expand-scored-only-quantification-cohort/proposal.md"),
+        Path("openspec/changes/expand-scored-only-quantification-cohort/design.md"),
+        Path("openspec/changes/expand-scored-only-quantification-cohort/specs/scored-only-quantification-cohort/spec.md"),
+    ]
+    text = "\n".join(path.read_text(encoding="utf-8") for path in checked_paths)
+
+    assert "output/segmentation_results" not in text
+    assert "output/segmentation_evaluation" in text
+    assert "output/predictions" in text
+    assert "masked_core" not in text
+    assert "masked-core" not in text
+    assert "admitted after mask-quality review" not in text
+    assert "mask-quality gate" not in text
+    assert "explicit mask-quality" not in text
 
 
 def test_config_manager_uses_resolved_paths_and_reloadable_global_config(tmp_path, monkeypatch):

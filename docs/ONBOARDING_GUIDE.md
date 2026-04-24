@@ -11,7 +11,7 @@ At a high level, the project uses a two-stage idea:
 1. Train a segmentation model on a mitochondria dataset to learn useful visual features such as edges, substructure, and boundaries.
 2. Transfer that knowledge to glomeruli segmentation in kidney histology images.
 
-That segmentation output now supports a first frozen-embedding ordinal scoring workflow for preeclampsia data.
+That segmentation output supports a first frozen-embedding ordinal scoring workflow for preeclampsia data.
 
 ## Key Ideas
 
@@ -149,8 +149,8 @@ This is especially useful if you are moving between a CUDA desktop, a CPU-only m
 ## Validate Naming Early
 
 ```bash
-eq validate-naming --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia"
-eq validate-naming --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia" --strict
+eq validate-naming --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>"
+eq validate-naming --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>" --strict
 ```
 
 This helps catch avoidable problems before you launch a long training job.
@@ -212,14 +212,11 @@ Each cohort has one localized working directory under:
 $EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>/
 ```
 
-The manifest is image-level and records runtime-local asset paths, score linkage, optional mask path, treatment group, lane assignment, verification state, admission state, and file hashes. Original PhD or cloud source folders remain provenance sources; normal cohort work uses the localized runtime cohort directories.
+The manifest is image-level and records runtime-local asset paths, score linkage, optional mask path, treatment group, lane assignment, verification state, admission state, and file hashes. Original source folders remain provenance sources; normal cohort work uses the localized runtime cohort directories.
 
-Current external cohort rules:
+The cohort manifest is a project-local data contract. It is useful for this lab workflow because it makes image paths, mask paths, scores, admission state, and file hashes auditable in one place. It should not be read as a generic public dataset requirement. Current local cohort counts and unresolved-source notes are recorded in the [technical lab notebook](TECHNICAL_LAB_NOTEBOOK.md#local-cohort-manifest-snapshot).
 
-- `lauren_preeclampsia` currently contributes 88 admitted `manual_mask_core` rows from Lauren's preeclampsia Label Studio workflow.
-- `vegfri_dox` currently contributes 864 Label Studio export rows: 619 decoded `manual_mask_external` rows accepted as first-class glomeruli training labels, 7 decoded rows missing scores, 228 foreign mixed-export rows, and 10 scored-only rows without decoded runtime images.
-- `vegfri_mr` currently contributes 127 workbook image-level rows from the external-drive whole-field TIFF batches. Of these, 126 are localized for concordance/evaluation only and one workbook row, `8570-5`, remains unresolved because the matching TIFF was not found.
-- Lucchi and other segmentation-install datasets are not part of the scored cohort manifest.
+Lucchi and other segmentation-install datasets are not part of the scored cohort manifest.
 
 Refresh the cohort manifest with:
 
@@ -287,25 +284,25 @@ python -m eq.training.train_glomeruli \
 
 On the powerful Apple Silicon MPS machine class, `12` is the current starting batch-size recommendation for `512x512` glomeruli crops. Override it when throughput or stability requires a different value.
 
-For all-data glomeruli training, use the manifest-backed `raw_data/cohorts` registry root. It trains from admitted manifest rows in the `manual_mask_core` and `manual_mask_external` lanes, so unresolved, foreign, MR concordance-only, and scored-only rows stay out. For Lauren-only training, use `raw_data/cohorts/lauren_preeclampsia`. Raw backup trees are source material, not direct training roots. Generated manifests, audits, caches, and metrics belong under `derived_data` or `output`.
+For all-data glomeruli training, use the manifest-backed `raw_data/cohorts` registry root. It trains from admitted manifest rows in the `manual_mask_core` and `manual_mask_external` lanes, so unresolved, foreign, evaluation-only, and scored-only rows stay out. For a single-cohort run, use `raw_data/cohorts/<cohort_id>`. Raw backup trees are source material, not direct training roots. Generated manifests, audits, caches, and metrics belong under `derived_data` or `output`.
 
-The dedicated training module CLI is the authoritative control surface. Optional YAML files are overlays, not the promotion contract, and the later artifact path is derived from the base `--model-name` plus the auto-generated run suffix. Transfer training with `--base-model` must load that artifact and copy compatible weights or the run stops. The `--from-scratch` candidate is the no-mitochondria-base comparator with an ImageNet-pretrained ResNet34 encoder, not a literal all-random initialization baseline. After training, inspect the produced `.pkl` path and reuse that exact path in downstream comparison or quantification commands.
+The YAML workflow is the normal control surface for full candidate training and comparison. Direct training module commands remain useful for targeted runs, and the later artifact path is derived from the base model name plus the auto-generated run suffix. Transfer training with `--base-model` must load that artifact and copy compatible weights or the run stops. The `--from-scratch` candidate is the no-mitochondria-base comparator with an ImageNet-pretrained ResNet34 encoder, not a literal all-random initialization baseline. After training, inspect the produced `.pkl` path and reuse that exact path in downstream comparison or quantification commands.
 
 ### 4. Run The Current Quantification Baseline
 
 ```bash
 eq prepare-quant-contract \
-  --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia" \
+  --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>" \
   --segmentation-model "$EQ_RUNTIME_ROOT/models/segmentation/glomeruli/<your_model>.pkl" \
   --score-source labelstudio \
-  --annotation-source "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia/scores/labelstudio_annotations.json"
+  --annotation-source "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>/scores/labelstudio_annotations.json"
 
 eq quant-endo \
-  --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia" \
+  --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>" \
   --segmentation-model "$EQ_RUNTIME_ROOT/models/segmentation/glomeruli/<your_model>.pkl" \
   --score-source labelstudio \
-  --annotation-source "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia/scores/labelstudio_annotations.json" \
-  --output-dir "$EQ_RUNTIME_ROOT/output/quantification/lauren_preeclampsia"
+  --annotation-source "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>/scores/labelstudio_annotations.json" \
+  --output-dir "$EQ_RUNTIME_ROOT/output/quantification_results/<cohort_id>"
 ```
 
 This writes:
