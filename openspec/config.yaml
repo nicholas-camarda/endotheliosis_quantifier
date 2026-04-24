@@ -25,6 +25,10 @@ rules:
     - Distinguish legacy model artifacts, compatibility artifacts, supported runtime artifacts, and scientifically promoted artifacts.
     - Separate descriptive, associational, causal, and predictive/prognostic claims.
     - State compatibility risks for existing local data, model files, and quantification outputs.
+    - Prefer exact workflow IDs, module paths, function names, config filenames, CLI commands, and output roots whenever they can be decided at proposal time.
+    - Include a `## Explicit Decisions` section whenever concrete names or paths have been fixed.
+    - If unresolved questions remain, include a `## Open Questions` section and tag every question as `[resolve_before_apply]`, `[audit_first_then_decide]`, or `[defer_ok]`.
+    - Do not hide undecided implementation surfaces behind vague placeholders such as `new workflow runner`, `new config`, `or its replacement`, or `where needed`; record that uncertainty as a tagged open question instead.
   specs:
     - Use current repository terminology for segmentation, Label Studio scores, union ROIs, embeddings, and ordinal outputs.
     - Describe observable behavior in concrete repo, runtime-output, and published-artifact terms.
@@ -35,6 +39,11 @@ rules:
     - Do not make tests depend on legacy FastAI pickle artifacts unless the change is explicitly about legacy artifact compatibility.
     - Include failure modes that could silently change labels, masks, ROI geometry, embeddings, metrics, or review artifacts.
     - Treat positive-only patch sampling, all-foreground/all-background masks, flat validation curves, and degenerate prediction grids as model-promotion blockers.
+    - Prefer exact workflow IDs, module paths, function names, config filenames, CLI commands, and output roots whenever they can be decided at design time.
+    - Use a `## Explicit Decisions` section instead of leaving key naming or ownership choices implicit.
+    - If unresolved questions remain, include a `## Open Questions` section and tag every question as `[resolve_before_apply]`, `[audit_first_then_decide]`, or `[defer_ok]`.
+    - Questions tagged `[audit_first_then_decide]` must identify the audit target, evidence source, or inspection step that will determine the answer.
   tasks:
     - Break work into small reviewable steps with implementation, tests, and docs/config updates when behavior changes.
     - Include validation commands covering imports, relevant CLI paths, unit tests, and any changed OpenSpec artifacts.
+    - When a repository-local explicitness checker exists, include it in the final validation task for changes that add or materially revise proposal/design artifacts.
