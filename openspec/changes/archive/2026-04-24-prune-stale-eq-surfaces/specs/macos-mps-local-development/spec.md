@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Mac certification uses current active entrypoints
 Mac local-development certification SHALL use active current-namespace entrypoints and SHALL NOT rely on retired production, no-op, or historical-compatibility surfaces.

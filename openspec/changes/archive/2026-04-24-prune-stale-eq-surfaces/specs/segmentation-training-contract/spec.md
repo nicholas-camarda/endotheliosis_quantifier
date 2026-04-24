@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Static patch roots are retired and not active code paths
 Supported segmentation training SHALL use full-image `images/` and `masks/` roots with dynamic patching, and SHALL NOT expose active source-code paths that create, load, audit, or train from pre-generated `image_patches/` and `mask_patches/` trees.
