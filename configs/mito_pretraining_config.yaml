@@ -1,80 +1,114 @@
-# Mitochondria Pretraining Configuration
-# This is Step 1 of the segmentation pipeline - pretraining on mitochondria data
-# The resulting model serves as the foundation for glomeruli fine-tuning
+# Runnable with:
+#   eq run-config --config configs/mito_pretraining_config.yaml
+#
+# Purpose:
+#   Train a mitochondria segmentation base model from the Lucchi full-image
+#   training split. This is a mitochondria-only run. It does not train glomeruli
+#   and does not compare promotion candidates.
+#
+# Path rules:
+#   - All relative paths below are resolved under EQ_RUNTIME_ROOT.
+#   - Active image/mask training data lives under raw_data.
+#   - Generated caches, plots, and models live under derived_data, output, or models.
+
+workflow: segmentation_mitochondria_pretraining
+
+run:
+  # Human-readable run label recorded in config provenance.
+  name: mitochondria_pretraining_eqmac
+
+  # Seed used by the config runner and training code where supported.
+  seed: 42
+
+  # Runtime root used by the one-command runner. If EQ_RUNTIME_ROOT is not set,
+  # the runner uses runtime_root_default.
+  runtime_root_env: EQ_RUNTIME_ROOT
+  runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
+
+  # Mac project execution must use eq-mac. Generic eq is not the supported Mac
+  # MPS environment for this repo.
+  python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
+
+  # Injected into subprocesses launched by eq run-config.
+  required_env:
+    PYTORCH_ENABLE_MPS_FALLBACK: "1"
+    MPLCONFIGDIR: /tmp/mpl_eq
 
 name: "mitochondria_pretraining"
-description: "Initial U-Net training on mitochondria EM data for transfer learning"
+description: "Train a mitochondria U-Net base model for later glomeruli transfer"
 
-# Data Pipeline Configuration
 data:
-  # Step 1: Raw TIF stack extraction
-  raw_stack: "data/mitochondria_data/mitochondria-data-stack.tif"
-  
-  # Step 2: Extracted individual TIFs (already done)
+  # Original stack paths, kept as source provenance. The runner does not train
+  # from these stack files; it trains from processed.train_dir below.
+  raw_stack: "raw_data/mitochondria_data/mitochondria-data-stack.tif"
   extracted_tifs:
-    training: "data/mitochondria_data/training.tif"
-    testing: "data/mitochondria_data/testing.tif"
-    training_groundtruth: "data/mitochondria_data/training_groundtruth.tif"
-    testing_groundtruth: "data/mitochondria_data/testing_groundtruth.tif"
-  
-  # Step 3: Converted JPG images
+    training: "raw_data/mitochondria_data/training.tif"
+    testing: "raw_data/mitochondria_data/testing.tif"
+    training_groundtruth: "raw_data/mitochondria_data/training_groundtruth.tif"
+    testing_groundtruth: "raw_data/mitochondria_data/testing_groundtruth.tif"
+
+  # Installed full-image Lucchi layout. This is raw segmentation training data,
+  # not derived data and not a scored cohort.
   converted_images:
-    base_dir: "data/mitochondria_data"
-    train_dir: "data/mitochondria_data/training"
-    test_dir: "data/mitochondria_data/testing"
-  
-  # Step 4: Data loading for U-Net training
+    base_dir: "raw_data/mitochondria_data"
+    train_dir: "raw_data/mitochondria_data/training"
+    test_dir: "raw_data/mitochondria_data/testing"
+
   processed:
-    train_dir: "data/derived_data/mitochondria_data/training"
-    train_image_dir: "data/derived_data/mitochondria_data/training/images"
-    train_mask_dir: "data/derived_data/mitochondria_data/training/masks"
-    heldout_test_dir: "data/derived_data/mitochondria_data/testing"
-    heldout_test_image_dir: "data/derived_data/mitochondria_data/testing/images"
-    heldout_test_mask_dir: "data/derived_data/mitochondria_data/testing/masks"
-    cache_dir: "data/derived_data/mitochondria_data/cache"
+    # This is the data root passed to eq.training.train_mitochondria.
+    # It must contain images/ and masks/.
+    train_dir: "raw_data/mitochondria_data/training"
+    train_image_dir: "raw_data/mitochondria_data/training/images"
+    train_mask_dir: "raw_data/mitochondria_data/training/masks"
+
+    # Held-out physical testing split. This is not included in training-time
+    # validation unless an explicit evaluation command uses it later.
+    heldout_test_dir: "raw_data/mitochondria_data/testing"
+    heldout_test_image_dir: "raw_data/mitochondria_data/testing/images"
+    heldout_test_mask_dir: "raw_data/mitochondria_data/testing/masks"
+
+    # Cache only. Do not put active trainable image/mask roots under derived_data.
+    cache_dir: "derived_data/segmentation_cache/mitochondria"
     train_ratio: 0.8
     val_ratio: 0.2
     random_seed: 42
     training_mode: "dynamic_full_image_patching"
 
-# Model Configuration
 model:
   architecture: "dynamic_unet"
   backbone: "resnet34"
   input_size: [256, 256]
-  num_classes: 2  # background + mitochondria
-  
-  # Training parameters
+  num_classes: 2
+
   training:
+    # Mac/MPS starting point for 256x256 mitochondria training.
     epochs: 50
     batch_size: 24
     learning_rate: 1e-3
     weight_decay: 1e-4
-    
-  # Output configuration
-  output_dir: "models/segmentation/mitochondria"  # Using standardized path
+
+  # The runner passes output_dir and model_name directly to train_mitochondria.
+  # The trainer appends its own descriptive suffix and exports a .pkl under the
+  # run directory.
+  output_dir: "models/segmentation/mitochondria"
   model_name: "mito_dynamic_unet_seg_model"
   checkpoint_path: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model.pkl"
 
-# Hardware Configuration
 hardware:
-  device: "auto"  # auto-detect MPS/CUDA/CPU
+  device: "auto"
   mixed_precision: true
   num_workers: 4
 
-# Reproducibility
 reproducibility:
   random_seed: 42
   deterministic: true
 
-# Logging and Monitoring
 logging:
   level: "INFO"
   save_plots: true
-  plot_dir: "output/plots"
-  
-# Next Step Information
+  plot_dir: "output/segmentation_results/mitochondria_training/plots"
+
 next_step:
-  description: "Use this trained model as starting point for glomeruli fine-tuning"
+  description: "Use the exported mitochondria .pkl as the explicit base model for glomeruli transfer."
   config_file: "configs/glomeruli_finetuning_config.yaml"
-  checkpoint_to_use: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model.pkl"
+  artifact_glob: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model-pretrain_e50_b24_lr1e-3_sz256/*.pkl"

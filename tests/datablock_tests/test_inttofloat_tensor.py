@@ -17,7 +17,7 @@ try:
     import numpy as np
     import torch
     
-    data_root = "/home/ncamarda/endotheliosis_quantifier/data/derived_data/mito"
+    data_root = str(Path.home() / "ProjectsRuntime" / "endotheliosis_quantifier" / "raw_data" / "mitochondria_data" / "training")
     from eq.data_management.datablock_loader import get_items_full_images
     
     items = get_items_full_images(Path(data_root))

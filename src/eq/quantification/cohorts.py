@@ -21,13 +21,29 @@ from eq.utils.paths import (
     get_mr_image_root_path,
     get_mr_score_workbook_path,
     get_runtime_cohort_manifest_path,
-    get_runtime_cohort_output_path,
+    get_runtime_cohort_manifest_summary_path,
     get_runtime_cohort_path,
-    get_runtime_cohorts_root,
+    get_runtime_segmentation_result_path,
 )
 
 IMAGE_SUFFIXES = {'.jpg', '.jpeg', '.png', '.tif', '.tiff'}
 MASK_SUFFIXES = {'.png', '.tif', '.tiff'}
+
+COHORT_LAUREN_PREECLAMPSIA = 'lauren_preeclampsia'
+LEGACY_COHORT_MASKED_CORE = 'masked_core'
+LANE_MANUAL_MASK_CORE = 'manual_mask_core'
+LANE_MANUAL_MASK_EXTERNAL = 'manual_mask_external'
+LANE_SCORED_ONLY = 'scored_only'
+LANE_MR_CONCORDANCE_ONLY = 'mr_concordance_only'
+LEGACY_LANE_ALIASES = {
+    'manual_mask': LANE_MANUAL_MASK_CORE,
+    'masked_external': LANE_MANUAL_MASK_EXTERNAL,
+}
+TRAINING_MASK_LANES = {
+    LANE_MANUAL_MASK_CORE,
+    LANE_MANUAL_MASK_EXTERNAL,
+    *LEGACY_LANE_ALIASES.keys(),
+}
 
 HUMAN_REQUIRED_COLUMNS = ('cohort_id', 'image_path', 'score')
 SCORE_LOCATOR_COLUMNS = ('source_score_row', 'source_sample_id')
@@ -79,15 +95,28 @@ DEFAULT_DISCOVERY_SURFACES = (
     'cohort_metadata_logs',
 )
 COHORT_DISCOVERY_REQUIREMENTS = {
-    'masked_core': ('active_preeclampsia_runtime', 'labelstudio_annotations'),
+    COHORT_LAUREN_PREECLAMPSIA: (
+        'active_preeclampsia_runtime',
+        'labelstudio_annotations',
+    ),
+    LEGACY_COHORT_MASKED_CORE: (
+        'active_preeclampsia_runtime',
+        'labelstudio_annotations',
+    ),
     'vegfri_dox': ('latest_dox_label_studio_export', 'decoded_brushlabel_masks.csv'),
     'vegfri_mr': ('mr_workbook', 'external_drive_whole_field_tiffs'),
 }
 DEFAULT_IMAGE_MIN_COMPONENT_AREA = 64
 DOX_MASK_QUALITY_MIN_FOREGROUND_FRACTION = 0.001
 DOX_MASK_QUALITY_MAX_FOREGROUND_FRACTION = 0.25
-DEFAULT_MASKED_CORE_PROJECT = 'raw_data/preeclampsia_project/data'
-DEFAULT_MASKED_CORE_ANNOTATIONS = 'raw_data/preeclampsia_project/annotations/annotations.json'
+DEFAULT_LAUREN_PREECLAMPSIA_PROJECT = (
+    f'raw_data/cohorts/{COHORT_LAUREN_PREECLAMPSIA}'
+)
+DEFAULT_LAUREN_PREECLAMPSIA_ANNOTATIONS = (
+    f'raw_data/cohorts/{COHORT_LAUREN_PREECLAMPSIA}/scores/labelstudio_annotations.json'
+)
+DEFAULT_MASKED_CORE_PROJECT = DEFAULT_LAUREN_PREECLAMPSIA_PROJECT
+DEFAULT_MASKED_CORE_ANNOTATIONS = DEFAULT_LAUREN_PREECLAMPSIA_ANNOTATIONS
 
 
 class CohortManifestError(RuntimeError):
@@ -170,6 +199,12 @@ def _clean_excel_label(value: Any) -> str:
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return _clean_str(value)
+
+
+def normalize_lane_assignment(value: Any) -> str:
+    """Return the canonical lane name while accepting legacy manifests."""
+    lane = _clean_str(value)
+    return LEGACY_LANE_ALIASES.get(lane, lane)
 
 
 def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
@@ -403,13 +438,18 @@ def enrich_unified_manifest(
         if mask_exists:
             work.at[index, 'mask_sha256'] = sha256_file(mask_path)
 
-        lane = _clean_str(row.get('lane_assignment'))
+        lane = normalize_lane_assignment(row.get('lane_assignment'))
         if not lane:
             if mask_path_value and mask_exists:
-                lane = 'manual_mask' if _clean_str(row.get('cohort_id')) == 'masked_core' else 'masked_external'
+                lane = (
+                    LANE_MANUAL_MASK_CORE
+                    if _clean_str(row.get('cohort_id'))
+                    in {COHORT_LAUREN_PREECLAMPSIA, LEGACY_COHORT_MASKED_CORE}
+                    else LANE_MANUAL_MASK_EXTERNAL
+                )
             else:
-                lane = 'scored_only'
-            work.at[index, 'lane_assignment'] = lane
+                lane = LANE_SCORED_ONLY
+        work.at[index, 'lane_assignment'] = lane
 
         preset_admission = _clean_str(row.get('admission_status'))
         if preset_admission in {'foreign', 'excluded'}:
@@ -523,7 +563,7 @@ def write_manifest_summary(
     output_path = (
         Path(output_path)
         if output_path
-        else get_runtime_cohorts_root(runtime_root) / 'metadata' / 'manifest_summary.json'
+        else get_runtime_cohort_manifest_summary_path(runtime_root)
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(summarize_manifest(manifest), indent=2), encoding='utf-8')
@@ -695,7 +735,7 @@ def inventory_decoded_dox_runtime(
                 'source_score_sheet': 'latest_label_studio_brushlabel_export',
                 'score_path': _runtime_relative(ledger_path, runtime_root),
                 'treatment_group': treatment_group_from_dox_sample(subject_prefix),
-                'lane_assignment': 'masked_external',
+                'lane_assignment': LANE_MANUAL_MASK_EXTERNAL,
                 'join_status': 'pending_score_linkage',
                 'verification_status': 'pending_discovery',
                 'admission_status': 'unresolved',
@@ -787,26 +827,30 @@ def _load_label_studio_choice_scores(annotation_source: Path) -> pd.DataFrame:
     ).drop_duplicates(subset=['task_id', 'image_name'], keep='last')
 
 
-def build_masked_core_runtime_cohort(
+def build_lauren_preeclampsia_runtime_cohort(
     *,
     runtime_root: Path | None = None,
     project_dir: Path | None = None,
     annotation_source: Path | None = None,
 ) -> pd.DataFrame:
-    """Build localized masked-core rows from the active preeclampsia runtime."""
+    """Build localized Lauren preeclampsia rows from the active runtime."""
     from eq.quantification.labelstudio_scores import recover_label_studio_score_table
 
     runtime_root = Path(runtime_root) if runtime_root else get_active_runtime_root()
-    project_dir = Path(project_dir) if project_dir else runtime_root / DEFAULT_MASKED_CORE_PROJECT
+    project_dir = (
+        Path(project_dir)
+        if project_dir
+        else runtime_root / DEFAULT_LAUREN_PREECLAMPSIA_PROJECT
+    )
     annotation_source = (
         Path(annotation_source)
         if annotation_source
-        else runtime_root / DEFAULT_MASKED_CORE_ANNOTATIONS
+        else runtime_root / DEFAULT_LAUREN_PREECLAMPSIA_ANNOTATIONS
     )
     if not project_dir.exists() or not annotation_source.exists():
         return pd.DataFrame(columns=ENRICHED_MANIFEST_COLUMNS)
 
-    cohort_dir = runtime_root / 'raw_data' / 'cohorts' / 'masked_core'
+    cohort_dir = runtime_root / 'raw_data' / 'cohorts' / COHORT_LAUREN_PREECLAMPSIA
     scores_dir = cohort_dir / 'scores'
     outputs = recover_label_studio_score_table(project_dir, annotation_source, scores_dir)
     score_table = pd.read_csv(outputs['scores'])
@@ -826,7 +870,7 @@ def build_masked_core_runtime_cohort(
                 'source_score_sheet': annotation_source.name,
                 'score_path': _runtime_relative(outputs['scores'], runtime_root),
                 'score': row.score,
-                'lane_assignment': 'manual_mask',
+                'lane_assignment': LANE_MANUAL_MASK_CORE,
                 'discovery_surfaces': 'active_preeclampsia_runtime;labelstudio_annotations',
             }
             for row in score_table.itertuples(index=False)
@@ -834,9 +878,23 @@ def build_masked_core_runtime_cohort(
     )
     return harmonize_localized_cohort(
         records,
-        'masked_core',
+        COHORT_LAUREN_PREECLAMPSIA,
         runtime_root=runtime_root,
         source_audit_path=cohort_dir / 'metadata' / 'source_audit.csv',
+    )
+
+
+def build_masked_core_runtime_cohort(
+    *,
+    runtime_root: Path | None = None,
+    project_dir: Path | None = None,
+    annotation_source: Path | None = None,
+) -> pd.DataFrame:
+    """Build the Lauren preeclampsia cohort; legacy API name kept for callers."""
+    return build_lauren_preeclampsia_runtime_cohort(
+        runtime_root=runtime_root,
+        project_dir=project_dir,
+        annotation_source=annotation_source,
     )
 
 
@@ -891,7 +949,7 @@ def build_dox_runtime_cohort(
     merged['exclusion_reason'] = np.where(
         merged['score'].notna(), '', 'missing_score'
     )
-    merged['lane_assignment'] = 'masked_external'
+    merged['lane_assignment'] = LANE_MANUAL_MASK_EXTERNAL
 
     decoded_task_ids = set(merged['source_score_row'].astype(str))
     extra_scores = scores[~scores['task_id'].astype(str).isin(decoded_task_ids)].copy()
@@ -921,7 +979,7 @@ def build_dox_runtime_cohort(
                 'source_score_sheet': annotation_source.name,
                 'score_path': _runtime_relative(scores_path, runtime_root),
                 'treatment_group': treatment_group_from_dox_sample(sample_id),
-                'lane_assignment': 'scored_only',
+                'lane_assignment': LANE_SCORED_ONLY,
                 'join_status': join_status,
                 'verification_status': verification_status,
                 'admission_status': status,
@@ -939,10 +997,10 @@ def build_dox_runtime_cohort(
     return merged
 
 
-def inventory_masked_core_from_score_table(
+def inventory_lauren_preeclampsia_from_score_table(
     score_table: pd.DataFrame, *, runtime_root: Path | None = None
 ) -> pd.DataFrame:
-    """Translate the current masked-core score table into unified-manifest rows."""
+    """Translate the Lauren preeclampsia score table into unified-manifest rows."""
     runtime_root = Path(runtime_root) if runtime_root else get_active_runtime_root()
     rows: list[dict[str, Any]] = []
     for row in score_table.itertuples(index=False):
@@ -956,7 +1014,7 @@ def inventory_masked_core_from_score_table(
         )
         rows.append(
             {
-                'cohort_id': 'masked_core',
+                'cohort_id': COHORT_LAUREN_PREECLAMPSIA,
                 'image_path': _runtime_relative(image_path, runtime_root),
                 'mask_path': _runtime_relative(mask_path, runtime_root) if mask_path.exists() else '',
                 'score': getattr(row, 'score', ''),
@@ -969,11 +1027,21 @@ def inventory_masked_core_from_score_table(
                 'score_path': _runtime_relative_or_empty(
                     _clean_str(getattr(row, 'annotation_source', '')), runtime_root
                 ),
-                'lane_assignment': 'manual_mask',
+                'lane_assignment': LANE_MANUAL_MASK_CORE,
                 'discovery_surfaces': 'active_preeclampsia_runtime;labelstudio_score_table',
             }
         )
     return pd.DataFrame(rows)
+
+
+def inventory_masked_core_from_score_table(
+    score_table: pd.DataFrame, *, runtime_root: Path | None = None
+) -> pd.DataFrame:
+    """Translate Lauren preeclampsia rows; legacy API name kept for callers."""
+    return inventory_lauren_preeclampsia_from_score_table(
+        score_table,
+        runtime_root=runtime_root,
+    )
 
 
 def inventory_image_files_as_unresolved(
@@ -983,7 +1051,7 @@ def inventory_image_files_as_unresolved(
     runtime_root: Path | None = None,
     treatment_group: str = '',
     source_score_sheet: str = '',
-    lane_assignment: str = 'scored_only',
+    lane_assignment: str = LANE_SCORED_ONLY,
     discovery_surfaces: Iterable[str] = DEFAULT_DISCOVERY_SURFACES,
 ) -> pd.DataFrame:
     """Inventory image files when score linkage is not yet deterministically available."""
@@ -1051,7 +1119,7 @@ def reduce_mr_replicates(
                     'score': float(np.median(replicate_values)),
                     'score_reduction_method': 'median_within_image_replicates',
                     'replicate_count': int(len(replicate_values)),
-                    'lane_assignment': 'mr_concordance_only',
+                    'lane_assignment': LANE_MR_CONCORDANCE_ONLY,
                 }
             )
             for replicate_index, value in enumerate(replicate_values, start=1):
@@ -1136,7 +1204,7 @@ def build_mr_runtime_cohort(
                 'score': row.score,
                 'score_reduction_method': row.score_reduction_method,
                 'replicate_count': row.replicate_count,
-                'lane_assignment': 'mr_concordance_only',
+                'lane_assignment': LANE_MR_CONCORDANCE_ONLY,
                 'discovery_surfaces': 'mr_workbook;external_drive_whole_field_tiffs',
             }
         )
@@ -1224,17 +1292,18 @@ def apply_cohort_admission_policy(manifest: pd.DataFrame) -> pd.DataFrame:
     result = manifest.copy()
     for index, row in result.iterrows():
         cohort_id = _clean_str(row.get('cohort_id'))
-        lane = _clean_str(row.get('lane_assignment'))
+        lane = normalize_lane_assignment(row.get('lane_assignment'))
+        result.at[index, 'lane_assignment'] = lane
         if cohort_id == 'vegfri_mr':
-            result.at[index, 'lane_assignment'] = 'mr_concordance_only'
+            result.at[index, 'lane_assignment'] = LANE_MR_CONCORDANCE_ONLY
             if _clean_str(row.get('admission_status')) == 'admitted':
                 result.at[index, 'admission_status'] = 'evaluation_only'
                 result.at[index, 'exclusion_reason'] = 'mr_phase1_concordance_only_not_training_admitted'
-        elif cohort_id == 'vegfri_dox' and lane == 'masked_external':
+        elif cohort_id == 'vegfri_dox' and lane == LANE_MANUAL_MASK_EXTERNAL:
             if _clean_str(row.get('admission_status')) == 'admitted':
                 result.at[index, 'admission_status'] = 'pending_mask_quality'
-                result.at[index, 'exclusion_reason'] = 'masked_external_requires_mask_quality_review'
-        elif lane == 'scored_only' and _clean_str(row.get('admission_status')) == 'admitted':
+                result.at[index, 'exclusion_reason'] = 'manual_mask_external_requires_mask_quality_review'
+        elif lane == LANE_SCORED_ONLY and _clean_str(row.get('admission_status')) == 'admitted':
             result.at[index, 'admission_status'] = 'pending_transport_audit'
             result.at[index, 'exclusion_reason'] = 'scored_only_requires_segmentation_transport_audit'
     return result
@@ -1333,12 +1402,13 @@ def build_dox_mask_quality_audit(
     panel_dir = (
         Path(panel_dir)
         if panel_dir
-        else get_runtime_cohort_output_path('vegfri_dox', runtime_root) / 'mask_quality'
+        else get_runtime_segmentation_result_path('vegfri_dox', runtime_root) / 'mask_quality'
     )
 
+    lane_series = manifest['lane_assignment'].map(normalize_lane_assignment)
     candidates = manifest[
         (manifest['cohort_id'].astype(str) == 'vegfri_dox')
-        & (manifest['lane_assignment'].astype(str) == 'masked_external')
+        & (lane_series == LANE_MANUAL_MASK_EXTERNAL)
         & (manifest['admission_status'].astype(str).isin({'pending_mask_quality', 'admitted'}))
     ].copy()
     rows: list[dict[str, Any]] = []
@@ -1453,7 +1523,7 @@ def apply_dox_mask_quality_approval(
         row_id = _clean_str(row.get('manifest_row_id'))
         if (
             _clean_str(row.get('cohort_id')) == 'vegfri_dox'
-            and _clean_str(row.get('lane_assignment')) == 'masked_external'
+            and normalize_lane_assignment(row.get('lane_assignment')) == LANE_MANUAL_MASK_EXTERNAL
         ):
             if row_id in approved:
                 result.at[index, 'admission_status'] = 'admitted'
@@ -1508,7 +1578,7 @@ def build_predicted_roi_grading_inputs(
 ) -> Path:
     """Write predicted-ROI grading rows for admitted scored-only manifest rows."""
     lane_series = (
-        manifest['lane_assignment'].astype(str)
+        manifest['lane_assignment'].map(normalize_lane_assignment)
         if 'lane_assignment' in manifest.columns
         else pd.Series([''] * len(manifest), index=manifest.index)
     )
@@ -1518,7 +1588,7 @@ def build_predicted_roi_grading_inputs(
         else pd.Series([''] * len(manifest), index=manifest.index)
     )
     eligible = manifest[
-        (lane_series == 'scored_only')
+        (lane_series == LANE_SCORED_ONLY)
         & (admission_series.isin({'admitted', 'pending_transport_audit'}))
     ].copy()
     output_dir = Path(output_dir)
@@ -1776,9 +1846,11 @@ def build_current_accessible_cohorts(
     runtime_root = Path(runtime_root) if runtime_root else get_active_runtime_root()
     manifest_frames: list[pd.DataFrame] = []
 
-    masked_core = build_masked_core_runtime_cohort(runtime_root=runtime_root)
-    if not masked_core.empty:
-        manifest_frames.append(masked_core)
+    lauren_preeclampsia = build_lauren_preeclampsia_runtime_cohort(
+        runtime_root=runtime_root
+    )
+    if not lauren_preeclampsia.empty:
+        manifest_frames.append(lauren_preeclampsia)
 
     dox = build_dox_runtime_cohort(runtime_root=runtime_root)
     if not dox.empty:

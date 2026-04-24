@@ -7,9 +7,9 @@ import pytest
 from eq.quantification.pipeline import run_contract_first_quantification
 
 RUNTIME_ROOT = Path('/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier')
-RAW_PROJECT_DIR = RUNTIME_ROOT / 'raw_data/preeclampsia_project/clean_backup'
+RAW_PROJECT_DIR = RUNTIME_ROOT / 'raw_data/cohorts/lauren_preeclampsia'
 ANNOTATION_SOURCE = (
-    RUNTIME_ROOT / 'raw_data/preeclampsia_project/annotations/annotations.json'
+    RUNTIME_ROOT / 'raw_data/cohorts/lauren_preeclampsia/scores/labelstudio_annotations.json'
 )
 SEGMENTATION_MODEL_PATH = (
     RUNTIME_ROOT

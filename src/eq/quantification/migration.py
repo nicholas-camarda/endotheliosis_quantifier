@@ -36,30 +36,48 @@ def inventory_raw_project(raw_project_dir: Path) -> pd.DataFrame:
     masks_dir = raw_project_dir / 'masks'
     records: list[dict[str, object]] = []
 
-    for subject_dir in _subject_dirs(images_dir):
-        mask_subject_dir = masks_dir / subject_dir.name
-        for image_path in sorted(subject_dir.iterdir()):
-            if not image_path.is_file() or image_path.suffix.lower() not in IMAGE_EXTENSIONS:
-                continue
-            parsed_image = parse_image_path(image_path, allow_legacy=True)
-            matching_mask = _find_matching_mask(mask_subject_dir, image_path.stem)
-            parsed_mask = parse_mask_path(matching_mask, allow_legacy=True) if matching_mask is not None else None
-            records.append(
-                {
-                    'subject_prefix': subject_dir.name,
-                    'image_path': str(image_path),
-                    'image_name': image_path.name,
-                    'image_stem': image_path.stem,
-                    'image_suffix': image_path.suffix.lower(),
-                    'image_naming_format': parsed_image.naming_format if parsed_image else 'invalid',
-                    'mask_path': str(matching_mask) if matching_mask else None,
-                    'mask_name': matching_mask.name if matching_mask else None,
-                    'mask_suffix': matching_mask.suffix.lower() if matching_mask else None,
-                    'mask_naming_format': parsed_mask.naming_format if parsed_mask else None,
-                    'has_mask': matching_mask is not None,
-                    'current_subject_image_id': parsed_image.subject_image_id if parsed_image else None,
-                }
-            )
+    def append_record(image_path: Path, mask_root: Path, subject_prefix: str) -> None:
+        parsed_image = parse_image_path(image_path, allow_legacy=True)
+        matching_mask = _find_matching_mask(mask_root, image_path.stem)
+        parsed_mask = (
+            parse_mask_path(matching_mask, allow_legacy=True)
+            if matching_mask is not None
+            else None
+        )
+        records.append(
+            {
+                'subject_prefix': subject_prefix,
+                'image_path': str(image_path),
+                'image_name': image_path.name,
+                'image_stem': image_path.stem,
+                'image_suffix': image_path.suffix.lower(),
+                'image_naming_format': parsed_image.naming_format if parsed_image else 'invalid',
+                'mask_path': str(matching_mask) if matching_mask else None,
+                'mask_name': matching_mask.name if matching_mask else None,
+                'mask_suffix': matching_mask.suffix.lower() if matching_mask else None,
+                'mask_naming_format': parsed_mask.naming_format if parsed_mask else None,
+                'has_mask': matching_mask is not None,
+                'current_subject_image_id': parsed_image.subject_image_id if parsed_image else None,
+            }
+        )
+
+    subject_dirs = _subject_dirs(images_dir)
+    if subject_dirs:
+        for subject_dir in subject_dirs:
+            mask_subject_dir = masks_dir / subject_dir.name
+            for image_path in sorted(subject_dir.iterdir()):
+                if image_path.is_file() and image_path.suffix.lower() in IMAGE_EXTENSIONS:
+                    append_record(image_path, mask_subject_dir, subject_dir.name)
+    elif images_dir.exists():
+        for image_path in sorted(images_dir.iterdir()):
+            if image_path.is_file() and image_path.suffix.lower() in IMAGE_EXTENSIONS:
+                parsed_image = parse_image_path(image_path, allow_legacy=True)
+                subject_prefix = (
+                    parsed_image.subject_prefix
+                    if parsed_image is not None
+                    else image_path.stem.split('_', 1)[0]
+                )
+                append_record(image_path, masks_dir, subject_prefix)
 
     return pd.DataFrame.from_records(records)
 

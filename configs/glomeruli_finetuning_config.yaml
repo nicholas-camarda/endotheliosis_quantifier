@@ -1,67 +1,90 @@
-# Optional glomeruli fine-tuning overlay.
-# The dedicated `python -m eq.training.train_glomeruli` CLI is the authoritative
-# control surface for transfer/scratch candidate work and promotion provenance.
-# This file may fill in defaults when passed via `--config`, but it is not the
-# canonical promotion-workflow contract.
+# Runnable with:
+#   eq run-config --config configs/glomeruli_finetuning_config.yaml
+#
+# Purpose:
+#   Train one glomeruli transfer candidate from an existing mitochondria base
+#   artifact. This is not the full overnight comparator. Use
+#   segmentation_fixedloader_full_retrain.yaml when you want to train the mito
+#   base and then compare transfer versus no-mitochondria-base candidates.
+#
+# Required precondition:
+#   A mitochondria .pkl matching pretrained_model.artifact_glob must already
+#   exist under EQ_RUNTIME_ROOT. If it does not exist, the runner fails instead
+#   of silently doing scratch/no-base training.
+
+workflow: segmentation_glomeruli_transfer
+
+run:
+  name: glomeruli_transfer_all_admitted_eqmac
+  seed: 84
+  runtime_root_env: EQ_RUNTIME_ROOT
+  runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
+  python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
+  required_env:
+    PYTORCH_ENABLE_MPS_FALLBACK: "1"
+    MPLCONFIGDIR: /tmp/mpl_eq
 
 name: "glomeruli_finetuning"
-description: "Fine-tune mitochondria-pretrained U-Net on glomeruli segmentation data"
+description: "Train one glomeruli transfer candidate from a mitochondria base model"
 
-# Transfer Learning Configuration
 pretrained_model:
-  path: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model.pkl"
+  # The runner selects the latest matching .pkl and passes it as --base-model.
+  # This is intentionally explicit: transfer must load a real supported base
+  # artifact or fail before training.
+  artifact_glob: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model-pretrain_e50_b24_lr1e-3_sz256/*.pkl"
   description: "Mitochondria-pretrained U-Net model"
-  freeze_encoder: false  # Informational only; the live two-stage schedule is implemented in transfer_learning.py
+  freeze_encoder: false
 
-# Data Pipeline Configuration
 data:
-  # Raw data paths (project-based organization)
-  raw_images: "data/raw_data/preeclampsia_project/data"
-  raw_annotations: "data/raw_data/preeclampsia_project/annotations/annotations.json"
-  raw_metadata: "data/raw_data/preeclampsia_project/subject_metadata.xlsx"
-  
-  # Processed data paths
-  metadata: "data/derived_data/glomeruli_data/metadata/standardized_metadata.xlsx"
-  
-  # Label Studio annotations
+  # Lauren-only raw paths are retained as provenance/reference surfaces.
+  # The actual training root for this config is processed.train_dir.
+  raw_images: "raw_data/cohorts/lauren_preeclampsia"
+  raw_annotations: "raw_data/cohorts/lauren_preeclampsia/scores/labelstudio_annotations.json"
+  raw_metadata: "raw_data/cohorts/lauren_preeclampsia/metadata/subject_metadata.xlsx"
+
+  # Generated metadata location. This is not the image/mask training root.
+  metadata: "derived_data/glomeruli_training/metadata/standardized_metadata.xlsx"
+
   annotations:
-    json_file: "data/raw_data/preeclampsia_project/annotations/annotations.json"  # Path to Label Studio export - will be copied to data/derived_data/cache
-    processor: "recover_labelstudio_scores"  # Current score recovery lives in src/eq/quantification/labelstudio_scores.py
-    
-  # Curated training root.
-  # Training consumes paired full-image images/ and masks/ directly, so the canonical
-  # trainable root lives under raw_data rather than derived_data.
+    json_file: "raw_data/cohorts/lauren_preeclampsia/scores/labelstudio_annotations.json"
+    processor: "recover_labelstudio_scores"
+
   processed:
-    train_dir: "data/raw_data/cohorts"
-    train_image_dir: "data/raw_data/preeclampsia_project/data/images"
-    train_mask_dir: "data/raw_data/preeclampsia_project/data/masks"
-    cache_dir: "data/derived_data/glomeruli_data/cache"
+    # This is the root passed to eq.training.train_glomeruli.
+    # raw_data/cohorts means all admitted manual_mask_core and
+    # manual_mask_external rows in the manifest are eligible for training.
+    train_dir: "raw_data/cohorts"
+
+    # These Lauren-only subpaths document the direct paired cohort layout.
+    # They are not used to restrict the all-data manifest-backed training root.
+    train_image_dir: "raw_data/cohorts/lauren_preeclampsia/images"
+    train_mask_dir: "raw_data/cohorts/lauren_preeclampsia/masks"
+
+    cache_dir: "derived_data/segmentation_cache/glomeruli"
     training_mode: "dynamic_full_image_patching"
-    
-  # Image preprocessing
+    crop_size: 512
+
   preprocessing:
     convert_tif_to_jpg: true
-    resize_to: [256, 256]  # Match original training size
+    resize_to: [256, 256]
     normalize: true
-    
-  # Train/test split (programmatic)
+
   split:
     train_ratio: 0.7
     val_ratio: 0.15
     test_ratio: 0.15
-    random_seed: 84  # Different from mito to avoid data leakage
-    stratify: true  # Stratify by endotheliosis score if available
+    random_seed: 84
+    stratify: true
 
-# Model Configuration
 model:
   architecture: "dynamic_unet"
-  backbone: "resnet34" 
-  input_size: [256, 256]  # Match original training size
-  num_classes: 2  # background + glomeruli
-  
-  # Fine-tuning parameters
+  backbone: "resnet34"
+  input_size: [256, 256]
+  num_classes: 2
+
   training:
-    epochs: 30  # Optimized for transfer learning efficiency
+    # Mac/MPS starting point for glomeruli 512 -> 256 dynamic patching.
+    epochs: 30
     batch_size: 12
     learning_rate: 1e-3
     weight_decay: 1e-4
@@ -69,68 +92,60 @@ model:
     early_stopping:
       patience: 10
       monitor: "val_dice"
-      
-  # Output model path
+
+  output_dir: "models/segmentation/glomeruli"
+  model_name: "glom_dynamic_unet_seg_model"
   checkpoint_path: "models/segmentation/glomeruli/glom_dynamic_unet_seg_model.pkl"
 
-# Label Studio Integration
 label_studio:
   export_format: "JSON"
   annotation_types:
-    - "rle"  # Run-length encoding masks
-    - "choices"  # Endotheliosis scores
-  
-  # RLE mask processing
+    - "rle"
+    - "choices"
   rle_processing:
-    decode_function: "decode_label_studio_rle"  # Current Dox/cohort ingestion lives in src/eq/quantification/cohorts.py
-    mask_resize: [256, 256]  # Match original training size
+    decode_function: "decode_label_studio_rle"
+    mask_resize: [256, 256]
 
-# Data Augmentation (for fine-tuning)
 augmentation:
   enabled: true
   techniques:
     - "horizontal_flip"
-    - "vertical_flip" 
+    - "vertical_flip"
     - "rotation"
     - "brightness_contrast"
     - "gaussian_noise"
   probability: 0.5
 
-# Hardware Configuration
 hardware:
-  device: "auto"  # auto-detect MPS/CUDA/CPU
+  device: "auto"
   mixed_precision: true
   num_workers: 4
-  mps_fallback: true  # Enable CPU fallback for MPS unsupported operations
-  force_cpu: false  # Force CPU usage if needed
+  mps_fallback: true
+  force_cpu: false
 
-# Reproducibility
 reproducibility:
   random_seed: 84
   deterministic: true
 
-# Logging and Monitoring
 logging:
   level: "INFO"
   save_plots: true
-  plot_dir: "output/glomeruli_finetuning/plots"
+  plot_dir: "output/segmentation_results/glomeruli_transfer/plots"
   metrics:
     - "dice_coefficient"
     - "iou"
     - "pixel_accuracy"
-    
-# Evaluation
+
 evaluation:
   metrics:
     - "dice_coefficient"
-    - "jaccard_index" 
+    - "jaccard_index"
     - "sensitivity"
     - "specificity"
   save_predictions: true
-  prediction_dir: "output/glomeruli_finetuning/predictions"
+  prediction_dir: "output/segmentation_results/glomeruli_transfer/predictions"
 
-# Final Model Information
 final_model:
-  description: "Glomeruli segmentation model fine-tuned from mitochondria pretraining"
-  use_case: "Segment glomeruli in preeclampsia histology images for endotheliosis quantification"
-  next_step: "Use for ROI extraction in quantification pipeline"
+  description: "Glomeruli segmentation transfer candidate"
+  use_case: "Segment glomeruli in histology images for downstream endotheliosis quantification"
+  next_step: "Run candidate comparison/promotion gates before using as the segmentation model for quantification."

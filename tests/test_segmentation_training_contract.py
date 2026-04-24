@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 from PIL import Image
 
 from eq.data_management import datablock_loader
@@ -71,13 +72,13 @@ def test_glomeruli_training_root_validator_requires_supported_raw_data_project_o
     with pytest.raises(ValueError, match="raw_data"):
         validate_supported_segmentation_training_root(invalid_root, stage="glomeruli")
 
-    backup_root = tmp_path / "raw_data" / "preeclampsia_project" / "clean_backup"
+    backup_root = tmp_path / "raw_data" / "source_imports" / "clean_backup"
     _make_full_image_root(backup_root)
 
     with pytest.raises(ValueError, match="clean_backup"):
         validate_supported_segmentation_training_root(backup_root, stage="glomeruli")
 
-    project_data_root = tmp_path / "raw_data" / "preeclampsia_project" / "data"
+    project_data_root = tmp_path / "raw_data" / "cohorts" / "lauren_preeclampsia"
     _make_full_image_root(project_data_root)
 
     assert (
@@ -158,14 +159,14 @@ def test_cohort_training_root_uses_manifest_admitted_rows_only(tmp_path: Path):
         [
             {
                 "cohort_id": "vegfri_dox",
-                "lane_assignment": "masked_external",
+                "lane_assignment": "manual_mask_external",
                 "admission_status": "admitted",
                 "image_path": "raw_data/cohorts/vegfri_dox/images/M1/approved.jpg",
                 "mask_path": "raw_data/cohorts/vegfri_dox/masks/M1/approved_mask.png",
             },
             {
                 "cohort_id": "vegfri_dox",
-                "lane_assignment": "masked_external",
+                "lane_assignment": "manual_mask_external",
                 "admission_status": "unresolved",
                 "image_path": "raw_data/cohorts/vegfri_dox/images/M1/unresolved.jpg",
                 "mask_path": "raw_data/cohorts/vegfri_dox/masks/M1/unresolved_mask.png",
@@ -184,8 +185,8 @@ def test_cohort_registry_training_root_uses_all_admitted_masked_rows(tmp_path: P
     cohorts_root = runtime_root / "raw_data" / "cohorts"
     rows = []
     for cohort_id, lane, stem in [
-        ("masked_core", "manual_mask", "core"),
-        ("vegfri_dox", "masked_external", "dox"),
+        ("lauren_preeclampsia", "manual_mask_core", "lauren"),
+        ("vegfri_dox", "manual_mask_external", "dox"),
         ("vegfri_mr", "mr_concordance_only", "mr"),
     ]:
         image_dir = cohorts_root / cohort_id / "images"
@@ -208,7 +209,7 @@ def test_cohort_registry_training_root_uses_all_admitted_masked_rows(tmp_path: P
     rows.append(
         {
             "cohort_id": "vegfri_dox",
-            "lane_assignment": "masked_external",
+            "lane_assignment": "manual_mask_external",
             "admission_status": "unresolved",
             "image_path": "raw_data/cohorts/vegfri_dox/images/unresolved.jpg",
             "mask_path": "raw_data/cohorts/vegfri_dox/masks/unresolved_mask.png",
@@ -220,7 +221,7 @@ def test_cohort_registry_training_root_uses_all_admitted_masked_rows(tmp_path: P
     items = get_items_full_images(cohorts_root)
 
     assert items == [
-        cohorts_root / "masked_core/images/core.jpg",
+        cohorts_root / "lauren_preeclampsia/images/lauren.jpg",
         cohorts_root / "vegfri_dox/images/dox.jpg",
     ]
 
@@ -235,6 +236,37 @@ def test_dynamic_dls_fails_clearly_when_no_valid_pairs_exist(tmp_path: Path):
     Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(image_path)
     with pytest.raises(ValueError, match="Unpaired full-image training root"):
         build_segmentation_dls_dynamic_patching(tmp_path, bs=1, num_workers=0)
+
+
+def test_dynamic_dls_positive_focus_crops_pairs_and_preserves_image_intensity(tmp_path: Path):
+    _make_full_image_root(tmp_path)
+    image = np.zeros((128, 128, 3), dtype=np.uint8)
+    image[..., 0] = 40
+    image[..., 1] = 90
+    image[..., 2] = 140
+    image[80:110, 80:110, :] = [220, 180, 120]
+    mask = np.zeros((128, 128), dtype=np.uint8)
+    mask[80:110, 80:110] = 255
+    Image.fromarray(image).save(tmp_path / "images" / "sample.jpg")
+    Image.fromarray(mask).save(tmp_path / "masks" / "sample_mask.png")
+
+    dls = build_segmentation_dls_dynamic_patching(
+        tmp_path,
+        bs=1,
+        num_workers=0,
+        crop_size=64,
+        output_size=32,
+        positive_focus_p=1.0,
+        min_pos_pixels=64,
+        pos_crop_attempts=10,
+    )
+
+    x_batch, y_batch = dls.one_batch()
+    foreground_fraction = float((y_batch > 0).float().mean())
+
+    assert foreground_fraction > 0.15
+    assert torch.unique(y_batch).tolist() == [0, 1]
+    assert float(x_batch.max() - x_batch.min()) > 0.5
 
 
 def test_training_cli_help_does_not_expose_static_patch_toggle():
@@ -319,7 +351,7 @@ def test_glomeruli_config_and_docs_use_raw_data_training_contract():
     for path in files:
         text = path.read_text(encoding="utf-8")
         assert "raw_data" in text
-        assert "raw_data/cohorts" in text or "preeclampsia_project/data" in text
+        assert "raw_data/cohorts" in text
         assert "derived_data/glomeruli_data/training_full_images" not in text
 
 

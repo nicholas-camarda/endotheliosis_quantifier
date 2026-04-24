@@ -1218,7 +1218,7 @@ def run_contract_first_quantification(
             **model_artifacts,
         }
 
-    metadata_file = project_dir / 'subject_metadata.xlsx'
+    metadata_file = project_dir / 'metadata' / 'subject_metadata.xlsx'
     if not metadata_file.exists():
         raise FileNotFoundError(f'Metadata file not found: {metadata_file}')
 

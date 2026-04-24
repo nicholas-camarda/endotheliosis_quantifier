@@ -1,9 +1,10 @@
 import torch
 from pathlib import Path
 from eq.data_management.datablock_loader import build_segmentation_datablock_dynamic_patching
+from eq.utils.paths import get_runtime_mitochondria_data_path
 
 # Build dataloader WITHOUT the MaskPreprocessTransform
-data_dir = Path("data/derived_data/mito")
+data_dir = get_runtime_mitochondria_data_path() / "training"
 
 # Let's check the raw mask files first
 from eq.data_management.standard_getters import get_y

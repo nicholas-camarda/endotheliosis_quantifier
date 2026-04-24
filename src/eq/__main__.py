@@ -14,6 +14,13 @@ import numpy as np
 from eq.utils.logger import ProgressLogger, get_logger, log_function_call, setup_logging
 from eq.utils.mode_manager import EnvironmentMode, ModeManager
 from eq.core.constants import DEFAULT_MASK_THRESHOLD, DEFAULT_IMAGE_SIZE
+from eq.utils.paths import (
+    get_output_path,
+    get_runtime_mitochondria_data_path,
+    get_runtime_models_path,
+    get_runtime_output_path,
+    get_runtime_raw_data_path,
+)
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -667,6 +674,14 @@ def cohort_manifest_command(args):
 
 
 @log_function_call
+def run_config_command(args):
+    """Run a repository workflow YAML config."""
+    from eq.run_config import run_config
+
+    run_config(Path(args.config), dry_run=args.dry_run)
+
+
+@log_function_call
 def dox_mask_quality_audit_command(args):
     """Build the Dox mask-quality audit and visual review panels."""
     logger = get_logger("eq.dox_mask_quality_audit")
@@ -962,7 +977,7 @@ def backup_project_data_command(args):
     sources = [
         project_dir / 'images',
         project_dir / 'masks',
-        project_dir / 'subject_metadata.xlsx',
+        project_dir / 'metadata' / 'subject_metadata.xlsx',
     ]
     if args.include_derived and args.derived_dir:
         sources.append(Path(args.derived_dir))
@@ -1030,7 +1045,11 @@ Examples:
     # Legacy static patch conversion command
     process_parser = subparsers.add_parser('process-data', help='Legacy static patch conversion for audit/historical workflows')
     process_parser.add_argument('--input-dir', required=True, help='Input directory with raw images (supports nested images/ and masks/ subdirs)')
-    process_parser.add_argument('--output-dir', default='data/derived_data', help='Output directory (default: data/derived_data)')
+    process_parser.add_argument(
+        '--output-dir',
+        default=str(get_output_path()),
+        help='Output directory (default: active runtime derived_data root)',
+    )
     from eq.core.constants import DEFAULT_PATCH_SIZE, EXPECTED_PATCHES_PER_IMAGE
     process_parser.add_argument('--patch-size', type=int, default=DEFAULT_PATCH_SIZE, help=f'Legacy static patch size (default: {DEFAULT_PATCH_SIZE}, expected ~{EXPECTED_PATCHES_PER_IMAGE} patches per image)')
     from eq.core.constants import DEFAULT_PATCH_OVERLAP
@@ -1049,8 +1068,8 @@ Examples:
     lucchi_parser.add_argument('--input-dir', required=True, help='Input directory containing Lucchi img/ and label/ folders')
     lucchi_parser.add_argument(
         '--output-dir',
-        default='data/derived_data/mitochondria_data',
-        help='Output directory for organized Lucchi data (default: %(default)s)',
+        default=str(get_runtime_mitochondria_data_path()),
+        help='Output directory for organized Lucchi data (default: active runtime raw_data/mitochondria_data)',
     )
     lucchi_parser.set_defaults(func=organize_lucchi_command)
 
@@ -1062,12 +1081,16 @@ Examples:
     
     # Quantification training command
     quant_parser = subparsers.add_parser('quant-endo', help='Run the current endotheliosis quantification baseline')
-    quant_parser.add_argument('--data-dir', required=True, help='Raw project directory containing images/, masks/, and optionally annotations/ or subject_metadata.xlsx')
+    quant_parser.add_argument('--data-dir', required=True, help='Raw cohort/project directory containing images/, masks/, and optionally scores/ or metadata/subject_metadata.xlsx')
     quant_parser.add_argument('--segmentation-model', required=True, help='Path to trained segmentation model')
     quant_parser.add_argument('--score-source', default='auto', choices=['auto', 'labelstudio', 'spreadsheet'], help='Preferred score source contract; labelstudio is the intended preeclampsia default')
     quant_parser.add_argument('--annotation-source', help='Label Studio annotation export path or git source spec like git:REV:path/to/annotations.json')
     quant_parser.add_argument('--mapping-file', help='CSV mapping legacy image stems to canonical subject_image_id values')
-    quant_parser.add_argument('--output-dir', default='output/quantification', help='Directory to write quantification outputs')
+    quant_parser.add_argument(
+        '--output-dir',
+        default=str(get_runtime_output_path() / 'quantification'),
+        help='Directory to write quantification outputs',
+    )
     quant_parser.add_argument('--apply-migration', action='store_true', help='Apply renames in place instead of producing a dry-run migration report')
     quant_parser.add_argument('--stop-after', default='model', choices=['contract', 'roi', 'embeddings', 'model'], help='Stop after a specific contract/scoring stage')
     quant_parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
@@ -1075,12 +1098,16 @@ Examples:
     quant_parser.set_defaults(func=quant_endo_command)
 
     contract_parser = subparsers.add_parser('prepare-quant-contract', help='Build score-linked contract artifacts for quantification')
-    contract_parser.add_argument('--data-dir', required=True, help='Raw project directory containing images/, masks/, and optionally annotations/ or subject_metadata.xlsx')
+    contract_parser.add_argument('--data-dir', required=True, help='Raw cohort/project directory containing images/, masks/, and optionally scores/ or metadata/subject_metadata.xlsx')
     contract_parser.add_argument('--segmentation-model', required=True, help='Path to trained segmentation model used later for embeddings')
     contract_parser.add_argument('--score-source', default='auto', choices=['auto', 'labelstudio', 'spreadsheet'], help='Preferred score source contract; labelstudio is the intended preeclampsia default')
     contract_parser.add_argument('--annotation-source', help='Label Studio annotation export path or git source spec like git:REV:path/to/annotations.json')
     contract_parser.add_argument('--mapping-file', help='CSV mapping legacy image stems to canonical subject_image_id values')
-    contract_parser.add_argument('--output-dir', default='output/quantification', help='Directory to write contract preparation artifacts')
+    contract_parser.add_argument(
+        '--output-dir',
+        default=str(get_runtime_output_path() / 'quantification'),
+        help='Directory to write contract preparation artifacts',
+    )
     contract_parser.add_argument('--apply-migration', action='store_true', help='Apply renames in place instead of producing a dry-run migration report')
     contract_parser.set_defaults(func=prepare_quant_contract_command)
 
@@ -1098,6 +1125,23 @@ Examples:
         help='Output manifest path. Defaults to the active runtime raw_data/cohorts/manifest.csv.',
     )
     cohort_manifest_parser.set_defaults(func=cohort_manifest_command)
+
+    run_config_parser = subparsers.add_parser(
+        'run-config',
+        help='Run a repository workflow YAML config',
+        description='Run a supported repository workflow directly from its YAML config.',
+    )
+    run_config_parser.add_argument(
+        '--config',
+        required=True,
+        help='Workflow YAML config to run.',
+    )
+    run_config_parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Print commands without launching training or analysis.',
+    )
+    run_config_parser.set_defaults(func=run_config_command)
 
     dox_mask_quality_parser = subparsers.add_parser(
         'dox-mask-quality-audit',
@@ -1118,12 +1162,12 @@ Examples:
     )
     dox_mask_quality_parser.add_argument(
         '--panel-dir',
-        help='Directory for visual review panel PNGs. Defaults to output/cohorts/vegfri_dox/mask_quality.',
+        help='Directory for visual review panel PNGs. Defaults to output/segmentation_results/vegfri_dox/mask_quality.',
     )
     dox_mask_quality_parser.set_defaults(func=dox_mask_quality_audit_command)
 
     backup_parser = subparsers.add_parser('backup-project-data', help='Create a timestamped backup of project data before migration work')
-    backup_parser.add_argument('--project-dir', required=True, help='Raw project directory containing images/, masks/, and subject_metadata.xlsx')
+    backup_parser.add_argument('--project-dir', required=True, help='Raw cohort/project directory containing images/, masks/, and metadata/subject_metadata.xlsx')
     backup_parser.add_argument('--backup-dir', default='backup', help='Directory in which to create the snapshot')
     backup_parser.add_argument('--label', default='project_backup', help='Label prefix for the snapshot directory')
     backup_parser.add_argument('--include-derived', action='store_true', help='Also copy a derived-data directory into the snapshot')
@@ -1203,13 +1247,13 @@ Examples:
         parser.print_help()
         sys.exit(1)
     
-    # Ensure important folders exist up front
+    # Ensure runtime artifact folders exist up front.
     try:
-        Path('data/raw_data').mkdir(parents=True, exist_ok=True)
-        Path('data/derived_data').mkdir(parents=True, exist_ok=True)
-        Path('models/segmentation/mitochondria').mkdir(parents=True, exist_ok=True)
-        Path('models/segmentation/glomeruli').mkdir(parents=True, exist_ok=True)
-        Path('test_output').mkdir(parents=True, exist_ok=True)
+        get_runtime_raw_data_path().mkdir(parents=True, exist_ok=True)
+        get_output_path().mkdir(parents=True, exist_ok=True)
+        (get_runtime_models_path() / 'segmentation' / 'mitochondria').mkdir(parents=True, exist_ok=True)
+        (get_runtime_models_path() / 'segmentation' / 'glomeruli').mkdir(parents=True, exist_ok=True)
+        get_runtime_output_path().mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
 

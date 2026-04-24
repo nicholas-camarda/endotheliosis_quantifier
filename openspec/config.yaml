@@ -2,12 +2,13 @@ schema: spec-driven
 
 context: |
   Endotheliosis Quantifier is a Python package under src/eq with the eq CLI as the supported interface.
-  Local development is WSL/CUDA-first, while this checkout may expose raw_data, derived_data, models, logs, and output as symlinks to OneDrive or ProjectsRuntime.
+  Local development is WSL/CUDA-first. This checkout must not expose repo-root raw_data, derived_data, models, logs, output, data, archive, backups, cache, or test_output directories or symlinks; heavy artifacts belong under /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier or the configured runtime root.
   On macOS, project execution, segmentation training, segmentation validation, model export, and model loading use the eq-mac conda environment. Activate eq-mac before running project Python commands.
   Real Mac MPS commands must run unsandboxed when Metal access matters. If Codex sandbox MPS behavior fails or disagrees with expected local behavior, rerun the same substantive command outside the sandbox with eq-mac before drawing conclusions.
   Mac segmentation training and validation commands should use PYTORCH_ENABLE_MPS_FALLBACK=1 when PyTorch requires CPU fallback for unsupported MPS operations, but requested transfer training must still fail closed if the base artifact cannot load or contributes zero compatible weights. The current glomeruli scratch candidate is the no-mitochondria-base comparator with an ImageNet-pretrained ResNet34 encoder, not a literal all-random initialization baseline.
   Git-tracked code and configs must stay separate from raw data, derived data, trained models, logs, and generated quantification outputs.
   Path defaults and environment overrides are centralized in src/eq/utils/paths.py.
+  Runtime cohort identity and workflow lane are separate: Lauren's preeclampsia data is cohort_id=lauren_preeclampsia with lane_assignment=manual_mask_core; Dox manual masks use cohort_id=vegfri_dox with lane_assignment=manual_mask_external. Do not use generic cohort names to encode mask state.
   Quantification uses Label Studio image-level grades joined to image/mask pairs with full multi-component union ROI semantics.
   Method changes must distinguish segmentation behavior, embedding/ordinal prediction behavior, and scientific interpretation.
   Supported segmentation model artifacts must be current-namespace exports that load in the current certified environment without legacy pickle namespace shims.

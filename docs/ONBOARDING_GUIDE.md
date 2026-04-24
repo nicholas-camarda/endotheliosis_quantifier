@@ -97,7 +97,7 @@ This is convenient because:
 Recommended project structure:
 
 ```text
-data/raw_data/your_project/
+$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>/
 ├── images/
 │   ├── T19/
 │   │   └── T19-1.jpg
@@ -108,26 +108,29 @@ data/raw_data/your_project/
 │   │   └── T19-1_mask.png
 │   └── T30/
 │       └── T30-1_mask.png
-├── annotations/
-│   └── annotations.json
-└── subject_metadata.xlsx
+├── scores/
+│   └── labelstudio_annotations.json
+└── metadata/
+    └── subject_metadata.xlsx
 ```
 
 ## Suggested Raw Data Layout
 
-At the repo level, a practical layout looks like this:
+At the runtime-root level, a practical layout looks like this:
 
 ```text
-data/raw_data/
+$EQ_RUNTIME_ROOT/raw_data/
 ├── lucchi/
 │   ├── img/
 │   └── label/
-└── your_project_name/
-    ├── images/
-    ├── masks/
-    ├── annotations/
-    │   └── annotations.json
-    └── subject_metadata.xlsx
+└── cohorts/
+    └── <cohort_id>/
+        ├── images/
+        ├── masks/
+        ├── scores/
+        │   └── labelstudio_annotations.json
+        └── metadata/
+            └── subject_metadata.xlsx
 ```
 
 This is cleaner than older hardcoded machine-specific paths and works better across WSL, Windows, and macOS.
@@ -146,8 +149,8 @@ This is especially useful if you are moving between a CUDA desktop, a CPU-only m
 ## Validate Naming Early
 
 ```bash
-eq validate-naming --data-dir data/raw_data/your_project
-eq validate-naming --data-dir data/raw_data/your_project --strict
+eq validate-naming --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia"
+eq validate-naming --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia" --strict
 ```
 
 This helps catch avoidable problems before you launch a long training job.
@@ -171,7 +174,7 @@ Benefits:
 For glomeruli data, that means your source layout can stay simple:
 
 ```text
-data/raw_data/your_project/
+$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>/
 ├── images/
 └── masks/
 ```
@@ -179,7 +182,7 @@ data/raw_data/your_project/
 For mitochondria data installed with physical training and testing roots, keep those roots separate:
 
 ```text
-data/derived_data/mitochondria_data/
+$EQ_RUNTIME_ROOT/raw_data/mitochondria_data/
 ├── training/
 │   ├── images/
 │   └── masks/
@@ -213,8 +216,8 @@ The manifest is image-level and records runtime-local asset paths, score linkage
 
 Current external cohort rules:
 
-- `masked_core` currently contributes 88 admitted manual-mask rows from the active preeclampsia Label Studio workflow.
-- `vegfri_dox` currently contributes 864 Label Studio export rows: 619 decoded masked-external rows admitted after mask-quality review, 7 decoded rows missing scores, 228 foreign mixed-export rows, and 10 scored-only rows without decoded runtime images.
+- `lauren_preeclampsia` currently contributes 88 admitted `manual_mask_core` rows from Lauren's preeclampsia Label Studio workflow.
+- `vegfri_dox` currently contributes 864 Label Studio export rows: 619 decoded `manual_mask_external` rows admitted after mask-quality review, 7 decoded rows missing scores, 228 foreign mixed-export rows, and 10 scored-only rows without decoded runtime images.
 - `vegfri_mr` currently contributes 127 workbook image-level rows from the external-drive whole-field TIFF batches. Of these, 126 are localized for concordance/evaluation only and one workbook row, `8570-5`, remains unresolved because the matching TIFF was not found.
 - Lucchi and other segmentation-install datasets are not part of the scored cohort manifest.
 
@@ -230,16 +233,16 @@ eq cohort-manifest
 
 ```bash
 eq organize-lucchi \
-  --input-dir data/raw_data/lucchi \
-  --output-dir data/derived_data/mitochondria_data
+  --input-dir "$EQ_RUNTIME_ROOT/raw_data/lucchi" \
+  --output-dir "$EQ_RUNTIME_ROOT/raw_data/mitochondria_data"
 ```
 
 ### 2. Train The Mitochondria Model
 
 ```bash
 python -m eq.training.train_mitochondria \
-  --data-dir data/derived_data/mitochondria_data/training \
-  --model-dir models/segmentation/mitochondria \
+  --data-dir "$EQ_RUNTIME_ROOT/raw_data/mitochondria_data/training" \
+  --model-dir "$EQ_RUNTIME_ROOT/models/segmentation/mitochondria" \
   --epochs 50 \
   --batch-size 24 \
   --learning-rate 1e-3 \
@@ -271,8 +274,8 @@ Scratch candidate:
 
 ```bash
 python -m eq.training.train_glomeruli \
-  --data-dir data/raw_data/cohorts \
-  --model-dir models/segmentation/glomeruli \
+  --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts" \
+  --model-dir "$EQ_RUNTIME_ROOT/models/segmentation/glomeruli" \
   --from-scratch \
   --epochs 50 \
   --batch-size 12 \
@@ -284,7 +287,7 @@ python -m eq.training.train_glomeruli \
 
 On the powerful Apple Silicon MPS machine class, `12` is the current starting batch-size recommendation for `512x512` glomeruli crops. Override it when throughput or stability requires a different value.
 
-For all-data glomeruli training, use the manifest-backed `raw_data/cohorts` registry root. It trains from admitted manifest rows in the `manual_mask` and `masked_external` lanes, so unresolved, foreign, MR concordance-only, and scored-only rows stay out. A single active paired project root such as `raw_data/preeclampsia_project/data` is valid for project-only training. Raw project backups are source material, not direct training roots. Generated manifests, audits, caches, and metrics belong under `derived_data` or `output`.
+For all-data glomeruli training, use the manifest-backed `raw_data/cohorts` registry root. It trains from admitted manifest rows in the `manual_mask_core` and `manual_mask_external` lanes, so unresolved, foreign, MR concordance-only, and scored-only rows stay out. For Lauren-only training, use `raw_data/cohorts/lauren_preeclampsia`. Raw backup trees are source material, not direct training roots. Generated manifests, audits, caches, and metrics belong under `derived_data` or `output`.
 
 The dedicated training module CLI is the authoritative control surface. Optional YAML files are overlays, not the promotion contract, and the later artifact path is derived from the base `--model-name` plus the auto-generated run suffix. Transfer training with `--base-model` must load that artifact and copy compatible weights or the run stops. The `--from-scratch` candidate is the no-mitochondria-base comparator with an ImageNet-pretrained ResNet34 encoder, not a literal all-random initialization baseline. After training, inspect the produced `.pkl` path and reuse that exact path in downstream comparison or quantification commands.
 
@@ -292,17 +295,17 @@ The dedicated training module CLI is the authoritative control surface. Optional
 
 ```bash
 eq prepare-quant-contract \
-  --data-dir data/raw_data/your_project \
-  --segmentation-model models/segmentation/glomeruli/<your_model>.pkl \
+  --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia" \
+  --segmentation-model "$EQ_RUNTIME_ROOT/models/segmentation/glomeruli/<your_model>.pkl" \
   --score-source labelstudio \
-  --annotation-source data/raw_data/your_project/annotations/annotations.json
+  --annotation-source "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia/scores/labelstudio_annotations.json"
 
 eq quant-endo \
-  --data-dir data/raw_data/your_project \
-  --segmentation-model models/segmentation/glomeruli/<your_model>.pkl \
+  --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia" \
+  --segmentation-model "$EQ_RUNTIME_ROOT/models/segmentation/glomeruli/<your_model>.pkl" \
   --score-source labelstudio \
-  --annotation-source data/raw_data/your_project/annotations/annotations.json \
-  --output-dir output/quantification/your_project
+  --annotation-source "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia/scores/labelstudio_annotations.json" \
+  --output-dir "$EQ_RUNTIME_ROOT/output/quantification/lauren_preeclampsia"
 ```
 
 This writes:

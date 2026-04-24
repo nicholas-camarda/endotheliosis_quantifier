@@ -6,9 +6,9 @@ import os
 from pathlib import Path
 from typing import List, Union
 
-DEFAULT_DATA_PATH = "data/raw_data"
-DEFAULT_OUTPUT_PATH = "data/derived_data"
-DEFAULT_CACHE_PATH = "data/derived_data/cache"
+DEFAULT_DATA_PATH = "raw_data"
+DEFAULT_OUTPUT_PATH = "derived_data"
+DEFAULT_CACHE_PATH = "derived_data/cache"
 DEFAULT_MODEL_PATH = "models"
 DEFAULT_LOGS_PATH = "logs"
 DEFAULT_RUNTIME_ROOT_ENV = "EQ_RUNTIME_ROOT"
@@ -31,6 +31,14 @@ def _resolve_repo_path(raw_path: Union[str, Path]) -> Path:
     return get_repo_root() / path
 
 
+def resolve_runtime_path(raw_path: Union[str, Path]) -> Path:
+    """Resolve a runtime-root-relative path without creating repo-local artifacts."""
+    path = Path(raw_path).expanduser()
+    if path.is_absolute():
+        return path
+    return get_active_runtime_root() / path
+
+
 def ensure_directory(path: Union[str, Path]) -> Path:
     """Ensure a directory exists, creating it if necessary."""
     path = _resolve_repo_path(path)
@@ -43,10 +51,7 @@ def get_data_path() -> Path:
     override = os.getenv('EQ_DATA_PATH')
     if override:
         return _resolve_repo_path(override)
-    runtime_raw_data = get_active_runtime_root() / "raw_data"
-    if runtime_raw_data.exists():
-        return runtime_raw_data
-    return _resolve_repo_path(DEFAULT_DATA_PATH)
+    return get_active_runtime_root() / DEFAULT_DATA_PATH
 
 
 def get_active_runtime_root() -> Path:
@@ -55,11 +60,7 @@ def get_active_runtime_root() -> Path:
     if runtime_override:
         return _resolve_repo_path(runtime_override)
 
-    runtime_candidate = Path.home() / "ProjectsRuntime" / get_repo_root().name
-    if runtime_candidate.exists():
-        return runtime_candidate
-
-    return get_repo_root()
+    return Path.home() / "ProjectsRuntime" / get_repo_root().name
 
 
 def get_output_path() -> Path:
@@ -67,10 +68,7 @@ def get_output_path() -> Path:
     override = os.getenv('EQ_OUTPUT_PATH')
     if override:
         return _resolve_repo_path(override)
-    runtime_derived_data = get_active_runtime_root() / "derived_data"
-    if runtime_derived_data.exists():
-        return runtime_derived_data
-    return _resolve_repo_path(DEFAULT_OUTPUT_PATH)
+    return get_active_runtime_root() / DEFAULT_OUTPUT_PATH
 
 
 def get_runtime_output_path() -> Path:
@@ -107,16 +105,42 @@ def get_runtime_cohort_manifest_path(runtime_root: Union[str, Path, None] = None
     return get_runtime_cohorts_root(runtime_root) / "manifest.csv"
 
 
-def get_runtime_cohort_output_root(runtime_root: Union[str, Path, None] = None) -> Path:
-    """Return the runtime cohort-output root."""
+def get_runtime_cohort_manifest_summary_path(runtime_root: Union[str, Path, None] = None) -> Path:
+    """Return the generated runtime cohort manifest summary path."""
+    return _runtime_root_or_active(runtime_root) / "derived_data" / "cohort_manifest" / "manifest_summary.json"
+
+
+def get_runtime_mitochondria_data_path(runtime_root: Union[str, Path, None] = None) -> Path:
+    """Return the installed mitochondria full-image dataset root."""
+    return get_runtime_raw_data_path(runtime_root) / "mitochondria_data"
+
+
+def get_runtime_segmentation_results_root(runtime_root: Union[str, Path, None] = None) -> Path:
+    """Return the runtime segmentation-result root."""
     if runtime_root is None:
-        return get_runtime_output_path() / "cohorts"
-    return _runtime_root_or_active(runtime_root) / "output" / "cohorts"
+        return get_runtime_output_path() / "segmentation_results"
+    return _runtime_root_or_active(runtime_root) / "output" / "segmentation_results"
 
 
-def get_runtime_cohort_output_path(cohort_id: str, runtime_root: Union[str, Path, None] = None) -> Path:
-    """Return the output directory for a specific cohort."""
-    return get_runtime_cohort_output_root(runtime_root) / str(cohort_id)
+def get_runtime_segmentation_result_path(
+    result_name: str, runtime_root: Union[str, Path, None] = None
+) -> Path:
+    """Return a segmentation-result directory."""
+    return get_runtime_segmentation_results_root(runtime_root) / str(result_name)
+
+
+def get_runtime_quantification_results_root(runtime_root: Union[str, Path, None] = None) -> Path:
+    """Return the runtime quantification-result root."""
+    if runtime_root is None:
+        return get_runtime_output_path() / "quantification_results"
+    return _runtime_root_or_active(runtime_root) / "output" / "quantification_results"
+
+
+def get_runtime_quantification_result_path(
+    result_name: str, runtime_root: Union[str, Path, None] = None
+) -> Path:
+    """Return a quantification-result directory."""
+    return get_runtime_quantification_results_root(runtime_root) / str(result_name)
 
 
 def get_dox_label_studio_export_path() -> Path:
@@ -156,12 +180,15 @@ def get_cache_path() -> Path:
     cache_override = os.getenv('EQ_CACHE_PATH')
     if cache_override:
         return _resolve_repo_path(cache_override)
-    return _resolve_repo_path(DEFAULT_CACHE_PATH)
+    return get_active_runtime_root() / DEFAULT_CACHE_PATH
 
 
 def get_models_path() -> Path:
     """Return the default model directory."""
-    return _resolve_repo_path(os.getenv('EQ_MODEL_PATH', DEFAULT_MODEL_PATH))
+    model_override = os.getenv('EQ_MODEL_PATH')
+    if model_override:
+        return _resolve_repo_path(model_override)
+    return get_runtime_models_path()
 
 
 def get_runtime_models_path() -> Path:
@@ -177,7 +204,7 @@ def get_logs_path() -> Path:
     log_override = os.getenv('EQ_LOG_PATH') or os.getenv('EQ_LOGS_PATH')
     if log_override:
         return _resolve_repo_path(log_override)
-    return _resolve_repo_path(DEFAULT_LOGS_PATH)
+    return get_active_runtime_root() / DEFAULT_LOGS_PATH
 
 
 def find_files(

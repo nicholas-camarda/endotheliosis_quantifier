@@ -24,11 +24,11 @@ When segmentation training consumes paired image/mask files directly or through 
 #### Scenario: Glomeruli all-data training root is defined
 - **WHEN** glomeruli training should use all currently admitted masked rows
 - **THEN** the canonical root is the manifest-backed `raw_data/cohorts` registry root
-- **AND** the loader enumerates admitted `manual_mask` and `masked_external` rows with runtime-local image and mask paths
+- **AND** the loader enumerates admitted `manual_mask_core` and `manual_mask_external` rows with runtime-local image and mask paths
 
 #### Scenario: Glomeruli project-only paired root is defined
 - **WHEN** glomeruli full-image pairs are curated for a project-only training run
-- **THEN** the supported root lives under `raw_data/...` and contains direct paired `images/` and `masks/`, such as `raw_data/preeclampsia_project/data`
+- **THEN** the supported root lives under `raw_data/...` and contains direct paired `images/` and `masks/`, such as `raw_data/cohorts/lauren_preeclampsia`
 - **AND** that root contains only trainable paired images and masks
 
 #### Scenario: Raw backup source tree contains unpaired files
@@ -39,23 +39,24 @@ When segmentation training consumes paired image/mask files directly or through 
 - **WHEN** manifests, audits, caches, metrics, or evaluation artifacts are produced from segmentation training data
 - **THEN** those generated outputs live under `derived_data/...`
 - **AND** they are not presented as the canonical trainable glomeruli image/mask root
+- **AND** `derived_data/glomeruli_data` and `derived_data/mitochondria_data` are not supported active training-data roots
 
 ### Requirement: Physical installed splits remain distinct from dynamic train/validation splits
 Supported segmentation training SHALL preserve existing physical full-image `training/` and `testing/` layouts, while dynamic patching creates the internal train/validation split from the selected training root.
 
 #### Scenario: Mitochondria installed layout is preserved
-- **WHEN** `/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/derived_data/mitochondria_data` is inspected after static patch retirement
+- **WHEN** `/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/raw_data/mitochondria_data` is inspected after static patch retirement
 - **THEN** `training/images`, `training/masks`, `testing/images`, and `testing/masks` remain active full-image directories
 - **AND** those directories are not merged, renamed, or flattened by this change
 
 #### Scenario: Mitochondria dynamic training uses the training root only
-- **WHEN** mitochondria training is started with `/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/derived_data/mitochondria_data/training` as the data root
+- **WHEN** mitochondria training is started with `/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/raw_data/mitochondria_data/training` as the data root
 - **THEN** dynamic patching creates the internal train/validation split from that selected `training/` root
 - **AND** the sibling `testing/` root is not silently included in training or validation
 
 #### Scenario: Mitochondria held-out testing is deliberate
 - **WHEN** mitochondria held-out evaluation is run
-- **THEN** it uses `/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/derived_data/mitochondria_data/testing` only through an explicit evaluation path
+- **THEN** it uses `/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/raw_data/mitochondria_data/testing` only through an explicit evaluation path
 - **AND** held-out testing examples do not affect training-time validation metrics
 
 #### Scenario: Glomeruli curated paired root splits internally
@@ -63,10 +64,10 @@ Supported segmentation training SHALL preserve existing physical full-image `tra
 - **THEN** dynamic patching may create an internal train/validation split from that selected root
 - **AND** this does not imply that retired static `training/`, `testing/`, or `prediction/` patch directories are active model-training inputs
 
-#### Scenario: Mitochondria installed runtime remains an exception
+#### Scenario: Mitochondria installed runtime uses raw data
 - **WHEN** the current Lucchi-derived mitochondria runtime is inspected
-- **THEN** its installed full-image `training/` and `testing/` roots may remain under `derived_data/mitochondria_data`
-- **AND** that installed runtime exception does not redefine the generic raw-data contract for curated glomeruli training pairs
+- **THEN** its installed full-image `training/` and `testing/` roots live under `raw_data/mitochondria_data`
+- **AND** the mitochondria dataset remains outside the scored-cohort registry at `raw_data/cohorts/manifest.csv`
 
 ### Requirement: Static patch roots are not supported training inputs
 Supported segmentation training SHALL NOT accept pre-generated `image_patches/` and `mask_patches/` directories as training inputs.
@@ -120,11 +121,13 @@ Active ProjectsRuntime segmentation training directories SHALL NOT contain stati
 
 #### Scenario: Glomeruli runtime data is inspected
 - **WHEN** `/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/derived_data/glomeruli_data` is inspected after this change
-- **THEN** active `training/`, `testing/`, and `prediction/` directories do not contain `image_patches/` or `mask_patches/`
+- **THEN** it is absent from active runtime training locations
+- **AND** glomeruli training uses `raw_data/cohorts` or a direct `raw_data/cohorts/<cohort_id>` image/mask root
 
 #### Scenario: Mitochondria runtime data is inspected
 - **WHEN** `/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/derived_data/mitochondria_data` is inspected after this change
-- **THEN** active `training/` and `testing/` directories do not contain `image_patches/`, `mask_patches/`, `image_patch_validation/`, or `mask_patch_validation/`
+- **THEN** it is absent from active runtime training locations
+- **AND** mitochondria training uses `raw_data/mitochondria_data/training`
 
 #### Scenario: Retired static patch data is preserved
 - **WHEN** static patch directories are retired from active runtime locations

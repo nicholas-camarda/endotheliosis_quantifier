@@ -24,7 +24,7 @@ try:
         build_segmentation_dls_dynamic_patching
     )
     
-    data_root = "/home/ncamarda/endotheliosis_quantifier/data/derived_data/mito"
+    data_root = str(Path.home() / "ProjectsRuntime" / "endotheliosis_quantifier" / "raw_data" / "mitochondria_data" / "training")
     
     # Test 1: Static patching (with ImageNet normalization)
     print("\n--- STATIC PATCHING (with ImageNet normalization) ---")

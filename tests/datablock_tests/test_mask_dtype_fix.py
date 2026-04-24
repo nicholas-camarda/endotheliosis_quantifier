@@ -23,7 +23,7 @@ try:
     from eq.data_management.standard_getters import get_y
     from eq.data_management.datablock_loader import get_items_full_images
     
-    data_root = "/home/ncamarda/endotheliosis_quantifier/data/derived_data/mito"
+    data_root = str(Path.home() / "ProjectsRuntime" / "endotheliosis_quantifier" / "raw_data" / "mitochondria_data" / "training")
     
     # Test 1: Original configuration (problematic)
     print("\n--- Test 1: Original MaskBlock(codes=[0, 1]) ---")

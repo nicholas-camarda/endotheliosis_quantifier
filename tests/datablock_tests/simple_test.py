@@ -15,7 +15,7 @@ try:
     from eq.data_management.datablock_loader import get_items_full_images
     print("✅ Imported get_items_full_images")
     
-    data_root = "/home/ncamarda/endotheliosis_quantifier/data/derived_data/mito"
+    data_root = str(Path.home() / "ProjectsRuntime" / "endotheliosis_quantifier" / "raw_data" / "mitochondria_data" / "training")
     print(f"Testing with data root: {data_root}")
     
     items = get_items_full_images(Path(data_root))

@@ -7,13 +7,13 @@ import matplotlib.pyplot as plt
 from fastai.vision.all import Dice, resnet34, unet_learner
 
 from eq.data_management.datablock_loader import build_segmentation_dls_dynamic_patching
+from eq.utils.paths import get_runtime_cohort_path
 
 def main():
     """Train glomeruli model from scratch to prove pipeline works."""
     print("🚀 Starting glomeruli training from scratch...")
     
-    # Use the preeclampsia data we just processed
-    data_dir = "derived_data/preeclampsia"
+    data_dir = get_runtime_cohort_path("lauren_preeclampsia")
     from eq.core.constants import DEFAULT_GLOMERULI_MODEL_DIR
     output_dir = f"{DEFAULT_GLOMERULI_MODEL_DIR}_test"
     

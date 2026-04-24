@@ -1,0 +1,115 @@
+# Runnable with:
+#   eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
+#
+# Purpose:
+#   This is the overnight all-in-one segmentation run. It refreshes the cohort
+#   manifest, trains a fresh mitochondria base, uses that exact exported .pkl for
+#   glomeruli transfer, trains the no-mitochondria-base comparator, and writes
+#   candidate-comparison evidence for review.
+#
+# Do not manually stitch shell commands from this YAML. The command above is the
+# supported entrypoint.
+
+workflow: segmentation_fixedloader_full_retrain
+
+run:
+  name: fixedloader_full_retrain_all_admitted_seed42
+  seed: 42
+  runtime_root_env: EQ_RUNTIME_ROOT
+  runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
+  python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
+  required_env:
+    PYTORCH_ENABLE_MPS_FALLBACK: "1"
+    MPLCONFIGDIR: /tmp/mpl_eq
+  notes:
+    - Use the eq-mac environment on macOS.
+    - Run real MPS training outside the Codex sandbox.
+    - Glomeruli training uses every admitted manual-mask row in raw_data/cohorts.
+
+paths:
+  # Mitochondria training data. Must contain images/ and masks/.
+  mito_data_dir: raw_data/mitochondria_data/training
+
+  # Glomeruli training data. raw_data/cohorts is manifest-backed and includes
+  # all admitted manual_mask_core plus manual_mask_external rows.
+  glomeruli_data_dir: raw_data/cohorts
+
+  # Model and comparison artifact roots, all resolved under EQ_RUNTIME_ROOT.
+  mito_model_dir: models/segmentation/mitochondria
+  glomeruli_model_dir: models/segmentation/glomeruli
+  comparison_output_dir: output/segmentation_results/glomeruli_candidate_comparison
+
+  # Cohort registry surfaces refreshed at the start of the run.
+  cohort_manifest: raw_data/cohorts/manifest.csv
+  cohort_manifest_summary: derived_data/cohort_manifest/manifest_summary.json
+
+mitochondria:
+  enabled: true
+  model_name: fixedloader_full_mito_base
+  epochs: 50
+  batch_size: 24
+  learning_rate: 1e-3
+  image_size: 256
+  training_mode: dynamic_full_image_patching
+  encoder_initialization: imagenet_pretrained_resnet34
+
+glomeruli_transfer:
+  enabled: true
+  model_name: fixedloader_full_glomeruli_transfer
+
+  # This means "use the mitochondria .pkl trained earlier in this same run".
+  # The runner derives the artifact path from the configured mitochondria
+  # model_name, epochs, batch_size, learning_rate, and image_size.
+  base_model: latest_current_mito_run
+
+  epochs: 30
+  training_mode: dynamic_full_image_patching
+  candidate_family: mitochondria_transfer
+
+glomeruli_scratch:
+  enabled: true
+  model_name: fixedloader_full_glomeruli_no_mito_base
+  epochs: 50
+  training_mode: dynamic_full_image_patching
+
+  # This is the comparator without a mitochondria/base artifact. It still uses
+  # the code's current ImageNet-pretrained ResNet34 encoder unless the training
+  # implementation is explicitly changed to pretrained=False.
+  candidate_family: no_mitochondria_base
+  encoder_initialization: imagenet_pretrained_resnet34
+
+candidate_training:
+  # Shared glomeruli candidate training settings passed to
+  # compare_glomeruli_candidates. The comparison CLI currently uses one shared
+  # batch/LR/image/crop setting for both transfer and no-base candidates.
+  batch_size: 12
+  learning_rate: 1e-3
+  image_size: 256
+  crop_size: 512
+
+comparison:
+  enabled: true
+
+  # true means compare_glomeruli_candidates trains transfer and no-base
+  # candidates if explicit candidate paths are not supplied.
+  train_candidates: true
+
+  # Review-panel sampling only. The comparison code groups validation masks by
+  # deterministic foreground/structure categories and includes up to this many
+  # examples from each category. This does not change the training set size.
+  examples_per_category: 10
+
+  # Practical equivalence margin used by the promotion decision logic. A small
+  # difference inside this margin should not be treated as a clear win.
+  tie_margin: 0.02
+
+evidence:
+  # These filenames are relative to paths.comparison_output_dir. Keeping them
+  # relative avoids repeating the same output root in multiple places.
+  candidate_dir: candidates
+  files:
+    - candidate_summary.csv
+    - candidate_predictions.csv
+    - promotion_report.json
+    - promotion_report.md
+    - promotion_report.html

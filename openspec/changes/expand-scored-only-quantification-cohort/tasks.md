@@ -33,7 +33,7 @@
 - [x] 3.5 Copy localized cohort-owned `images/`, `masks/` when present, `scores/` when needed, and `metadata/` surfaces so future users can operate from `raw_data/cohorts/<cohort_id>/` without chasing distributed source roots.
 - [x] 3.6 Keep original PhD / cloud source trees in place and add regression coverage so the harmonization workflow does not act as an in-place migration or move source assets into the runtime tree.
 - [x] 3.7 Update path-handling code and tests so the cohort workflow targets the active runtime root rather than the repo checkout's empty placeholder `data/` directories on this machine.
-- [x] 3.8 Build `masked_core` from the active preeclampsia runtime, `vegfri_dox` from the Dox Label Studio exports, and `vegfri_mr` from the MR scoring workbook plus supporting logs.
+- [x] 3.8 Build `lauren_preeclampsia` from Lauren's active preeclampsia runtime, `vegfri_dox` from the Dox Label Studio exports, and `vegfri_mr` from the MR scoring workbook plus supporting logs.
 - [x] 3.9 Build MR cohort assets from the external-drive giant TIFF batches with explicit cohort metadata noting the high-resolution whole-field acquisition regime.
 
 ## 4. Mapping Verification
@@ -86,12 +86,12 @@
 - [x] 8.1 Add regression tests covering `src/eq/quantification/dataset.py`, `src/eq/quantification/pipeline.py`, any new CLI surface, and any touched ROI / grading builders so external-cohort changes do not break the existing masked-core path.
 - [x] 8.2 Run targeted validation for the changed CLI, manifest generation, harmonization, verification, localized dataset-building, and regression paths plus relevant unit tests.
 - [x] 8.3 Run `openspec validate expand-scored-only-quantification-cohort --strict` and resolve any remaining artifact issues.
-- [x] 8.4 Refactor the shared repo path helpers to resolve the active runtime root, unified cohort manifest, cohort input tree, and cohort output tree consistently across the repository, with regression coverage.
+- [x] 8.4 Refactor the shared repo path helpers to resolve the active runtime root, unified cohort manifest, cohort input tree, segmentation result tree, and quantification result tree consistently across the repository, with regression coverage.
 
 ## 9. Documentation
 
 - [x] 9.1 Update user-facing documentation to describe the flat cohort layout, the scored-only manifest contract, harmonization rules, mapping-verification requirements, and admission limits in current-state terms.
-- [x] 9.2 Update any CLI help text or workflow docs touched by the new cohort-admission surfaces so runtime `raw_data/cohorts/manifest.csv`, runtime `raw_data/cohorts/<cohort_id>/`, runtime `output/cohorts/<cohort_id>/...`, and failure states are obvious.
+- [x] 9.2 Update any CLI help text or workflow docs touched by the new cohort-admission surfaces so runtime `raw_data/cohorts/manifest.csv`, runtime `raw_data/cohorts/<cohort_id>/`, runtime `output/segmentation_results/...`, runtime `output/quantification_results/...`, and failure states are obvious.
 - [x] 9.3 Document which of the user's current cohorts were populated under the new layout, which remain unresolved or excluded, and why.
 - [x] 9.4 Document the iterative discovery policy so unresolved or excluded rows are clearly understood as "searched and still not recoverable" rather than "failed one pass."
 - [x] 9.5 Document that PhD / cloud roots remain untouched provenance sources while `raw_data/cohorts/<cohort_id>/` becomes the localized working dataset future users should operate from, with cohort assets copied rather than moved into runtime and with `raw_data/cohorts/manifest.csv` treated as the runtime-local canonical table.
@@ -104,7 +104,7 @@
 ## 10. All-Available Masked Segmentation Training
 
 - [x] 10.1 Make the manifest-backed `raw_data/cohorts` registry root a supported glomeruli training input that enumerates every admitted masked row across the current cohorts.
-- [x] 10.2 Keep Lauren's active preeclampsia project root as the direct `raw_data/preeclampsia_project/data` paired `images/` and `masks/` root rather than requiring a nested `training_pairs` tree.
-- [x] 10.3 Filter all-data glomeruli training to admitted `manual_mask` and `masked_external` manifest lanes so scored-only, foreign, unresolved, and MR concordance-only rows do not enter segmentation supervision.
+- [x] 10.2 Keep Lauren's active preeclampsia cohort root as the direct `raw_data/cohorts/lauren_preeclampsia` paired `images/` and `masks/` root rather than requiring a nested `training_pairs` tree.
+- [x] 10.3 Filter all-data glomeruli training to admitted `manual_mask_core` and `manual_mask_external` manifest lanes so scored-only, foreign, unresolved, and MR concordance-only rows do not enter segmentation supervision.
 - [x] 10.4 Update training CLI help, docs, config overlays, and regression tests so the current all-data training command points at `raw_data/cohorts`.
 - [x] 10.5 Make requested transfer training fail closed when the base artifact cannot load or supplies zero compatible weights, so it cannot silently become the no-mitochondria-base `--from-scratch` comparator.

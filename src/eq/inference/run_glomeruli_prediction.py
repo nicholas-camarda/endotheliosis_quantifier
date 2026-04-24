@@ -11,6 +11,7 @@ from eq.data_management.datablock_loader import validate_supported_segmentation_
 from eq.data_management.standard_getters import get_y_full
 from eq.evaluation.evaluate_glomeruli_model import GlomeruliModelEvaluator
 from eq.utils.logger import get_logger
+from eq.utils.paths import get_runtime_output_path
 
 
 logger = get_logger("eq.glomeruli_prediction")
@@ -58,7 +59,11 @@ def run_glomeruli_prediction(
     if not image_paths:
         raise ValueError(f"No images found under {training_root / 'images'}")
 
-    output_path = Path(output_dir).expanduser() if output_dir else Path("output/glomeruli_prediction_eval")
+    output_path = (
+        Path(output_dir).expanduser()
+        if output_dir
+        else get_runtime_output_path() / "glomeruli_prediction_eval"
+    )
     evaluator = GlomeruliModelEvaluator(str(model_path), str(output_path))
 
     rows: list[dict[str, Any]] = []

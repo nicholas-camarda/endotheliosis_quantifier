@@ -95,38 +95,26 @@ eq mode --show
 ```text
 endotheliosis_quantifier/
 ├── configs/
-├── data/
-│   ├── raw_data/
-│   │   ├── lucchi/
-│   │   └── my_glomeruli_project/
-│   │       ├── images/
-│   │       ├── masks/
-│   │       ├── annotations/
-│   │       │   └── annotations.json
-│   │       └── subject_metadata.xlsx
-│   └── derived_data/
-├── models/
-│   └── segmentation/
-│       ├── mitochondria/
-│       └── glomeruli/
+├── docs/
+├── openspec/
 ├── src/eq/
 └── tests/
 ```
 
-Everything under `data/`, `models/`, `logs/`, and `output/` is intentionally local-only and should stay out of Git.
+The repo checkout is for code, configs, tests, and docs. Active raw data, derived data, trained models, logs, and generated outputs live under the active runtime root and stay out of Git.
 
-Operational data and run products live under the configured runtime root. The repo checkout's `data/` directories are placeholders for portable project layout and tests; runtime cohort work uses `EQ_RUNTIME_ROOT` or the local default recorded in `analysis_registry.yaml`.
+Committed configs and docs use runtime-root-relative paths such as `raw_data/...`, `derived_data/...`, `models/...`, and `output/...`. Code resolves those through `src/eq/utils/paths.py`, using `EQ_RUNTIME_ROOT` or the local default recorded in `analysis_registry.yaml`.
 
 ## Scored Cohort Manifest
 
-External scored cohorts use one runtime-local manifest:
+Scored cohorts use one runtime-local manifest:
 
 ```text
 $EQ_RUNTIME_ROOT/
 ├── raw_data/
 │   └── cohorts/
 │       ├── manifest.csv
-│       ├── masked_core/
+│       ├── lauren_preeclampsia/
 │       ├── vegfri_dox/
 │       │   ├── images/
 │       │   ├── masks/
@@ -148,10 +136,16 @@ Source-location overrides are centralized in the shared path helpers: `EQ_DOX_LA
 
 Manifest rows are image-level. Admitted rows require `cohort_id`, `image_path`, `score`, and a score locator such as `source_sample_id` or `source_score_row`; the pipeline appends `manifest_row_id`, `harmonized_id`, `join_status`, `verification_status`, `lane_assignment`, `admission_status`, `exclusion_reason`, `image_sha256`, and `mask_sha256`. Placeholder rows may be present before enrichment, but rows without a resolved runtime-local `image_path` cannot be admitted for training or quantification.
 
+Manifest naming separates cohort identity from admission lane:
+
+- `cohort_id` names the biological/project cohort, such as `lauren_preeclampsia`, `vegfri_dox`, or `vegfri_mr`.
+- `lane_assignment` names the workflow lane, such as `manual_mask_core`, `manual_mask_external`, `scored_only`, or `mr_concordance_only`.
+- Lauren's preeclampsia masks and Dox masks are both manually drawn Label Studio-style masks. The lane distinction is core-vs-external admission path, not a difference in how the masks were drawn.
+
 Current cohort states:
 
-- `masked_core`: 88 current preeclampsia image/mask rows are localized as `manual_mask` and `admitted`.
-- `vegfri_dox`: 864 Label Studio export rows are represented. The 626 decoded brushlabel image/mask rows include 619 mask-quality-approved `masked_external` rows admitted for segmentation augmentation and 7 `unresolved` missing-score rows. The remaining scored-only rows include 228 `foreign` mixed-export rows and 10 unresolved rows without decoded runtime images.
+- `lauren_preeclampsia`: 88 current preeclampsia image/mask rows are localized as `manual_mask_core` and `admitted`.
+- `vegfri_dox`: 864 Label Studio export rows are represented. The 626 decoded brushlabel image/mask rows include 619 mask-quality-approved `manual_mask_external` rows admitted for segmentation augmentation and 7 `unresolved` missing-score rows. The remaining scored-only rows include 228 `foreign` mixed-export rows and 10 unresolved rows without decoded runtime images.
 - `vegfri_mr`: 127 workbook image-level rows are represented from the external-drive whole-field TIFF batches. The 126 rows with localized TIFFs are `evaluation_only`; workbook row `8570-5` is unresolved because no matching TIFF was found in the discovered image root. Phase 1 use is concordance/evaluation only.
 
 Lucchi and other segmentation-install datasets stay outside `raw_data/cohorts/manifest.csv`.
@@ -162,9 +156,9 @@ The workflow below is much easier if you choose your project name and model name
 
 ```bash
 export EQ_RUNTIME_ROOT="/path/to/endotheliosis_quantifier_runtime"
-export GLOMERULI_ROOT="$EQ_RUNTIME_ROOT/raw_data/preeclampsia_project/data"
+export GLOMERULI_ROOT="$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia"
 export GLOMERULI_TRAIN_ROOT="$EQ_RUNTIME_ROOT/raw_data/cohorts"
-export GLOMERULI_ANNOTATIONS="$EQ_RUNTIME_ROOT/raw_data/preeclampsia_project/annotations/annotations.json"
+export GLOMERULI_ANNOTATIONS="$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia/scores/labelstudio_annotations.json"
 
 export MITO_MODEL_DIR="$EQ_RUNTIME_ROOT/models/segmentation/mitochondria"
 export GLOMERULI_MODEL_DIR="$EQ_RUNTIME_ROOT/models/segmentation/glomeruli"
@@ -177,13 +171,31 @@ export GLOMERULI_SCRATCH_MODEL_NAME="glomeruli_scratch_baseline"
 
 What these mean:
 
-- `GLOMERULI_ROOT` is Lauren's active preeclampsia project data root with direct `images/` and `masks/`
+- `GLOMERULI_ROOT` is Lauren's active preeclampsia cohort root with direct `images/` and `masks/`
 - `GLOMERULI_TRAIN_ROOT` is the manifest-backed cohort registry root used to train on all admitted masked rows across current cohorts
 - `MITO_MODEL_NAME`, `GLOMERULI_TRANSFER_MODEL_NAME`, and `GLOMERULI_SCRATCH_MODEL_NAME` are the only values you pass to `--model-name`
 
 The training code appends the descriptive run suffix automatically when it writes the artifact directory and `.pkl`. Those full artifact paths are outputs of training, not inputs you should hardcode up front.
 
 ## Workflow
+
+### Configured full segmentation run
+
+The full fixed-loader retraining workflow is run from its YAML config:
+
+```bash
+eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
+```
+
+That command refreshes the cohort manifest, trains the mitochondria base, selects the exported base artifact, trains the glomeruli transfer and no-mitochondria-base candidates, and writes the comparison evidence under `$EQ_RUNTIME_ROOT/output/segmentation_results/glomeruli_candidate_comparison/`.
+
+All YAML workflow configs in `configs/` use the same entrypoint:
+
+```bash
+eq run-config --config configs/mito_pretraining_config.yaml
+eq run-config --config configs/glomeruli_finetuning_config.yaml
+eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
+```
 
 ### 1. Inspect hardware and mode
 
@@ -202,15 +214,15 @@ eq validate-naming --data-dir "$GLOMERULI_ROOT"
 
 ```bash
 eq organize-lucchi \
-  --input-dir data/raw_data/lucchi \
-  --output-dir data/derived_data/mitochondria_data
+  --input-dir "$EQ_RUNTIME_ROOT/raw_data/lucchi" \
+  --output-dir "$EQ_RUNTIME_ROOT/raw_data/mitochondria_data"
 ```
 
 ### 4. Train mitochondria model
 
 ```bash
 python -m eq.training.train_mitochondria \
-  --data-dir data/derived_data/mitochondria_data/training \
+  --data-dir "$EQ_RUNTIME_ROOT/raw_data/mitochondria_data/training" \
   --model-dir "$MITO_MODEL_DIR" \
   --model-name "$MITO_MODEL_NAME" \
   --epochs 50 \
@@ -264,7 +276,7 @@ python -m eq.training.train_glomeruli \
 
 On the powerful Apple Silicon MPS machine class, `12` is the current starting batch-size recommendation for `512x512` glomeruli crops. Override it when throughput or stability requires a different value.
 
-For all-data glomeruli training, pass the manifest-backed cohort registry root: `$EQ_RUNTIME_ROOT/raw_data/cohorts`. The loader enumerates admitted manifest rows in the `manual_mask` and `masked_external` lanes, so the current training set is Lauren's 88 preeclampsia manual-mask rows plus the 619 approved Dox masked-external rows. A single active project root such as `$EQ_RUNTIME_ROOT/raw_data/preeclampsia_project/data` is also a valid paired root when you need to train only that project. Raw backup trees such as `clean_backup` are source material, not direct training roots. Generated manifests, audits, caches, and metrics belong under `derived_data` or `output`.
+For all-data glomeruli training, pass the manifest-backed cohort registry root: `$EQ_RUNTIME_ROOT/raw_data/cohorts`. The loader enumerates admitted manifest rows in the `manual_mask_core` and `manual_mask_external` lanes, so the current training set is Lauren's 88 preeclampsia manual-mask rows plus the 619 approved Dox manual-mask rows. For a Lauren-only run, use `$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia`. Raw backup trees are source material, not direct training roots. Generated manifest summaries, audits, caches, and metrics belong under `derived_data` or `output`.
 
 For heavy training runs, the dedicated training modules above are the safest entrypoints. The `eq` CLI is still useful for validation, inspection, capabilities, and utility commands.
 
@@ -341,12 +353,10 @@ Current ordinal implementation surfaces:
 ## Useful Commands
 
 ```bash
-eq process-data --input-dir "$GLOMERULI_ROOT" --output-dir "data/derived_data/$GLOMERULI_PROJECT"
-eq metadata-process --input-file "$GLOMERULI_ROOT/subject_metadata.xlsx" --output-dir "data/derived_data/$GLOMERULI_PROJECT/metadata"
-eq prepare-quant-contract --data-dir "$GLOMERULI_ROOT" --segmentation-model "$GLOMERULI_TRANSFER_MODEL" --score-source labelstudio --annotation-source "$GLOMERULI_ANNOTATIONS"
-eq quant-endo --data-dir "$GLOMERULI_ROOT" --segmentation-model "$GLOMERULI_TRANSFER_MODEL" --score-source labelstudio --annotation-source "$GLOMERULI_ANNOTATIONS"
-eq audit-derived --data-dir "data/derived_data/$GLOMERULI_PROJECT"
-eq visualize --mask path/to/mask.png --output output/mask_preview.png
+eq cohort-manifest
+eq prepare-quant-contract --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia" --segmentation-model "$GLOMERULI_TRANSFER_MODEL" --score-source labelstudio --annotation-source "$GLOMERULI_ANNOTATIONS"
+eq quant-endo --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia" --segmentation-model "$GLOMERULI_TRANSFER_MODEL" --score-source labelstudio --annotation-source "$GLOMERULI_ANNOTATIONS"
+eq visualize --mask path/to/mask.png --output "$EQ_RUNTIME_ROOT/output/mask_preview.png"
 ```
 
 `quant-endo` now writes:

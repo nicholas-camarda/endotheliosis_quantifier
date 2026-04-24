@@ -257,7 +257,7 @@ def main():
     print("=" * 80)
     
     # Use mitochondria data
-    data_root = "/home/ncamarda/endotheliosis_quantifier/data/derived_data/mito"
+    data_root = str(Path.home() / "ProjectsRuntime" / "endotheliosis_quantifier" / "raw_data" / "mitochondria_data" / "training")
     print(f"Using data from: {data_root}")
     
     if not Path(data_root).exists():

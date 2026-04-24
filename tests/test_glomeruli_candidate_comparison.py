@@ -174,16 +174,21 @@ def test_candidate_comparison_uses_manifest_backed_cohort_registry_masks(tmp_pat
     cohorts_root = runtime_root / "raw_data" / "cohorts"
     rows = []
     samples = [
-        ("masked_core", "manual_mask", "core_empty", np.zeros((32, 32), dtype=np.uint8)),
+        (
+            "lauren_preeclampsia",
+            "manual_mask_core",
+            "lauren_empty",
+            np.zeros((32, 32), dtype=np.uint8),
+        ),
         (
             "vegfri_dox",
-            "masked_external",
+            "manual_mask_external",
             "dox_boundary",
             np.pad(np.ones((8, 8), dtype=np.uint8), ((0, 24), (0, 24))),
         ),
         (
             "vegfri_dox",
-            "masked_external",
+            "manual_mask_external",
             "dox_positive",
             np.pad(np.ones((8, 8), dtype=np.uint8), ((12, 12), (12, 12))),
         ),
@@ -221,7 +226,7 @@ def test_candidate_comparison_uses_manifest_backed_cohort_registry_masks(tmp_pat
 
     assert len(mask_paths) == 3
     assert {path.name for path in mask_paths} == {
-        "core_empty_mask.png",
+        "lauren_empty_mask.png",
         "dox_boundary_mask.png",
         "dox_positive_mask.png",
     }

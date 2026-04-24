@@ -12,7 +12,7 @@ from typing import Any, Callable, List, Optional, Union
 import numpy as np
 import torch
 from fastai.data.block import DataBlock
-from fastai.data.transforms import RandomSplitter, Transform
+from fastai.data.transforms import ItemTransform, RandomSplitter, Transform
 from fastai.vision.all import (
     FlipItem,
     ImageBlock,
@@ -22,6 +22,9 @@ from fastai.vision.all import (
     PILMask,
     RandomResizedCrop,
     Resize,
+    ResizeMethod,
+    TensorImage,
+    TensorMask,
     Rotate,
     aug_transforms,
     get_image_files,
@@ -53,7 +56,14 @@ STATIC_PATCH_DIR_NAMES = (
     "mask_patch_validation",
 )
 GLOMERULI_TRAINING_STAGES = {"glomeruli", "glomeruli_transfer"}
-TRAINING_MASK_LANES = {"manual_mask", "masked_external"}
+TRAINING_MASK_LANES = {
+    "manual_mask_core",
+    "manual_mask_external",
+    # Legacy names retained so current runtime manifests continue to load until
+    # they are migrated to the clearer cohort/lane vocabulary.
+    "manual_mask",
+    "masked_external",
+}
 BLOCKED_RAW_PROJECT_ROOT_PARTS = {
     "_retired",
     "backup",
@@ -364,13 +374,12 @@ def build_segmentation_dls(data_root: Union[str, Path], bs: int = 8, num_workers
 class MaskPreprocessTransform(Transform):
     """Convert mask values from [0, 255] to [0, 1] for binary segmentation."""
     
-    def encodes(self, x):
-        # Apply to masks - check for uint8 dtype and values > 1
-        if hasattr(x, 'dtype') and x.dtype == torch.uint8 and x.max() > 1:
+    def encodes(self, x: TensorMask):
+        if x.dtype == torch.uint8 and x.max() > 1:
             return (x > 127).long()
         return x
 
-class CropTransform(Transform):
+class CropTransform(ItemTransform):
     """Positive-aware synchronized crop for image-mask pairs."""
     def __init__(
         self,
@@ -415,7 +424,7 @@ class CropTransform(Transform):
         left = int(np.clip(x - self.size // 2, 0, max(0, w - self.size)))
         return top, left
 
-    def encodes(self, x: tuple):
+    def encodes(self, x):
         if not isinstance(x, (tuple, list)) or len(x) != 2:
             return x
 
@@ -450,6 +459,11 @@ class CropTransform(Transform):
         if hasattr(img, 'crop') and img is not None and mask is not None:
             img_cropped = img.crop((left, top, left + self.size, top + self.size))
             mask_cropped = mask.crop((left, top, left + self.size, top + self.size))
+            img_arr = np.asarray(img_cropped).copy()
+            if img_arr.ndim == 2:
+                img_arr = np.repeat(img_arr[..., None], 3, axis=-1)
+            img_cropped = TensorImage(torch.from_numpy(img_arr).permute(2, 0, 1))
+            mask_cropped = TensorMask(torch.from_numpy(np.asarray(mask_cropped).copy()))
         elif img is not None and mask is not None:
             img_cropped = img[..., top:top + self.size, left:left + self.size]
             mask_cropped = mask[..., top:top + self.size, left:left + self.size]
@@ -614,8 +628,8 @@ def build_segmentation_datablock_dynamic_patching(
             min_pos_pixels=min_pos_pixels,
             max_attempts=pos_crop_attempts,
         ),
-        # Final size guarantee to prevent uncropped samples from reaching the model
-        Resize(output_size),
+        # Resize the selected crop to network input size without changing crop center.
+        Resize(output_size, method=ResizeMethod.Squish),
     ]
     
     # Batch transforms: apply additional augmentations with ImageNet normalization

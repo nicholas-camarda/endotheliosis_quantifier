@@ -13,14 +13,18 @@ from eq.utils.paths import (
     get_mr_image_root_path,
     get_mr_score_workbook_path,
     get_output_path,
+    get_runtime_quantification_result_path,
+    get_runtime_quantification_results_root,
     get_repo_root,
     get_runtime_cohort_manifest_path,
-    get_runtime_cohort_output_path,
-    get_runtime_cohort_output_root,
+    get_runtime_cohort_manifest_summary_path,
     get_runtime_cohort_path,
     get_runtime_cohorts_root,
+    get_runtime_mitochondria_data_path,
     get_runtime_output_path,
     get_runtime_raw_data_path,
+    get_runtime_segmentation_result_path,
+    get_runtime_segmentation_results_root,
 )
 
 
@@ -36,26 +40,26 @@ def test_path_helpers_resolve_from_repo_root(monkeypatch):
 
     repo_root = get_repo_root()
     runtime_root = Path.home() / "ProjectsRuntime" / repo_root.name
-    expected_raw = runtime_root / "raw_data" if runtime_root.exists() else repo_root / "data/raw_data"
-    expected_derived = (
-        runtime_root / "derived_data"
-        if (runtime_root / "derived_data").exists()
-        else repo_root / "data/derived_data"
-    )
+    expected_raw = runtime_root / "raw_data"
+    expected_derived = runtime_root / "derived_data"
 
     assert get_data_path() == expected_raw
     assert get_output_path() == expected_derived
-    assert get_cache_path() == repo_root / "data/derived_data/cache"
-    assert get_models_path() == repo_root / "models"
-    assert get_logs_path() == repo_root / "logs"
-    active_root = runtime_root if runtime_root.exists() else repo_root
+    assert get_cache_path() == runtime_root / "derived_data/cache"
+    assert get_models_path() == runtime_root / "models"
+    assert get_logs_path() == runtime_root / "logs"
+    active_root = runtime_root
     assert get_runtime_raw_data_path() == active_root / "raw_data"
     assert get_runtime_output_path() == active_root / "output"
     assert get_runtime_cohorts_root() == active_root / "raw_data/cohorts"
     assert get_runtime_cohort_manifest_path() == active_root / "raw_data/cohorts/manifest.csv"
+    assert get_runtime_cohort_manifest_summary_path() == active_root / "derived_data/cohort_manifest/manifest_summary.json"
     assert get_runtime_cohort_path("vegfri_dox") == active_root / "raw_data/cohorts/vegfri_dox"
-    assert get_runtime_cohort_output_root() == active_root / "output/cohorts"
-    assert get_runtime_cohort_output_path("vegfri_dox") == active_root / "output/cohorts/vegfri_dox"
+    assert get_runtime_mitochondria_data_path() == active_root / "raw_data/mitochondria_data"
+    assert get_runtime_segmentation_results_root() == active_root / "output/segmentation_results"
+    assert get_runtime_segmentation_result_path("vegfri_dox") == active_root / "output/segmentation_results/vegfri_dox"
+    assert get_runtime_quantification_results_root() == active_root / "output/quantification_results"
+    assert get_runtime_quantification_result_path("lauren_preeclampsia") == active_root / "output/quantification_results/lauren_preeclampsia"
 
 
 def test_path_helpers_prefer_runtime_root_when_present(tmp_path, monkeypatch):
@@ -73,10 +77,14 @@ def test_path_helpers_prefer_runtime_root_when_present(tmp_path, monkeypatch):
     assert get_runtime_raw_data_path() == runtime_root / "raw_data"
     assert get_runtime_cohorts_root() == runtime_root / "raw_data/cohorts"
     assert get_runtime_cohort_manifest_path() == runtime_root / "raw_data/cohorts/manifest.csv"
-    assert get_runtime_cohort_path("masked_core") == runtime_root / "raw_data/cohorts/masked_core"
+    assert get_runtime_cohort_manifest_summary_path() == runtime_root / "derived_data/cohort_manifest/manifest_summary.json"
+    assert get_runtime_cohort_path("lauren_preeclampsia") == runtime_root / "raw_data/cohorts/lauren_preeclampsia"
+    assert get_runtime_mitochondria_data_path() == runtime_root / "raw_data/mitochondria_data"
     assert get_runtime_output_path() == runtime_root / "output"
-    assert get_runtime_cohort_output_root() == runtime_root / "output/cohorts"
-    assert get_runtime_cohort_output_path("masked_core") == runtime_root / "output/cohorts/masked_core"
+    assert get_runtime_segmentation_results_root() == runtime_root / "output/segmentation_results"
+    assert get_runtime_segmentation_result_path("vegfri_dox") == runtime_root / "output/segmentation_results/vegfri_dox"
+    assert get_runtime_quantification_results_root() == runtime_root / "output/quantification_results"
+    assert get_runtime_quantification_result_path("lauren_preeclampsia") == runtime_root / "output/quantification_results/lauren_preeclampsia"
 
 
 def test_runtime_cohort_helpers_accept_explicit_runtime_root(tmp_path):
@@ -85,9 +93,13 @@ def test_runtime_cohort_helpers_accept_explicit_runtime_root(tmp_path):
     assert get_runtime_raw_data_path(runtime_root) == runtime_root / "raw_data"
     assert get_runtime_cohorts_root(runtime_root) == runtime_root / "raw_data/cohorts"
     assert get_runtime_cohort_manifest_path(runtime_root) == runtime_root / "raw_data/cohorts/manifest.csv"
+    assert get_runtime_cohort_manifest_summary_path(runtime_root) == runtime_root / "derived_data/cohort_manifest/manifest_summary.json"
     assert get_runtime_cohort_path("vegfri_dox", runtime_root) == runtime_root / "raw_data/cohorts/vegfri_dox"
-    assert get_runtime_cohort_output_root(runtime_root) == runtime_root / "output/cohorts"
-    assert get_runtime_cohort_output_path("vegfri_dox", runtime_root) == runtime_root / "output/cohorts/vegfri_dox"
+    assert get_runtime_mitochondria_data_path(runtime_root) == runtime_root / "raw_data/mitochondria_data"
+    assert get_runtime_segmentation_results_root(runtime_root) == runtime_root / "output/segmentation_results"
+    assert get_runtime_segmentation_result_path("vegfri_dox", runtime_root) == runtime_root / "output/segmentation_results/vegfri_dox"
+    assert get_runtime_quantification_results_root(runtime_root) == runtime_root / "output/quantification_results"
+    assert get_runtime_quantification_result_path("vegfri_dox", runtime_root) == runtime_root / "output/quantification_results/vegfri_dox"
 
 
 def test_external_cohort_source_paths_are_overridable(monkeypatch, tmp_path):

@@ -50,7 +50,25 @@ def test_cli_organize_lucchi_help():
     assert result.returncode == 0
     assert '--input-dir' in result.stdout
     assert '--output-dir' in result.stdout
-    assert 'data/derived_data/mitochondria_data' in result.stdout
+    assert 'raw_data/mitochondria_data' in result.stdout
+
+
+def test_cli_run_config_help():
+    result = run_cli('run-config', '--help')
+    assert result.returncode == 0
+    assert '--config' in result.stdout
+    assert '--dry-run' in result.stdout
+
+
+def test_cli_run_config_dry_runs_all_committed_configs():
+    for config_name in (
+        'mito_pretraining_config.yaml',
+        'glomeruli_finetuning_config.yaml',
+        'segmentation_fixedloader_full_retrain.yaml',
+    ):
+        result = run_cli('run-config', '--config', f'configs/{config_name}', '--dry-run')
+        assert result.returncode == 0, result.stderr
+        assert '/eq-mac/bin/python' in result.stdout
 
 
 def test_cli_mode_show_runs():

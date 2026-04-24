@@ -97,7 +97,7 @@ def test_enrichment_generates_hashes_and_minimal_harmonized_ids(tmp_path):
     assert validation.passed
     assert enriched.loc[0, 'admission_status'] == 'admitted'
     assert enriched.loc[0, 'verification_status'] == 'passed'
-    assert enriched.loc[0, 'lane_assignment'] == 'masked_external'
+    assert enriched.loc[0, 'lane_assignment'] == 'manual_mask_external'
     assert enriched.loc[0, 'harmonized_id'] == 'vegfri_dox__m1_image0_jpg'
     assert len(enriched.loc[0, 'image_sha256']) == 64
     assert len(enriched.loc[0, 'mask_sha256']) == 64
@@ -270,7 +270,7 @@ def test_mr_policy_and_predicted_roi_outputs_remain_separate(tmp_path):
     policy = apply_cohort_admission_policy(manifest)
     predicted_path = build_predicted_roi_grading_inputs(
         policy,
-        tmp_path / 'output/cohorts/vegfri_dox/predicted_roi',
+        tmp_path / 'output/quantification_results/vegfri_dox/predicted_roi',
         segmentation_artifact='segmentation.pkl',
     )
     predicted = pd.read_csv(predicted_path)
@@ -338,12 +338,12 @@ def test_discovery_reconciliation_keeps_recoverable_rows_pending():
     assert reconciled.loc[1, 'admission_status'] == 'unresolved'
 
 
-def test_masked_external_dox_requires_mask_quality_gate():
+def test_manual_mask_external_dox_requires_mask_quality_gate():
     manifest = pd.DataFrame(
         [
             {
                 'cohort_id': 'vegfri_dox',
-                'lane_assignment': 'masked_external',
+                'lane_assignment': 'manual_mask_external',
                 'admission_status': 'admitted',
             }
         ]
@@ -352,10 +352,10 @@ def test_masked_external_dox_requires_mask_quality_gate():
     policy = apply_cohort_admission_policy(manifest)
 
     assert policy.loc[0, 'admission_status'] == 'pending_mask_quality'
-    assert policy.loc[0, 'exclusion_reason'] == 'masked_external_requires_mask_quality_review'
+    assert policy.loc[0, 'exclusion_reason'] == 'manual_mask_external_requires_mask_quality_review'
 
 
-def test_dox_mask_quality_audit_admits_approved_masked_external_rows(tmp_path):
+def test_dox_mask_quality_audit_admits_approved_manual_external_rows(tmp_path):
     runtime_root = tmp_path / 'runtime'
     image = _write_image(runtime_root / 'raw_data/cohorts/vegfri_dox/images/M1/M1_Image0.jpg')
     mask = _write_mask(runtime_root / 'raw_data/cohorts/vegfri_dox/masks/M1/M1_Image0_mask.png')

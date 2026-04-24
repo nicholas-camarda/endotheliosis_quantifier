@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from eq.utils.paths import get_output_path
+from eq.utils.paths import get_active_runtime_root, get_output_path, get_runtime_mitochondria_data_path
 
 
 def _get_derived_data_root() -> Path:
@@ -18,8 +18,7 @@ def test_derived_data_root_exists():
 
 
 def test_mitochondria_full_image_layout_if_present():
-    derived_data_root = _get_derived_data_root()
-    dataset_dir = derived_data_root / "mitochondria_data"
+    dataset_dir = get_runtime_mitochondria_data_path()
     if not dataset_dir.exists():
         pytest.skip(f"Dataset not present: {dataset_dir}")
 
@@ -34,8 +33,7 @@ def test_mitochondria_full_image_layout_if_present():
         assert not (split_dir / "mask_patch_validation").exists()
 
 
-def test_segmentation_static_patch_dirs_are_not_active_if_present():
-    derived_data_root = _get_derived_data_root()
+def test_raw_segmentation_static_patch_dirs_are_not_active_if_present():
     forbidden_names = {
         "image_patches",
         "mask_patches",
@@ -43,8 +41,10 @@ def test_segmentation_static_patch_dirs_are_not_active_if_present():
         "mask_patch_validation",
     }
 
-    for dataset_name in ("mitochondria_data", "glomeruli_data"):
-        dataset_dir = derived_data_root / dataset_name
+    for dataset_dir in (
+        get_runtime_mitochondria_data_path(),
+        get_active_runtime_root() / "raw_data" / "cohorts",
+    ):
         if not dataset_dir.exists():
             continue
         active_static_dirs = [
@@ -55,32 +55,21 @@ def test_segmentation_static_patch_dirs_are_not_active_if_present():
         assert active_static_dirs == []
 
 
-def test_projects_runtime_segmentation_static_patch_dirs_are_retired_when_runtime_present():
-    runtime_root = Path.home() / "ProjectsRuntime" / "endotheliosis_quantifier" / "derived_data"
+def test_projects_runtime_derived_legacy_training_roots_are_retired_when_runtime_present():
+    runtime_root = Path.home() / "ProjectsRuntime" / "endotheliosis_quantifier"
     if not runtime_root.exists():
-        pytest.skip(f"ProjectsRuntime derived data root not present: {runtime_root}")
+        pytest.skip(f"ProjectsRuntime root not present: {runtime_root}")
 
-    forbidden_names = {
-        "image_patches",
-        "mask_patches",
-        "image_patch_validation",
-        "mask_patch_validation",
-    }
-    for dataset_name in ("mitochondria_data", "glomeruli_data"):
-        dataset_dir = runtime_root / dataset_name
-        if not dataset_dir.exists():
-            continue
-        active_static_dirs = [
-            path
-            for path in dataset_dir.rglob("*")
-            if path.is_dir() and path.name in forbidden_names
-        ]
-        assert active_static_dirs == []
+    assert not (runtime_root / "derived_data" / "glomeruli_data").exists()
+    assert not (runtime_root / "derived_data" / "mitochondria_data").exists()
 
 
 def test_cache_directories_are_directories_when_present():
     derived_data_root = _get_derived_data_root()
-    for dataset_name in ("mitochondria_data", "glomeruli_data"):
-        cache_dir = derived_data_root / dataset_name / "cache"
+    for cache_dir in (
+        derived_data_root / "cache",
+        derived_data_root / "cohort_manifest",
+        derived_data_root / "segmentation_cache" / "mitochondria",
+    ):
         if cache_dir.exists():
             assert cache_dir.is_dir()

@@ -9,6 +9,8 @@ from pathlib import Path
 
 import tifffile
 
+from eq.utils.paths import get_runtime_mitochondria_data_path
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,10 +28,10 @@ def extract_tif_stack(tif_path: Path, output_dir: Path, prefix: str) -> int:
     return count
 
 
-def organize_lucchi_dataset(input_dir: str, output_dir: str = 'data/derived_data/mitochondria_data') -> Path:
+def organize_lucchi_dataset(input_dir: str, output_dir: str | None = None) -> Path:
     """Convert Lucchi train/test TIF stacks into training/testing image directories."""
     input_path = Path(input_dir)
-    output_path = Path(output_dir)
+    output_path = Path(output_dir) if output_dir else get_runtime_mitochondria_data_path()
 
     img_dir = input_path / 'img'
     label_dir = input_path / 'label'
@@ -98,8 +100,8 @@ def main() -> None:
     parser.add_argument('--input-dir', required=True, help='Directory containing Lucchi img/ and label/ folders.')
     parser.add_argument(
         '--output-dir',
-        default='data/derived_data/mitochondria_data',
-        help='Output directory for the organized dataset (default: %(default)s).',
+        default=str(get_runtime_mitochondria_data_path()),
+        help='Output directory for the organized dataset.',
     )
     args = parser.parse_args()
 

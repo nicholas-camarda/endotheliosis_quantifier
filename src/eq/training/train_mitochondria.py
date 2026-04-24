@@ -38,6 +38,7 @@ from eq.data_management.datablock_loader import (
     validate_supported_segmentation_training_root,
 )
 from eq.utils.hardware_detection import get_segmentation_training_batch_size
+from eq.utils.paths import resolve_runtime_path
 
 MITOCHONDRIA_ENCODER_INITIALIZATION = "imagenet_pretrained_resnet34"
 
@@ -268,8 +269,7 @@ def main():
                 args.learning_rate = float(training_cfg['learning_rate'])
             # output model dir from checkpoint_path
             if 'checkpoint_path' in cfg_yaml.get('model', {}):
-                from pathlib import Path as _P
-                ckpt = _P(cfg_yaml['model']['checkpoint_path'])
+                ckpt = resolve_runtime_path(cfg_yaml['model']['checkpoint_path'])
                 args.model_dir = str(ckpt.parent)
                 # Only take name from YAML if CLI didn't override
                 if parser.get_default('model_name') == args.model_name:

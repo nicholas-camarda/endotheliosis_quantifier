@@ -68,11 +68,11 @@ endotheliosis_quantifier/
 
 Path defaults are defined in [`src/eq/utils/paths.py`](../src/eq/utils/paths.py):
 
-- raw data: `data/raw_data`
-- derived data: `data/derived_data`
-- cache: `data/derived_data/cache`
-- models: `models`
-- logs: `logs`
+- raw data: `$EQ_RUNTIME_ROOT/raw_data`
+- derived data: `$EQ_RUNTIME_ROOT/derived_data`
+- cache: `$EQ_RUNTIME_ROOT/derived_data/cache`
+- models: `$EQ_RUNTIME_ROOT/models`
+- logs: `$EQ_RUNTIME_ROOT/logs`
 - runtime root: `EQ_RUNTIME_ROOT` or the active runtime root selected by `src/eq/utils/paths.py`
 - runtime cohort manifest: `$EQ_RUNTIME_ROOT/raw_data/cohorts/manifest.csv`
 - runtime outputs: `$EQ_RUNTIME_ROOT/output`
@@ -114,7 +114,7 @@ Full images are loaded directly and crops are sampled during training.
 For mitochondria, the installed full-image layout uses separate physical roots:
 
 ```text
-data/derived_data/mitochondria_data/
+$EQ_RUNTIME_ROOT/raw_data/mitochondria_data/
 ├── training/
 │   ├── images/
 │   └── masks/
@@ -132,7 +132,7 @@ The `training/` root is the training input; the dynamic dataloader creates the t
 The CLI includes a naming validator for raw glomeruli projects:
 
 ```bash
-eq validate-naming --data-dir data/raw_data/<your_project>
+eq validate-naming --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>"
 ```
 
 ### Lucchi Preparation
@@ -141,8 +141,8 @@ The Lucchi organizer and image extraction flow still exist:
 
 ```bash
 eq extract-images \
-  --input-dir data/raw_data/lucchi \
-  --output-dir data/derived_data/mito
+  --input-dir "$EQ_RUNTIME_ROOT/raw_data/lucchi" \
+  --output-dir "$EQ_RUNTIME_ROOT/raw_data/mitochondria_data"
 ```
 
 ### Patchification
@@ -151,8 +151,8 @@ The main derived-data builder is:
 
 ```bash
 eq organize-lucchi \
-  --input-dir data/raw_data/lucchi \
-  --output-dir data/derived_data/mitochondria_data
+  --input-dir "$EQ_RUNTIME_ROOT/raw_data/lucchi" \
+  --output-dir "$EQ_RUNTIME_ROOT/raw_data/mitochondria_data"
 ```
 
 Current behavior of `organize-lucchi`:
@@ -328,8 +328,8 @@ Primary entrypoint:
 
 ```bash
 python -m eq.training.train_mitochondria \
-  --data-dir data/derived_data/mitochondria_data/training \
-  --model-dir models/segmentation/mitochondria \
+  --data-dir "$EQ_RUNTIME_ROOT/raw_data/mitochondria_data/training" \
+  --model-dir "$EQ_RUNTIME_ROOT/models/segmentation/mitochondria" \
   --epochs 50 \
   --batch-size 24 \
   --learning-rate 1e-3 \
@@ -361,7 +361,7 @@ python -m eq.training.train_glomeruli \
   --seed 42
 ```
 
-For all-data glomeruli training, use the manifest-backed `raw_data/cohorts` registry root. It trains from admitted manifest rows in the `manual_mask` and `masked_external` lanes. A single active paired project root such as `raw_data/preeclampsia_project/data` remains valid for project-only training. Raw project backups are source material, not direct training roots. Generated manifests, audits, caches, and metrics belong under `derived_data` or `output`.
+For all-data glomeruli training, use the manifest-backed `raw_data/cohorts` registry root. It trains from admitted manifest rows in the `manual_mask_core` and `manual_mask_external` lanes. For Lauren-only training, use the localized cohort root `raw_data/cohorts/lauren_preeclampsia`. Raw backup trees are source material, not direct training roots. Generated manifests, audits, caches, and metrics belong under `derived_data` or `output`.
 
 Important nuance:
 
@@ -470,8 +470,8 @@ Primary CLI entrypoint:
 
 ```bash
 eq metadata-process \
-  --input-file data/raw_data/<project>/subject_metadata.xlsx \
-  --output-dir data/derived_data/<project>/metadata
+  --input-file "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>/metadata/subject_metadata.xlsx" \
+  --output-dir "$EQ_RUNTIME_ROOT/derived_data/<project>/metadata"
 ```
 
 ## Quantification Status

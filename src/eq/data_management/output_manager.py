@@ -35,7 +35,7 @@ class OutputManager:
         """Create a structured output directory based on data source and run type.
         
         Args:
-            data_source_name: Name of the input data source (e.g., 'preeclampsia_data')
+            data_source_name: Name of the input data source (e.g., 'lauren_preeclampsia')
             run_type: Type of run ('quick', 'production', 'smoke', 'development')
             timestamp: Optional timestamp string (defaults to current time)
             custom_suffix: Optional custom suffix for the directory name

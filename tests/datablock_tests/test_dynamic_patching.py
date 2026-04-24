@@ -15,7 +15,7 @@ try:
     from eq.data_management.datablock_loader import build_segmentation_dls_dynamic_patching
     print("✅ Imported build_segmentation_dls_dynamic_patching")
     
-    data_root = "/home/ncamarda/endotheliosis_quantifier/data/derived_data/mito"
+    data_root = str(Path.home() / "ProjectsRuntime" / "endotheliosis_quantifier" / "raw_data" / "mitochondria_data" / "training")
     print(f"Creating DataLoaders with data root: {data_root}")
     
     # Create DataLoaders

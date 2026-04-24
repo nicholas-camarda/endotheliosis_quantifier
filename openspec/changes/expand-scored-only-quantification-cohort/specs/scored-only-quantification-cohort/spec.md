@@ -130,8 +130,8 @@ The system SHALL organize every cohort under the active runtime root at `raw_dat
 - **WHEN** the repository contains downloaded segmentation datasets such as Lucchi that are used only for segmentation installation or training layout
 - **THEN** those datasets SHALL remain outside `raw_data/cohorts/<cohort_id>/` and SHALL NOT require `manifest.csv` under this change unless a future quantification change explicitly brings them into scope
 
-#### Scenario: Repo-local placeholder data roots are not treated as active runtime storage
-- **WHEN** the current machine's repo checkout has empty or placeholder `data/raw_data` and `data/derived_data` directories while the active working state lives under `$EQ_RUNTIME_ROOT`
+#### Scenario: Repo-local data roots are not treated as active runtime storage
+- **WHEN** the current machine's repo checkout has no active `data/raw_data` or `data/derived_data` storage while the active working state lives under `$EQ_RUNTIME_ROOT`
 - **THEN** the cohort layout for this change SHALL target the active runtime root rather than creating a competing second data home inside the repo checkout
 
 ### Requirement: Repo-style cohort harmonization
@@ -168,12 +168,16 @@ The system SHALL build each in-scope runtime cohort directory as a self-containe
 - **WHEN** a downstream stage such as segmentation inference, predicted-ROI generation, or grading dataset build runs against an admitted cohort
 - **THEN** it SHALL be able to operate from the localized cohort directory and manifest without requiring ad hoc traversal of the original PhD / cloud directories
 
-### Requirement: Model-derived artifacts live under cohort outputs
-The system SHALL write model-derived cohort artifacts under the active runtime root's `output/cohorts/<cohort_id>/` or the equivalent caller-supplied output root. Each cohort output directory SHALL use deterministic subdirectories for transport audit, predicted-ROI assets, embeddings, grader outputs, and review artifacts.
+### Requirement: Model-derived artifacts live under result-family outputs
+The system SHALL write model-derived artifacts under result-family directories, not under a generic cohort-named output tree. Segmentation artifacts such as mask-quality panels, transport audits, prediction reviews, and candidate-comparison evidence SHALL live under `output/segmentation_results/`. Quantification artifacts such as predicted ROI grading inputs, embeddings, grader outputs, and review reports SHALL live under `output/quantification_results/`.
 
-#### Scenario: Cohort artifact layout is deterministic
+#### Scenario: Segmentation artifact layout is deterministic
 - **WHEN** the system materializes model-derived cohort artifacts
-- **THEN** it SHALL write them to deterministic subdirectories under the runtime root's `output/cohorts/<cohort_id>/` so downstream tools and tests can locate them without cohort-specific path logic
+- **THEN** it SHALL write segmentation evidence to deterministic subdirectories under the runtime root's `output/segmentation_results/<result_or_cohort_id>/`
+
+#### Scenario: Quantification artifact layout is deterministic
+- **WHEN** the system materializes predicted-ROI grading, embedding, grader, or review artifacts
+- **THEN** it SHALL write quantification evidence to deterministic subdirectories under the runtime root's `output/quantification_results/<cohort_id>/`
 
 ### Requirement: High-fidelity score-image mapping verification
 The system SHALL require multiple high-fidelity verification checks before any harmonized scored-only row is admitted into downstream grading. Verification SHALL prove that each admitted staged image maps one-to-one to the intended score row and source identifier, record the evidence used for that decision, and fail closed on ambiguity or contradiction.
@@ -360,7 +364,7 @@ The system SHALL treat `cohort_id=vegfri_dox` as the first external cohort with 
 - **THEN** those rows SHALL be eligible only for the scored-only predicted-ROI grading lane
 
 ### Requirement: Current data holdings are built out under the new contract
-The system SHALL apply the cohort-first layout and unified manifest contract to the user's currently relevant accessible scored quantification data holdings, not just to future cohorts. At minimum, implementation SHALL cover the existing masked-core cohort and the currently identified VEGFRi Dox and VEGFRi MR scored-only cohorts, with explicit exclusion or unresolved states where a cohort cannot yet pass the required checks.
+The system SHALL apply the cohort-first layout and unified manifest contract to the user's currently relevant accessible scored quantification data holdings, not just to future cohorts. At minimum, implementation SHALL cover Lauren's preeclampsia cohort, the currently identified VEGFRi Dox cohort, and the VEGFRi MR scored-only cohort, with explicit exclusion or unresolved states where a cohort cannot yet pass the required checks.
 
 #### Scenario: Current cohorts receive unified-manifest rows
 - **WHEN** the implementation processes the user's current accessible cohorts
@@ -373,13 +377,18 @@ The system SHALL apply the cohort-first layout and unified manifest contract to 
 ### Requirement: Cohort-specific execution is explicit
 The system SHALL implement a cohort-specific rollout plan for the current accessible data rather than relying on one generic ingestion path to describe all cases.
 
-#### Scenario: `masked_core` is translated without regression
-- **WHEN** the implementation processes the existing masked-core runtime data
-- **THEN** it SHALL produce `cohort_id=masked_core` rows in the unified manifest that reflect the active supported preeclampsia data without breaking the current masked-core quantification path
+#### Scenario: Lauren preeclampsia is named by cohort identity
+- **WHEN** the implementation processes Lauren's active preeclampsia runtime data
+- **THEN** it SHALL produce `cohort_id=lauren_preeclampsia` rows in the unified manifest with `lane_assignment=manual_mask_core`
+- **AND** it SHALL NOT use a generic cohort identity such as `masked_core` to encode mask availability
+
+#### Scenario: Manual-mask lanes distinguish role, not drawing method
+- **WHEN** Lauren preeclampsia and Dox rows both have manually drawn Label Studio-style masks
+- **THEN** the manifest SHALL distinguish them as `manual_mask_core` versus `manual_mask_external` based on cohort role and admission gate rather than implying different mask provenance
 
 #### Scenario: `vegfri_dox` recovers both scores and brush masks
 - **WHEN** the implementation processes the current Dox Label Studio data
-- **THEN** it SHALL start from the latest dated export, recover image-level score choices and brushlabel glomerulus masks where present, explicitly classify foreign mixed rows rather than silently treating the export as a clean single cohort, and partition reconciled Dox rows into masked-external versus scored-only lanes
+- **THEN** it SHALL start from the latest dated export, recover image-level score choices and brushlabel glomerulus masks where present, explicitly classify foreign mixed rows rather than silently treating the export as a clean single cohort, and partition reconciled Dox rows into `manual_mask_external` versus `scored_only` lanes
 
 #### Scenario: `vegfri_mr` documents replicate reduction
 - **WHEN** the implementation processes the current MR scoring workbook
@@ -416,7 +425,7 @@ The system SHALL archive overlapping pre-existing runtime quantification-input d
 - **THEN** downstream cohort-aware workflows SHALL use only the new cohort tree and SHALL NOT read retired overlapping runtime input directories as active sources
 
 ### Requirement: Shared repo path helpers use the new runtime contract
-The system SHALL refactor the shared repo path helpers so the active runtime root, unified cohort manifest, cohort input tree, and cohort output tree are resolved consistently across the repository.
+The system SHALL refactor the shared repo path helpers so the active runtime root, unified cohort manifest, cohort input tree, segmentation result tree, and quantification result tree are resolved consistently across the repository.
 
 #### Scenario: Shared path helpers resolve active cohort surfaces
 - **WHEN** a repo workflow requests the runtime root or cohort data/output locations

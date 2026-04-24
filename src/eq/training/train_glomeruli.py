@@ -35,6 +35,7 @@ from eq.data_management.datablock_loader import (
 )
 from eq.training.transfer_learning import transfer_learn_glomeruli
 from eq.utils.hardware_detection import get_segmentation_training_batch_size
+from eq.utils.paths import resolve_runtime_path
 
 
 # BCEWithLogitsLossFlat import removed - using FastAI v2 automatic loss selection
@@ -441,7 +442,7 @@ def main():
                 if isinstance(cfg_yaml.get('pretrained_model'), dict) else None
             )
             if base_model and not args.base_model:
-                args.base_model = base_model
+                args.base_model = str(resolve_runtime_path(base_model))
             # training hyperparams
             model_cfg = cfg_yaml.get('model', {}) if isinstance(cfg_yaml.get('model'), dict) else {}
             training_cfg = model_cfg.get('training', {}) if isinstance(model_cfg.get('training'), dict) else {}
@@ -456,8 +457,7 @@ def main():
                 args.image_size = int(model_cfg['input_size'][0])
             # output model dir and name from checkpoint_path
             if 'checkpoint_path' in model_cfg:
-                from pathlib import Path as _P
-                ckpt = _P(model_cfg['checkpoint_path'])
+                ckpt = resolve_runtime_path(model_cfg['checkpoint_path'])
                 args.model_dir = str(ckpt.parent)
                 # Only set model_name from YAML if CLI did not provide it
                 if parser.get_default('model_name') == args.model_name:

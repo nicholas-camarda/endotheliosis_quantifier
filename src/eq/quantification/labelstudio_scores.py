@@ -93,7 +93,34 @@ def _subject_prefix_from_image_name(image_name: str) -> str:
 def _build_join_maps(project_dir: Path) -> tuple[dict[str, str], dict[str, str]]:
     inventory = inventory_raw_project(Path(project_dir))
     if inventory.empty:
-        return {}, {}
+        images_dir = Path(project_dir) / 'images'
+        masks_dir = Path(project_dir) / 'masks'
+        if not images_dir.exists() or not masks_dir.exists():
+            return {}, {}
+
+        def join_stem(path_or_name: str | Path) -> str:
+            stem = Path(path_or_name).stem.lower()
+            return stem.removesuffix('_mask')
+
+        image_paths = [
+            path
+            for path in sorted(images_dir.rglob('*'))
+            if path.is_file() and path.suffix.lower() in {'.jpg', '.jpeg', '.png', '.tif', '.tiff'}
+        ]
+        masks_by_stem = {
+            join_stem(path): str(path)
+            for path in sorted(masks_dir.rglob('*'))
+            if path.is_file() and path.suffix.lower() in {'.jpg', '.jpeg', '.png', '.tif', '.tiff'}
+        }
+        image_lookup: dict[str, str] = {}
+        mask_lookup: dict[str, str] = {}
+        for image_path in image_paths:
+            keys = {image_path.name, image_path.name.lower(), join_stem(image_path)}
+            for key in keys:
+                image_lookup[key] = str(image_path)
+                if join_stem(image_path) in masks_by_stem:
+                    mask_lookup[key] = masks_by_stem[join_stem(image_path)]
+        return image_lookup, mask_lookup
 
     image_lookup = {
         str(row.image_name): str(row.image_path)
@@ -180,8 +207,9 @@ def recover_label_studio_score_table(
         elif latest_grade is None:
             resolution = 'latest_annotation_missing_grade'
 
-        image_path = image_lookup.get(str(image_name), '')
-        mask_path = mask_lookup.get(str(image_name), '')
+        image_keys = (str(image_name), str(image_name).lower(), Path(str(image_name)).stem.lower())
+        image_path = next((image_lookup[key] for key in image_keys if key in image_lookup), '')
+        mask_path = next((mask_lookup[key] for key in image_keys if key in mask_lookup), '')
         if image_path and mask_path:
             join_status = 'ok'
         elif image_path:

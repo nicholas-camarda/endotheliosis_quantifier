@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from eq.utils.logger import get_logger
 from eq.utils.hardware_detection import get_device_info
+from eq.utils.paths import get_runtime_output_path
 
 
 def run_mitochondria_prediction(
@@ -36,7 +37,7 @@ def run_mitochondria_prediction(
     data_path : Union[str, Path]
         Path to the input data directory or file
     output_dir : Optional[Union[str, Path]], default=None
-        Output directory for predictions. If None, uses 'output/mitochondria_predictions'
+        Output directory for predictions. If None, uses the active runtime output root.
     batch_size : int, default=8
         Batch size for inference
     device : Optional[str], default=None
@@ -53,7 +54,7 @@ def run_mitochondria_prediction(
     
     # Set up output directory
     if output_dir is None:
-        output_dir = Path("output/mitochondria_predictions")
+        output_dir = get_runtime_output_path() / "mitochondria_predictions"
     else:
         output_dir = Path(output_dir)
     

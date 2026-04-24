@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 import numpy as np
 
+from eq.utils.paths import get_runtime_cohort_path
+
 # Add src to path
 sys.path.append(str(Path(__file__).parent / "src"))
 
@@ -18,7 +20,7 @@ try:
     from fastai.vision.all import get_image_files
     
     # Check the raw data for full images
-    data_root = "/home/ncamarda/endotheliosis_quantifier/data/raw_data/preeclampsia_project"
+    data_root = get_runtime_cohort_path("lauren_preeclampsia")
     images_dir = Path(data_root) / "images"
     
     if not images_dir.exists():

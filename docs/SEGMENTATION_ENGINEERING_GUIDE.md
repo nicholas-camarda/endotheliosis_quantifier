@@ -45,19 +45,19 @@ Supported training roots contain full-image `images/` and `masks/` directories. 
 
 For mitochondria, keep the installed physical split explicit:
 
-- `derived_data/mitochondria_data/training` is the dynamic training root
-- `derived_data/mitochondria_data/testing` is held out for explicit evaluation
+- `raw_data/mitochondria_data/training` is the dynamic training root
+- `raw_data/mitochondria_data/testing` is held out for explicit evaluation
 
 The physical `testing/` root is not the FastAI validation split. Training-time validation is created inside the selected `training/` root.
 
-For glomeruli, train all available admitted masked rows from the manifest-backed `raw_data/cohorts` registry root. For a project-only run, use an active paired full-image root under `raw_data`, such as `raw_data/preeclampsia_project/data`. Raw project backup trees are source material and may contain images without masks; they should not be passed directly to training.
+For glomeruli, train all available admitted masked rows from the manifest-backed `raw_data/cohorts` registry root. For a Lauren-only run, use `raw_data/cohorts/lauren_preeclampsia`. Raw project backup trees are source material and may contain images without masks; they should not be passed directly to training.
 
 Path contract:
 
 - `raw_data/...`: source images, source masks, active paired training roots, and cohort registry inputs
-- `derived_data/...`: generated manifests, audits, caches, metrics, evaluation artifacts
+- `derived_data/...`: generated manifest summaries, audits, caches, metrics, evaluation artifacts
 
-The current mitochondria runtime under `derived_data/mitochondria_data/{training,testing}` is a Lucchi-installed exception, not the generic naming rule for curated glomeruli training inputs.
+`derived_data/glomeruli_data` and `derived_data/mitochondria_data` are not active training-data roots.
 
 Local Apple Silicon starting points on the powerful MPS machine class:
 
