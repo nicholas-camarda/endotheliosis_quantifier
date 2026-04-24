@@ -217,7 +217,7 @@ The manifest is image-level and records runtime-local asset paths, score linkage
 Current external cohort rules:
 
 - `lauren_preeclampsia` currently contributes 88 admitted `manual_mask_core` rows from Lauren's preeclampsia Label Studio workflow.
-- `vegfri_dox` currently contributes 864 Label Studio export rows: 619 decoded `manual_mask_external` rows admitted after mask-quality review, 7 decoded rows missing scores, 228 foreign mixed-export rows, and 10 scored-only rows without decoded runtime images.
+- `vegfri_dox` currently contributes 864 Label Studio export rows: 619 decoded `manual_mask_external` rows accepted as first-class glomeruli training labels, 7 decoded rows missing scores, 228 foreign mixed-export rows, and 10 scored-only rows without decoded runtime images.
 - `vegfri_mr` currently contributes 127 workbook image-level rows from the external-drive whole-field TIFF batches. Of these, 126 are localized for concordance/evaluation only and one workbook row, `8570-5`, remains unresolved because the matching TIFF was not found.
 - Lucchi and other segmentation-install datasets are not part of the scored cohort manifest.
 

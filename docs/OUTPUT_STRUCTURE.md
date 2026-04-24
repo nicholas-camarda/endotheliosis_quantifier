@@ -126,12 +126,13 @@ $EQ_RUNTIME_ROOT/
 │   └── cohort_manifest/
 │       └── manifest_summary.json
 └── output/
-    ├── segmentation_results/
-    │   ├── glomeruli_candidate_comparison/
-    │   ├── glomeruli_prediction/
-    │   └── <cohort_id>/
-    │       ├── mask_quality/
-    │       └── transport_audit/
+    ├── segmentation_evaluation/
+    │   ├── mitochondria/<run_id>/
+    │   ├── glomeruli/<run_id>/
+    │   └── glomeruli_candidate_comparison/<run_id>/
+    ├── predictions/
+    │   ├── mitochondria/<model_run_id>/<input_set>/
+    │   └── glomeruli/<model_run_id>/<input_set>/
     └── quantification_results/
         └── <cohort_id>/
             ├── predicted_roi/
@@ -146,7 +147,7 @@ The naming contract is:
 
 - `cohort_id` is the project or biological cohort identity. Current values are `lauren_preeclampsia`, `vegfri_dox`, and `vegfri_mr`.
 - `lane_assignment` is the workflow/admission lane. Current values are `manual_mask_core`, `manual_mask_external`, `scored_only`, and `mr_concordance_only`.
-- `manual_mask_core` and `manual_mask_external` are both manual-mask lanes. They differ by cohort role and admission gate, not by how the masks were drawn.
+- `manual_mask_core` and `manual_mask_external` are both first-class manual-mask glomeruli training lanes. They preserve source provenance; they do not make Dox lower-stature training data.
 - Do not encode mask state in a generic cohort ID such as `masked_core`.
 
 The supported admission states are explicit:
@@ -156,19 +157,18 @@ The supported admission states are explicit:
 - `excluded`: a contradiction, unreadable asset, ambiguous mapping, or failed gate blocks the row.
 - `foreign`: the row came from a mixed export and does not belong to the intended cohort.
 - `admitted`: mapping verification passed and the row is usable for the lane stated in `lane_assignment`.
-- `pending_mask_quality`: a recovered external manual-mask row needs mask-quality review before segmentation improvement.
 - `pending_transport_audit`: a scored-only row needs cohort-specific segmentation transport review before predicted-ROI grading use.
 - `evaluation_only`: MR phase 1 rows are available for transport/concordance evaluation, not training-set expansion.
 
 Current runtime cohort counts are recorded in `derived_data/cohort_manifest/manifest_summary.json`:
 
 - `lauren_preeclampsia`: 88 `manual_mask_core` rows, all `admitted`.
-- `vegfri_dox`: 864 rows total, with 619 decoded `manual_mask_external` rows admitted after mask-quality review, 7 decoded rows missing scores, 228 foreign mixed-export rows, and 10 scored-only rows without decoded runtime images.
+- `vegfri_dox`: 864 rows total, with 619 decoded `manual_mask_external` rows accepted as first-class glomeruli training labels, 7 decoded rows missing scores, 228 foreign mixed-export rows, and 10 scored-only rows without decoded runtime images.
 - `vegfri_mr`: 127 `mr_concordance_only` rows, with 126 localized whole-field TIFF rows marked `evaluation_only` and one unresolved workbook row, `8570-5`, without a matching discovered TIFF.
 
-The current Dox runtime surface contains copied images, copied recovered brushlabel masks, copied score exports, `metadata/decoded_brushlabel_masks.csv`, and `metadata/mask_quality_audit.csv` under `raw_data/cohorts/vegfri_dox/`. Verified Dox `manual_mask_external` rows are eligible for segmentation augmentation through the manifest-backed `raw_data/cohorts` training root.
+The current Dox runtime surface contains copied images, copied recovered brushlabel masks, copied score exports, and `metadata/decoded_brushlabel_masks.csv` under `raw_data/cohorts/vegfri_dox/`. Dox and Lauren admitted manual-mask rows are co-equal inputs when training from the manifest-backed `raw_data/cohorts` root.
 
-MR is handled as a whole-field TIFF cohort. Manifest rows are image-level, workbook replicates are reduced to a human image-level median, raw replicate vectors are preserved in sidecar ingest artifacts, external-drive source provenance is recorded under `raw_data/cohorts/vegfri_mr/metadata/`, and phase 1 segmentation/concordance output belongs under `output/segmentation_results/vegfri_mr/` while grading outputs belong under `output/quantification_results/vegfri_mr/`.
+MR is handled as a whole-field TIFF cohort. Manifest rows are image-level, workbook replicates are reduced to a human image-level median, raw replicate vectors are preserved in sidecar ingest artifacts, external-drive source provenance is recorded under `raw_data/cohorts/vegfri_mr/metadata/`, segmentation evaluation belongs under `output/segmentation_evaluation/`, model-generated masks belong under `output/predictions/`, and grading outputs belong under `output/quantification_results/vegfri_mr/`.
 
 MR phase 1 inference has an explicit contract: whole-field TIFF tiling, glomerulus segmentation, component-area filtering, accepted ROI extraction, ROI grading, image-level median aggregation, and human-versus-inferred concordance. Rows with zero accepted inferred ROIs are non-evaluable, not silently admitted.
 
@@ -212,7 +212,8 @@ Current code and documentation should resolve paths through `src/eq/utils/paths.
 - `<runtime_root>/raw_data/cohorts/<cohort_id>/`
 - `<runtime_root>/raw_data/mitochondria_data/`
 - `<runtime_root>/derived_data/cohort_manifest/manifest_summary.json`
-- `<runtime_root>/output/segmentation_results/<result_or_cohort_id>/`
+- `<runtime_root>/output/segmentation_evaluation/<task_or_evaluation>/<run_id>/`
+- `<runtime_root>/output/predictions/<task>/<model_run_id>/<input_set>/`
 - `<runtime_root>/output/quantification_results/<cohort_id>/`
 
 Avoid older machine-specific absolute paths and legacy directory names such as bare `derived_data/` at the repo root unless you are working on explicit backward-compatibility code.

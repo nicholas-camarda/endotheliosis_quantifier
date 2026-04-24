@@ -1,25 +1,24 @@
 # Endotheliosis Quantifier
 
-Endotheliosis Quantifier (`eq`) is a FastAI/PyTorch project for binary segmentation workflows around glomeruli histology and mitochondria pretraining, plus a maintained Label Studio-first image-level endotheliosis scoring baseline. This repository is currently maintained as a WSL-first development environment with local GPU training, local data directories, and Git-tracked code/config only.
+Endotheliosis Quantifier (`eq`) is a FastAI/PyTorch project for binary segmentation workflows around glomeruli histology and mitochondria pretraining, plus a maintained Label Studio-first image-level endotheliosis scoring baseline. The repository is a WSL-first development environment with local GPU training, local data directories, and Git-tracked code/config only.
 
 If you want the friendlier long-form introduction and workflow explanation, see [docs/ONBOARDING_GUIDE.md](docs/ONBOARDING_GUIDE.md).
 For the full curated documentation set, see [docs/README.md](docs/README.md).
 
-## Current Baseline
+## Operating Contract
 
-- Primary development target: WSL on Windows with CUDA-capable PyTorch
-- macOS local-development target: Apple Silicon/MPS using the `eq-mac` conda environment
-- Package source: `src/eq/`
-- Raw datasets: the active runtime root's `raw_data/` tree
-- Generated artifacts: the active runtime root's `derived_data/`, `models/`, `logs/`, and `output/` trees
-- Active runtime root: configured by `EQ_RUNTIME_ROOT`; this checkout's local default is recorded in `analysis_registry.yaml`
-- Main operational branch today: `master`
-- Quantification default for preeclampsia: Label Studio-derived image-level grades joined to image/mask pairs
-- Current quantification input semantics: full multi-component union ROI, not largest-component-only crops
-- Current quantification outputs: frozen segmentation-encoder embeddings, ordinal predictions, and an HTML review artifact with example cases
-- External scored cohort registry: `$EQ_RUNTIME_ROOT/raw_data/cohorts/manifest.csv`
-
-The repo contains older experimental branches and historical notes. Treat the files in this branch as the source of truth unless you are deliberately comparing against another branch.
+| Area | Current contract |
+| --- | --- |
+| Development target | WSL on Windows with CUDA-capable PyTorch |
+| macOS local execution | Apple Silicon/MPS through the `eq-mac` conda environment |
+| Package source | `src/eq/` |
+| Runtime root | `EQ_RUNTIME_ROOT`, with this checkout's local default recorded in `analysis_registry.yaml` |
+| Runtime inputs | Raw datasets under `$EQ_RUNTIME_ROOT/raw_data/` |
+| Runtime outputs | Derived data, trained models, logs, and generated reports under `$EQ_RUNTIME_ROOT/derived_data/`, `$EQ_RUNTIME_ROOT/models/`, `$EQ_RUNTIME_ROOT/logs/`, and `$EQ_RUNTIME_ROOT/output/` |
+| Scored cohort registry | `$EQ_RUNTIME_ROOT/raw_data/cohorts/manifest.csv` |
+| Preeclampsia quantification labels | Label Studio-derived image-level grades joined to image/mask pairs |
+| Quantification ROI semantics | Full multi-component union ROI |
+| Quantification outputs | Frozen segmentation-encoder embeddings, ordinal predictions, and an HTML review artifact with example cases |
 
 ## Environment Contract
 
@@ -37,7 +36,7 @@ conda activate eq-mac
 python -m eq --help
 ```
 
-Real MPS training or validation should run outside the Codex sandbox with the `eq-mac` interpreter. A sandbox MPS failure is not authoritative for local Mac execution. For segmentation training and validation on Mac, use:
+Real MPS training or validation should run in a normal macOS terminal with the `eq-mac` interpreter. Sandboxed terminal results are not authoritative for local Metal execution. For segmentation training and validation on Mac, use:
 
 ```bash
 env PYTORCH_ENABLE_MPS_FALLBACK=1 MPLCONFIGDIR=/tmp/mpl_eq \
@@ -120,9 +119,11 @@ $EQ_RUNTIME_ROOT/
 │       │   ├── masks/
 │       │   └── metadata/
 │       └── vegfri_mr/
+├── models/segmentation/
 └── output/
-    └── cohorts/
-        └── <cohort_id>/
+    ├── segmentation_evaluation/
+    ├── predictions/
+    └── quantification_results/
 ```
 
 Build or refresh the runtime manifest with:
@@ -140,12 +141,12 @@ Manifest naming separates cohort identity from admission lane:
 
 - `cohort_id` names the biological/project cohort, such as `lauren_preeclampsia`, `vegfri_dox`, or `vegfri_mr`.
 - `lane_assignment` names the workflow lane, such as `manual_mask_core`, `manual_mask_external`, `scored_only`, or `mr_concordance_only`.
-- Lauren's preeclampsia masks and Dox masks are both manually drawn Label Studio-style masks. The lane distinction is core-vs-external admission path, not a difference in how the masks were drawn.
+- Lauren's preeclampsia masks and Dox masks are equivalent-stature manual-mask glomeruli training labels. The lane names preserve provenance; they do not make Dox a lower-stature or separately gated training source.
 
 Current cohort states:
 
 - `lauren_preeclampsia`: 88 current preeclampsia image/mask rows are localized as `manual_mask_core` and `admitted`.
-- `vegfri_dox`: 864 Label Studio export rows are represented. The 626 decoded brushlabel image/mask rows include 619 mask-quality-approved `manual_mask_external` rows admitted for segmentation augmentation and 7 `unresolved` missing-score rows. The remaining scored-only rows include 228 `foreign` mixed-export rows and 10 unresolved rows without decoded runtime images.
+- `vegfri_dox`: 864 Label Studio export rows are represented. The 626 decoded brushlabel image/mask rows include 619 accepted `manual_mask_external` rows used as first-class glomeruli training labels and 7 `unresolved` missing-score rows. The remaining scored-only rows include 228 `foreign` mixed-export rows and 10 unresolved rows without decoded runtime images.
 - `vegfri_mr`: 127 workbook image-level rows are represented from the external-drive whole-field TIFF batches. The 126 rows with localized TIFFs are `evaluation_only`; workbook row `8570-5` is unresolved because no matching TIFF was found in the discovered image root. Phase 1 use is concordance/evaluation only.
 
 Lucchi and other segmentation-install datasets stay outside `raw_data/cohorts/manifest.csv`.
@@ -187,7 +188,7 @@ The full fixed-loader retraining workflow is run from its YAML config:
 eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
 ```
 
-That command refreshes the cohort manifest, trains the mitochondria base, selects the exported base artifact, trains the glomeruli transfer and no-mitochondria-base candidates, and writes the comparison evidence under `$EQ_RUNTIME_ROOT/output/segmentation_results/glomeruli_candidate_comparison/`.
+That command refreshes the cohort manifest, trains the mitochondria base, selects the exported base artifact, trains the glomeruli transfer and no-mitochondria-base candidates, and writes comparison evidence under `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/<run_id>/`.
 
 All YAML workflow configs in `configs/` use the same entrypoint:
 
@@ -276,7 +277,7 @@ python -m eq.training.train_glomeruli \
 
 On the powerful Apple Silicon MPS machine class, `12` is the current starting batch-size recommendation for `512x512` glomeruli crops. Override it when throughput or stability requires a different value.
 
-For all-data glomeruli training, pass the manifest-backed cohort registry root: `$EQ_RUNTIME_ROOT/raw_data/cohorts`. The loader enumerates admitted manifest rows in the `manual_mask_core` and `manual_mask_external` lanes, so the current training set is Lauren's 88 preeclampsia manual-mask rows plus the 619 approved Dox manual-mask rows. For a Lauren-only run, use `$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia`. Raw backup trees are source material, not direct training roots. Generated manifest summaries, audits, caches, and metrics belong under `derived_data` or `output`.
+For all-data glomeruli training, pass the manifest-backed cohort registry root: `$EQ_RUNTIME_ROOT/raw_data/cohorts`. The loader enumerates admitted manifest rows in the `manual_mask_core` and `manual_mask_external` lanes, so the current training set is Lauren's 88 preeclampsia manual-mask rows plus the 619 Dox manual-mask rows. For a Lauren-only run, use `$EQ_RUNTIME_ROOT/raw_data/cohorts/lauren_preeclampsia`. Raw backup trees are source material, not direct training roots. Generated manifest summaries, caches, evaluation artifacts, and prediction outputs belong under `derived_data` or `output`.
 
 For heavy training runs, the dedicated training modules above are the safest entrypoints. The `eq` CLI is still useful for validation, inspection, capabilities, and utility commands.
 
