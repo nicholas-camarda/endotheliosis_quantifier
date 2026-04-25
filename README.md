@@ -10,8 +10,8 @@ For the full curated documentation set, see [docs/README.md](docs/README.md).
 The main workflow entrypoint is `eq run-config`. If you want the easiest supported way to run the segmentation workflows in this repo, use one of the committed YAML configs:
 
 ```bash
-eq run-config --config configs/full_segmentation_retrain.yaml --dry-run
-eq run-config --config configs/full_segmentation_retrain.yaml
+eq run-config --config configs/glomeruli_candidate_comparison.yaml --dry-run
+eq run-config --config configs/glomeruli_candidate_comparison.yaml
 ```
 
 Other supported workflow configs use the same entrypoint:
@@ -155,18 +155,18 @@ For the generic runtime layout and more detailed manifest semantics, see [docs/O
 
 The normal segmentation workflow is controlled by YAML files in `configs/`. Edit the YAML for run names, roots, paths, model names, training settings, and comparison outputs; then run it through one CLI entrypoint.
 
-The all-in-one segmentation run is:
+The candidate-comparison run is:
 
 ```bash
-eq run-config --config configs/full_segmentation_retrain.yaml
+eq run-config --config configs/glomeruli_candidate_comparison.yaml
 ```
 
-That command reads `configs/full_segmentation_retrain.yaml`, refreshes the cohort manifest, trains a fresh mitochondria base, uses that exported base artifact for glomeruli transfer, trains the no-mitochondria-base comparator, writes trained models under `$EQ_RUNTIME_ROOT/models/segmentation/`, writes comparison evidence under `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/`, and tees the workflow output to `$EQ_RUNTIME_ROOT/logs/run_config/<run_id>/`.
+That command reads `configs/glomeruli_candidate_comparison.yaml`, refreshes the cohort manifest, trains or loads the mitochondria base needed for glomeruli transfer, trains the no-mitochondria-base comparator, writes trained models under `$EQ_RUNTIME_ROOT/models/segmentation/`, writes comparison evidence under `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/`, and tees the workflow output to `$EQ_RUNTIME_ROOT/logs/run_config/<run_id>/`.
 
 Dry-run the resolved commands before launching training:
 
 ```bash
-eq run-config --config configs/full_segmentation_retrain.yaml --dry-run
+eq run-config --config configs/glomeruli_candidate_comparison.yaml --dry-run
 ```
 
 Supported workflow configs use the same entrypoint:
@@ -174,10 +174,13 @@ Supported workflow configs use the same entrypoint:
 ```bash
 eq run-config --config configs/mito_pretraining_config.yaml
 eq run-config --config configs/glomeruli_finetuning_config.yaml
-eq run-config --config configs/full_segmentation_retrain.yaml
+eq run-config --config configs/glomeruli_candidate_comparison.yaml
+eq run-config --config configs/glomeruli_transport_audit.yaml
+eq run-config --config configs/highres_glomeruli_concordance.yaml
+eq run-config --config configs/endotheliosis_quantification.yaml
 ```
 
-Use the full retraining YAML when you want candidate evidence for the current glomeruli segmentation baseline. Use the mitochondria or glomeruli YAMLs only when you intentionally want to run one stage.
+Use `configs/glomeruli_candidate_comparison.yaml` when you want candidate evidence for the current glomeruli segmentation baseline. Use the transport, high-resolution concordance, or quantification YAMLs only when you already have the explicit upstream artifacts required by those stages.
 
 The YAML owns the routine settings:
 
@@ -189,7 +192,7 @@ The YAML owns the routine settings:
 Environment variables are only local overrides. In the common case, you do not need to define model names, model directories, training roots, annotation paths, or MPS fallback flags by hand. Set `EQ_RUNTIME_ROOT` only when you want to run the same YAML against a different runtime tree than the checkout default:
 
 ```bash
-EQ_RUNTIME_ROOT=/path/to/runtime eq run-config --config configs/full_segmentation_retrain.yaml
+EQ_RUNTIME_ROOT=/path/to/runtime eq run-config --config configs/glomeruli_candidate_comparison.yaml
 ```
 
 Site-specific source-location overrides are defined in `src/eq/utils/paths.py` for local cohort ingestion. Treat those as local data plumbing, not as part of the ordinary run recipe.
@@ -198,7 +201,7 @@ Site-specific source-location overrides are defined in `src/eq/utils/paths.py` f
 
 The current checked-in segmentation snapshot comes from the canonical April 24, 2026 workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/latest_run/`.
 
-- Current mitochondria base artifact: `fixedloader_full_mito_base-pretrain_e50_b24_lr1e-3_sz256`
+- Current candidate artifacts are recorded by the comparison report and model sidecars under the runtime model root.
 - Current deterministic glomeruli review panel: `30` crops across `29` images and `25` subjects
 - Review-panel category balance: `10` background, `10` boundary, `10` positive
 
@@ -215,8 +218,8 @@ The current glomeruli candidates are available as research-use artifacts, but th
 ```bash
 eq capabilities
 eq mode --show
-eq run-config --config configs/full_segmentation_retrain.yaml --dry-run
-eq run-config --config configs/full_segmentation_retrain.yaml
+eq run-config --config configs/glomeruli_candidate_comparison.yaml --dry-run
+eq run-config --config configs/glomeruli_candidate_comparison.yaml
 ```
 
 The comparison output reports explicit decision and evidence states. Transfer and no-mitochondria-base candidates can remain explicit research-use comparators even when the evidence is `insufficient_evidence`, `audit_missing`, or `not_promotion_eligible` for front-page performance claims.
@@ -279,7 +282,10 @@ The main workflow configs live here:
 
 - `configs/mito_pretraining_config.yaml`
 - `configs/glomeruli_finetuning_config.yaml`
-- `configs/full_segmentation_retrain.yaml`
+- `configs/glomeruli_candidate_comparison.yaml`
+- `configs/glomeruli_transport_audit.yaml`
+- `configs/highres_glomeruli_concordance.yaml`
+- `configs/endotheliosis_quantification.yaml`
 
 Path helpers centralize repo-local defaults, runtime roots, and external cohort sources. Prefer YAML-relative paths and the path helpers in `src/eq/utils/paths.py` over hardcoded machine-specific paths.
 

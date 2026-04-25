@@ -264,11 +264,7 @@ In this repo, that behavior is controlled in `src/eq/data_management/datablock_l
 
 These checked-in figures come from the canonical April 24, 2026 segmentation workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/latest_run/`. They show repository training outputs and internal candidate-comparison evidence. They do **not** by themselves establish external validity, scientific readiness, or an unconditional promotion claim.
 
-Current artifact names:
-
-- mitochondria base: `fixedloader_full_mito_base-pretrain_e50_b24_lr1e-3_sz256`
-- glomeruli transfer: `fixedloader_full_glomeruli_transfer-transfer_s1lr1e-3_s2lr_lrfind_e30_b12_lr1e-3_sz256`
-- glomeruli scratch: `fixedloader_full_glomeruli_no_mito_base-scratch_e50_b12_lr1e-3_sz256`
+Current candidate artifacts are identified by the comparison report and model sidecars under the runtime model root.
 
 Current deterministic glomeruli review-panel composition:
 
@@ -432,7 +428,7 @@ Important nuance:
 
 - the README YAML-first workflow is the recommended workflow documentation
 - the `train_glomeruli.py` module resolves a machine-aware default batch size and currently starts at `12` on the powerful Apple Silicon MPS machine class when using `512x512` crops
-- `eq run-config --config configs/full_segmentation_retrain.yaml` is the normal candidate-comparison control surface
+- `eq run-config --config configs/glomeruli_candidate_comparison.yaml` is the normal candidate-comparison control surface
 - transfer training with `--base-model` must load that artifact and copy compatible weights; `--from-scratch` means no mitochondria/base artifact and currently uses an ImageNet-pretrained ResNet34 encoder
 - the direct training module CLI remains useful for targeted runs outside the full YAML workflow
 

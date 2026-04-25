@@ -4,7 +4,7 @@
 # Purpose:
 #   Train one glomeruli transfer candidate from an existing mitochondria base
 #   artifact. This is not the full overnight comparator. Use
-#   full_segmentation_retrain.yaml when you want to train the mito
+#   glomeruli_candidate_comparison.yaml when you want to train the mito
 #   base and then compare transfer versus no-mitochondria-base candidates.
 #
 # Required precondition:

@@ -22,3 +22,6 @@ This directory contains the current documentation set for the repository.
 
 - [HISTORICAL_NOTES.md](HISTORICAL_NOTES.md)
   Archive entrypoint for implementation-history notes. This is separate from the current operational docs.
+
+- [PIPELINE_INTEGRATION_PLAN.md](PIPELINE_INTEGRATION_PLAN.md)
+  Historical planning note for an older glomeruli integration path. This is retained for context and is not current run guidance.

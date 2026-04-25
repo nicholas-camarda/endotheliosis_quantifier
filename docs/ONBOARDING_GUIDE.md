@@ -25,7 +25,7 @@ That segmentation output supports image-level endotheliosis quantification workf
 
 The current checked-in segmentation results come from the canonical April 24, 2026 workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/latest_run/`.
 
-- Current mitochondria base artifact: `fixedloader_full_mito_base-pretrain_e50_b24_lr1e-3_sz256`
+- Current candidate artifacts are identified by the comparison report and model sidecars under the runtime model root.
 - Deterministic glomeruli review panel: `30` crops across `29` images and `25` subjects
 - Category balance: `10` background, `10` boundary, `10` positive
 
