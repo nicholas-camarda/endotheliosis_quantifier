@@ -83,9 +83,11 @@ def _load_backup_snapshot():
 
 def _load_contract_first_quantification():
     """Import the contract-first quantification pipeline lazily."""
-    from eq.quantification import run_contract_first_quantification
+    from eq.quantification.run_endotheliosis_quantification_workflow import (
+        run_endotheliosis_quantification_inputs,
+    )
 
-    return run_contract_first_quantification
+    return run_endotheliosis_quantification_inputs
 
 
 def _load_build_current_accessible_cohorts():
@@ -398,10 +400,10 @@ def prepare_quant_contract_command(args):
     logger.info("🔄 Preparing quantification contract artifacts...")
 
     try:
-        run_contract_first_quantification = _load_contract_first_quantification()
-        outputs = run_contract_first_quantification(
-            project_dir=Path(args.data_dir),
-            segmentation_model_path=Path(args.segmentation_model),
+        run_endotheliosis_quantification = _load_contract_first_quantification()
+        outputs = run_endotheliosis_quantification(
+            data_dir=Path(args.data_dir),
+            segmentation_model=Path(args.segmentation_model),
             output_dir=Path(args.output_dir),
             mapping_file=Path(args.mapping_file) if args.mapping_file else None,
             annotation_source=args.annotation_source,
@@ -548,25 +550,14 @@ def visualize_command(args):
 
 @log_function_call
 def quant_endo_command(args):
-    """Train quantification model for endotheliosis scoring."""
+    """Run the canonical endotheliosis quantification workflow."""
     logger = get_logger("eq.quant_endo")
-    logger.info("🔄 Starting quantification model training...")
+    logger.info("🔄 Starting endotheliosis quantification workflow...")
     
     # Get mode manager and validate mode
     mode_manager = ModeManager()
     _validate_mode_for_command(mode_manager, "quant-endo")
     
-    # Check for QUICK_TEST mode
-    import os
-    is_quick_test = os.getenv('QUICK_TEST') == 'true'
-    if is_quick_test:
-        print("🔍 QUICK_TEST mode detected - using fast validation settings")
-        args.epochs = min(args.epochs, 2)  # Limit epochs for quick testing
-        args.batch_size = min(args.batch_size, 4)  # Smaller batch size for quick testing
-    
-    # Get mode-aware batch size
-    batch_size = _get_mode_aware_batch_size(mode_manager, args.batch_size)
-    logger.info(f"📋 Training parameters: batch_size={batch_size}, epochs={args.epochs}")
     logger.info(f"🔧 Mode: {mode_manager.current_mode.value}")
     
     project_dir = Path(args.data_dir)
@@ -584,13 +575,12 @@ def quant_endo_command(args):
     print(f"Mapping file: {mapping_file if mapping_file else 'None'}")
     print(f"Apply migration: {args.apply_migration}")
     print(f"Stop after: {args.stop_after}")
-    print(f"Quick test: {is_quick_test}")
     
     try:
-        run_contract_first_quantification = _load_contract_first_quantification()
-        outputs = run_contract_first_quantification(
-            project_dir=project_dir,
-            segmentation_model_path=segmentation_model,
+        run_endotheliosis_quantification = _load_contract_first_quantification()
+        outputs = run_endotheliosis_quantification(
+            data_dir=project_dir,
+            segmentation_model=segmentation_model,
             output_dir=output_dir,
             mapping_file=mapping_file,
             annotation_source=args.annotation_source,
@@ -648,7 +638,7 @@ def main():
 Examples:
   eq quant-endo --data-dir <raw-project> --segmentation-model <model.pkl>
   eq prepare-quant-contract --data-dir <raw-project> --segmentation-model <model.pkl>
-  eq run-config --config configs/full_segmentation_retrain.yaml --dry-run
+  eq run-config --config configs/glomeruli_candidate_comparison.yaml --dry-run
   eq capabilities
   eq mode --set development --show --validate
   eq orchestrator  # Interactive menu
@@ -708,13 +698,11 @@ Examples:
     quant_parser.add_argument('--mapping-file', help='CSV mapping legacy image stems to canonical subject_image_id values')
     quant_parser.add_argument(
         '--output-dir',
-        default=str(get_runtime_output_path() / 'quantification'),
+        default=str(get_runtime_output_path() / 'quantification_results' / 'endotheliosis_quantification'),
         help='Directory to write quantification outputs',
     )
     quant_parser.add_argument('--apply-migration', action='store_true', help='Apply renames in place instead of producing a dry-run migration report')
     quant_parser.add_argument('--stop-after', default='model', choices=['contract', 'roi', 'embeddings', 'model'], help='Stop after a specific contract/scoring stage')
-    quant_parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
-    quant_parser.add_argument('--epochs', type=int, default=50, help='Number of epochs')
     quant_parser.set_defaults(func=quant_endo_command)
 
     contract_parser = subparsers.add_parser('prepare-quant-contract', help='Build score-linked contract artifacts for quantification')
@@ -725,7 +713,7 @@ Examples:
     contract_parser.add_argument('--mapping-file', help='CSV mapping legacy image stems to canonical subject_image_id values')
     contract_parser.add_argument(
         '--output-dir',
-        default=str(get_runtime_output_path() / 'quantification'),
+        default=str(get_runtime_output_path() / 'quantification_results' / 'endotheliosis_quantification'),
         help='Directory to write contract preparation artifacts',
     )
     contract_parser.add_argument('--apply-migration', action='store_true', help='Apply renames in place instead of producing a dry-run migration report')

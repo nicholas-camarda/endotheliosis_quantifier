@@ -1,16 +1,16 @@
 # Runnable with:
-#   eq run-config --config configs/full_segmentation_retrain.yaml
+#   eq run-config --config configs/glomeruli_candidate_comparison.yaml
 #
 # Purpose:
-#   This is the overnight all-in-one segmentation run. It refreshes the cohort
-#   manifest, trains a fresh mitochondria base, uses that exact exported .pkl for
-#   glomeruli transfer, trains the no-mitochondria-base comparator, and writes
-#   candidate-comparison evidence for review.
+#   This is the glomeruli candidate-comparison run. It refreshes the cohort
+#   manifest, trains or loads the mitochondria base needed for the transfer
+#   candidate, trains the no-mitochondria-base comparator, and writes promotion
+#   evidence for review.
 #
 # Do not manually stitch shell commands from this YAML. The command above is the
 # supported entrypoint.
 
-workflow: full_segmentation_retrain
+workflow: glomeruli_candidate_comparison
 
 run:
   name: latest_run
@@ -46,7 +46,7 @@ paths:
 
 mitochondria:
   enabled: true
-  model_name: fixedloader_full_mito_base
+  model_name: glomeruli_candidate_mito_base
   epochs: 25
   batch_size: 24
   learning_rate: 1e-3
@@ -61,7 +61,7 @@ mitochondria:
 
 glomeruli_transfer:
   enabled: true
-  model_name: fixedloader_full_glomeruli_transfer
+  model_name: glomeruli_candidate_transfer
 
   # This means "use the mitochondria .pkl trained earlier in this same run".
   # The runner derives the artifact path from the configured mitochondria
@@ -74,7 +74,7 @@ glomeruli_transfer:
 
 glomeruli_scratch:
   enabled: true
-  model_name: fixedloader_full_glomeruli_no_mito_base
+  model_name: glomeruli_candidate_no_mito_base
   epochs: 25
   training_mode: dynamic_full_image_patching
 
@@ -94,6 +94,31 @@ candidate_training:
   crop_size: 512
   resize_policy_decision: resize_benefit_unproven
   resize_decision_evidence: "The current glomeruli policy crops 512x512 regions and resizes them to 256x256 network inputs. Promotion-facing claims require the resize sensitivity in P0 task 4.7; until then this policy is reproducible but not proven beneficial."
+
+negative_background_supervision:
+  # This is the foreground false-positive control added after the P3 quick run.
+  # Mask-derived background crops come from admitted paired image/mask rows and
+  # are accepted only when the source mask proves zero foreground in the crop.
+  enabled: true
+  mask_derived_background:
+    enabled: true
+    curation_id: latest_run_mask_background
+    crops_per_image_limit: 2
+    sampler_weight: 0.5
+    min_foreground_pixels: 0
+
+  # Unmasked MR/TIFF crop proposals must be reviewed before they are trainable.
+  # Set enabled=true only with a validated reviewed manifest.
+  curated_negative_manifest:
+    enabled: false
+    manifest_path: null
+    sampler_weight: 0.5
+
+augmentation_audit:
+  # The code currently applies FastAI aug_transforms in the DataBlock. This field
+  # records the intended audit variant and fails closed for unsupported names; it
+  # does not mean gaussian noise is active.
+  variant: fastai_default
 
 comparison:
   enabled: true

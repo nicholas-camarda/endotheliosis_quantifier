@@ -1,4 +1,4 @@
-"""Run the full segmentation retraining workflow from YAML."""
+"""Run the glomeruli candidate-comparison workflow from YAML."""
 
 from __future__ import annotations
 
@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Any, TextIO
 
 import yaml
+
+from eq.data_management.negative_glomeruli_crops import (
+    generate_mask_derived_background_manifest,
+    validate_negative_crop_manifest,
+)
 
 
 def _load_config(config_path: Path) -> dict[str, Any]:
@@ -111,9 +116,16 @@ def _latest_pkl(runtime_root: Path, config: dict[str, Any]) -> Path:
     return matches[-1]
 
 
-def run_full_segmentation_retrain(config_path: Path, *, dry_run: bool = False) -> Path:
+def run_glomeruli_candidate_comparison_workflow(
+    config_path: Path, *, dry_run: bool = False
+) -> Path:
     """Run manifest refresh, mitochondria base training, and candidate comparison."""
     config = _load_config(config_path)
+    if config.get("workflow") != "glomeruli_candidate_comparison":
+        raise ValueError(
+            "Candidate-comparison workflow config must use "
+            "`workflow: glomeruli_candidate_comparison`."
+        )
     runtime_root = _runtime_root(config)
     run_id = str(config["run"]["name"])
     paths = config["paths"]
@@ -122,6 +134,8 @@ def run_full_segmentation_retrain(config_path: Path, *, dry_run: bool = False) -
     scratch = config["glomeruli_scratch"]
     candidate_training = config["candidate_training"]
     comparison = config["comparison"]
+    negative_cfg = config.get("negative_background_supervision") or {}
+    augmentation_audit = config.get("augmentation_audit") or {}
 
     env = os.environ.copy()
     env["EQ_RUNTIME_ROOT"] = str(runtime_root)
@@ -179,9 +193,50 @@ def run_full_segmentation_retrain(config_path: Path, *, dry_run: bool = False) -
         mito_base_model = _runtime_path(runtime_root, "DRY_RUN_MITO_BASE.pkl") if dry_run else _latest_pkl(runtime_root, config)
         _emit(f"MITO_BASE_MODEL={mito_base_model}", log_handle)
 
+        negative_manifest_path: Path | None = None
+        negative_sampler_weight = 0.0
+        if bool(negative_cfg.get("enabled", False)):
+            mask_cfg = negative_cfg.get("mask_derived_background") or {}
+            curated_cfg = negative_cfg.get("curated_negative_manifest") or {}
+            if bool(mask_cfg.get("enabled", False)):
+                curation_id = str(mask_cfg.get("curation_id") or f"{run_id}_mask_background")
+                negative_manifest_path = (
+                    runtime_root
+                    / "derived_data"
+                    / "glomeruli_negative_crops"
+                    / "manifests"
+                    / f"{curation_id}.csv"
+                )
+                negative_sampler_weight = float(mask_cfg.get("sampler_weight", 0.0))
+                _emit(f"NEGATIVE_CROP_MANIFEST={negative_manifest_path}", log_handle)
+                if not dry_run:
+                    audit = generate_mask_derived_background_manifest(
+                        data_root=_runtime_path(runtime_root, paths["glomeruli_data_dir"]),
+                        manifest_path=negative_manifest_path,
+                        curation_id=curation_id,
+                        crop_size=int(candidate_training["crop_size"]),
+                        crops_per_image_limit=int(mask_cfg.get("crops_per_image_limit", 2)),
+                        min_foreground_pixels=int(mask_cfg.get("min_foreground_pixels", 0)),
+                        seed=int(config["run"]["seed"]),
+                    )
+                    _emit(f"NEGATIVE_CROP_AUDIT={audit}", log_handle)
+            if bool(curated_cfg.get("enabled", False)):
+                manifest_value = curated_cfg.get("manifest_path")
+                if not manifest_value:
+                    raise ValueError(
+                        "negative_background_supervision.curated_negative_manifest.manifest_path "
+                        "is required when curated negatives are enabled."
+                    )
+                negative_manifest_path = _runtime_path(runtime_root, str(manifest_value))
+                negative_sampler_weight = float(curated_cfg.get("sampler_weight", negative_sampler_weight))
+                _emit(f"CURATED_NEGATIVE_CROP_MANIFEST={negative_manifest_path}", log_handle)
+                if not dry_run:
+                    validate_negative_crop_manifest(negative_manifest_path)
+
+        augmentation_variant = str(augmentation_audit.get("variant") or "fastai_default")
+
         if bool(comparison.get("enabled", True)):
-            _run(
-                [
+            command = [
                     python,
                     "-m",
                     "eq.training.compare_glomeruli_candidates",
@@ -217,7 +272,19 @@ def run_full_segmentation_retrain(config_path: Path, *, dry_run: bool = False) -
                     str(transfer["model_name"]),
                     "--scratch-model-name",
                     str(scratch["model_name"]),
-                ],
+            ]
+            if negative_manifest_path is not None:
+                command.extend(
+                    [
+                        "--negative-crop-manifest",
+                        str(negative_manifest_path),
+                        "--negative-crop-sampler-weight",
+                        str(negative_sampler_weight),
+                    ]
+                )
+            command.extend(["--augmentation-variant", augmentation_variant])
+            _run(
+                command,
                 env,
                 dry_run=dry_run,
                 log_handle=log_handle,
@@ -228,12 +295,12 @@ def run_full_segmentation_retrain(config_path: Path, *, dry_run: bool = False) -
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run full segmentation retraining from YAML."
+        description="Run glomeruli candidate comparison from YAML."
     )
     parser.add_argument(
         "--config",
-        default="configs/full_segmentation_retrain.yaml",
-        help="Full segmentation retraining YAML config.",
+        default="configs/glomeruli_candidate_comparison.yaml",
+        help="Glomeruli candidate-comparison YAML config.",
     )
     parser.add_argument(
         "--dry-run",
@@ -245,7 +312,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_arg_parser().parse_args()
-    run_full_segmentation_retrain(Path(args.config), dry_run=args.dry_run)
+    run_glomeruli_candidate_comparison_workflow(Path(args.config), dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

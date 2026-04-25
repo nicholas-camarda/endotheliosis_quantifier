@@ -18,6 +18,8 @@ from fastai.vision.all import (
     IntToFloatTensor,
     MaskBlock,
     Normalize,
+    PILImage,
+    PILMask,
     Resize,
     ResizeMethod,
     TensorImage,
@@ -452,6 +454,8 @@ def build_segmentation_datablock_dynamic_patching(
     positive_focus_p: float = DEFAULT_POSITIVE_FOCUS_P,
     min_pos_pixels: int = DEFAULT_MIN_POS_PIXELS,
     pos_crop_attempts: int = DEFAULT_POS_CROP_ATTEMPTS,
+    negative_crop_manifest_path: Optional[Union[str, Path]] = None,
+    negative_crop_sampler_weight: float = 0.0,
 ):
     """
     Create a DataBlock for binary segmentation with dynamic patching.
@@ -475,6 +479,38 @@ def build_segmentation_datablock_dynamic_patching(
     
     if splitter is None:
         splitter = RandomSplitter(valid_pct=DEFAULT_VAL_RATIO, seed=42)
+
+    negative_records: list[dict[str, Any]] = []
+    if negative_crop_manifest_path:
+        from eq.data_management.negative_glomeruli_crops import (
+            validate_negative_crop_manifest,
+            weighted_negative_rows,
+        )
+
+        validation = validate_negative_crop_manifest(negative_crop_manifest_path)
+        for row in weighted_negative_rows(validation.rows, negative_crop_sampler_weight):
+            record = dict(row)
+            record["__eq_negative_crop_record__"] = True
+            negative_records.append(record)
+
+    base_splitter = splitter
+
+    def combined_get_items(path: Path) -> List[Any]:
+        items = list(get_items_full_images(path))
+        if negative_records:
+            items.extend(negative_records)
+        return items
+
+    def combined_splitter(items: list[Any]) -> tuple[list[int], list[int]]:
+        base_indices = [index for index, item in enumerate(items) if not _is_negative_crop_record(item)]
+        negative_indices = [index for index, item in enumerate(items) if _is_negative_crop_record(item)]
+        train_local, valid_local = base_splitter([items[index] for index in base_indices])
+        train_indices = [base_indices[index] for index in train_local]
+        valid_indices = [base_indices[index] for index in valid_local]
+        # Negative/background manifest crops are training supervision, not held-out
+        # validation evidence. Promotion evidence handles background crops separately.
+        train_indices.extend(negative_indices)
+        return train_indices, valid_indices
     
     # Item transforms: apply synchronized augmentations and cropping to image-mask pairs
     if output_size is None:
@@ -507,14 +543,12 @@ def build_segmentation_datablock_dynamic_patching(
         MaskPreprocessTransform(),
     ]
     
-    # Create DataBlock for full images with dynamic patching
-    # Use the full-image getter
-    from eq.data_management.standard_getters import get_y_full as _get_y_full
     block = DataBlock(
         blocks=[ImageBlock, MaskBlock(codes=codes)],  # Use codes for proper segmentation
-        get_items=get_items_full_images,
-        get_y=_get_y_full,
-        splitter=splitter,
+        get_items=combined_get_items,
+        get_x=_get_x_negative_or_path,
+        get_y=_get_y_negative_or_full,
+        splitter=combined_splitter,
         item_tfms=item_tfms, 
         batch_tfms=batch_tfms,
     )
@@ -535,6 +569,8 @@ def build_segmentation_dls_dynamic_patching(
     pos_crop_attempts: int = DEFAULT_POS_CROP_ATTEMPTS,
     stage: str = "segmentation",
     splitter: Optional[Callable] = None,
+    negative_crop_manifest_path: Optional[Union[str, Path]] = None,
+    negative_crop_sampler_weight: float = 0.0,
     device: Optional[Union[str, torch.device]] = None,
 ):
     """
@@ -592,6 +628,8 @@ def build_segmentation_dls_dynamic_patching(
         positive_focus_p=positive_focus_p,
         min_pos_pixels=min_pos_pixels,
         pos_crop_attempts=pos_crop_attempts,
+        negative_crop_manifest_path=negative_crop_manifest_path,
+        negative_crop_sampler_weight=negative_crop_sampler_weight,
     )
     
     # Create DataLoaders on the required accelerator.  This is part of the
@@ -614,6 +652,38 @@ def build_segmentation_dls_dynamic_patching(
         pass
     
     return dls
+
+
+def _is_negative_crop_record(item: Any) -> bool:
+    return isinstance(item, dict) and item.get("__eq_negative_crop_record__") is True
+
+
+def _negative_crop_box(record: dict[str, Any]) -> tuple[int, int, int, int]:
+    return (
+        int(record["crop_x_min"]),
+        int(record["crop_y_min"]),
+        int(record["crop_x_max"]),
+        int(record["crop_y_max"]),
+    )
+
+
+def _get_x_negative_or_path(item):
+    if not _is_negative_crop_record(item):
+        return item
+    image = PILImage.create(item["source_image_path"])
+    return PILImage.create(image.crop(_negative_crop_box(item)))
+
+
+def _get_y_negative_or_full(item):
+    if not _is_negative_crop_record(item):
+        from eq.data_management.standard_getters import get_y_full as _get_y_full
+        return _get_y_full(item)
+    x_min, y_min, x_max, y_max = _negative_crop_box(item)
+    height = y_max - y_min
+    width = x_max - x_min
+    zero_mask = np.zeros((height, width), dtype=np.uint8)
+    from PIL import Image
+    return PILMask.create(Image.fromarray(zero_mask))
 
 
 def estimate_positive_crop_rate(dl, batches: int = 5) -> float:

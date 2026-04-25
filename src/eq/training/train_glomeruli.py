@@ -40,6 +40,7 @@ from eq.data_management.datablock_loader import (
     fixed_splitter_from_manifest,
     validate_supported_segmentation_training_root,
 )
+from eq.data_management.negative_glomeruli_crops import validate_negative_crop_manifest
 from eq.training.segmentation_validation_audit import (
     build_glomeruli_training_provenance,
 )
@@ -125,6 +126,9 @@ def train_glomeruli_with_transfer_learning(
     use_lr_find: bool = True,
     seed: int = 42,
     split_manifest_path: Optional[str] = None,
+    negative_crop_manifest_path: Optional[str] = None,
+    negative_crop_sampler_weight: float = 0.0,
+    augmentation_variant: str = "fastai_default",
     device: Optional[str] = None,
 ) -> Learner:
     """
@@ -172,6 +176,9 @@ def train_glomeruli_with_transfer_learning(
         use_lr_find=use_lr_find,
         seed=seed,
         split_manifest_path=split_manifest_path,
+        negative_crop_manifest_path=negative_crop_manifest_path,
+        negative_crop_sampler_weight=negative_crop_sampler_weight,
+        augmentation_variant=augmentation_variant,
         device=device,
     )
     
@@ -194,6 +201,9 @@ def train_glomeruli_with_datablock(
     pos_crop_attempts: int = DEFAULT_POS_CROP_ATTEMPTS,
     seed: int = 42,
     split_manifest_path: Optional[str] = None,
+    negative_crop_manifest_path: Optional[str] = None,
+    negative_crop_sampler_weight: float = 0.0,
+    augmentation_variant: str = "fastai_default",
     device: Optional[str] = None,
 ):
     """
@@ -253,6 +263,8 @@ def train_glomeruli_with_datablock(
         positive_focus_p=positive_focus_p,
         min_pos_pixels=min_pos_pixels,
         pos_crop_attempts=pos_crop_attempts,
+        negative_crop_manifest_path=negative_crop_manifest_path,
+        negative_crop_sampler_weight=negative_crop_sampler_weight,
         stage="glomeruli",
         device=device,
     )
@@ -263,6 +275,17 @@ def train_glomeruli_with_datablock(
         if base_model_path
         else {}
     )
+    negative_crop_provenance = None
+    if negative_crop_manifest_path:
+        negative_crop_provenance = validate_negative_crop_manifest(
+            negative_crop_manifest_path
+        ).provenance(sampler_weight=negative_crop_sampler_weight)
+    augmentation_policy = {
+        "variant": augmentation_variant,
+        "fastai_aug_transforms": True,
+        "config_controls_active": False,
+        "gaussian_noise_active": False,
+    }
     training_provenance = build_glomeruli_training_provenance(
         data_root=data_root,
         train_items=train_items,
@@ -279,6 +302,8 @@ def train_glomeruli_with_datablock(
         positive_focus_p=positive_focus_p,
         min_pos_pixels=min_pos_pixels,
         pos_crop_attempts=pos_crop_attempts,
+        negative_crop_provenance=negative_crop_provenance,
+        augmentation_policy=augmentation_policy,
         command=" ".join(sys.argv),
     )
     training_provenance["training_device"] = str(dls.device)
@@ -478,6 +503,9 @@ def main():
     parser.add_argument('--crop-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Dynamic patching crop size before resizing')
     parser.add_argument('--loss', type=str, default='', help='Loss to use: dice | bcedice | tversky (default: fastai/weighted)')
     parser.add_argument('--split-manifest', help='Explicit JSON train/validation split manifest to use for candidate training')
+    parser.add_argument('--negative-crop-manifest', help='Validated negative/background crop manifest to add as training supervision')
+    parser.add_argument('--negative-crop-sampler-weight', type=float, default=0.0, help='Deterministic negative/background crop manifest sampling weight')
+    parser.add_argument('--augmentation-variant', default='fastai_default', choices=['fastai_default', 'spatial_only', 'current_plus_lighting'], help='Recorded augmentation policy variant; unsupported names fail closed')
     parser.add_argument('--skip-lr-find', action='store_true', help='Skip lr_find and use provided learning rate for fine-tune')
     parser.add_argument('--seed', type=int, default=42, help='Explicit training seed to record in provenance and use for bounded comparisons')
     parser.add_argument('--device', choices=["mps", "cuda", "cpu"], help='Training device. Omit to auto-select cuda, then mps, then cpu.')
@@ -580,6 +608,9 @@ def main():
                 use_lr_find=(not args.skip_lr_find),
                 seed=args.seed,
                 split_manifest_path=args.split_manifest,
+                negative_crop_manifest_path=args.negative_crop_manifest,
+                negative_crop_sampler_weight=args.negative_crop_sampler_weight,
+                augmentation_variant=args.augmentation_variant,
                 device=args.device,
             )
         else:
@@ -596,6 +627,9 @@ def main():
                 config_path=config_path,
                 seed=args.seed,
                 split_manifest_path=args.split_manifest,
+                negative_crop_manifest_path=args.negative_crop_manifest,
+                negative_crop_sampler_weight=args.negative_crop_sampler_weight,
+                augmentation_variant=args.augmentation_variant,
                 device=args.device,
                 # TODO: implement loss_name
                 # loss_name=args.loss or None

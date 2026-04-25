@@ -1,0 +1,39 @@
+# Runnable with:
+#   eq run-config --config configs/highres_glomeruli_concordance.yaml
+#
+# Purpose:
+#   Evaluate a specific glomeruli segmentation artifact on large-field
+#   microscope images such as the MR TIFF lane. This workflow records tiling or
+#   preprocessing assumptions and writes concordance/evaluation artifacts. It is
+#   separate from standard transport audit and downstream quantification.
+
+workflow: highres_glomeruli_concordance
+
+run:
+  name: mr_highres_concordance
+  runtime_root_env: EQ_RUNTIME_ROOT
+  runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
+  python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
+
+inputs:
+  # Required upstream segmentation artifact. This must be explicit.
+  segmentation_artifact: models/segmentation/glomeruli/EXPLICIT_SUPPORTED_MODEL.pkl
+
+  # MR manifest rows are evaluation/concordance rows, not training expansion.
+  manifest_path: raw_data/cohorts/manifest.csv
+  cohort_id: vegfri_mr
+
+  # Required inferred ROI-grade table after large-field tiling and ROI grading.
+  # Columns must include manifest_row_id, roi_grade, and component_area.
+  inferred_roi_grades: output/predictions/highres_glomeruli_concordance/EXPLICIT_INFERRED_ROI_GRADES.csv
+
+preprocessing:
+  tile_size: 1024
+  tile_overlap: 128
+  min_component_area: 2000
+  coordinate_frame: whole_field_tiff_pixels
+
+outputs:
+  evaluation_dir: output/segmentation_evaluation/highres_glomeruli_concordance/mr_highres_concordance
+  predictions_dir: output/predictions/highres_glomeruli_concordance/mr_highres_concordance
+

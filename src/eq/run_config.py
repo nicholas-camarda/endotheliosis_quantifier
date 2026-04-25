@@ -14,9 +14,17 @@ import yaml
 
 
 SUPPORTED_WORKFLOWS = {
+    "endotheliosis_quantification",
+    "glomeruli_candidate_comparison",
+    "glomeruli_transport_audit",
+    "highres_glomeruli_concordance",
     "segmentation_glomeruli_transfer",
-    "full_segmentation_retrain",
     "segmentation_mitochondria_pretraining",
+}
+
+RETIRED_WORKFLOWS = {
+    "full_segmentation_retrain",
+    "segmentation_fixedloader_full_retrain",
 }
 
 
@@ -28,6 +36,12 @@ def load_workflow_config(config_path: Path) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise ValueError(f"Config must be a YAML mapping: {config_path}")
     workflow = str(config.get("workflow") or "")
+    if workflow in RETIRED_WORKFLOWS:
+        supported = ", ".join(sorted(SUPPORTED_WORKFLOWS))
+        raise ValueError(
+            f"Retired mixed workflow {workflow!r} is no longer supported. "
+            f"Use one of the split workflow families instead: {supported}"
+        )
     if workflow not in SUPPORTED_WORKFLOWS:
         supported = ", ".join(sorted(SUPPORTED_WORKFLOWS))
         raise ValueError(
@@ -41,10 +55,33 @@ def run_config(config_path: Path, *, dry_run: bool = False) -> None:
     """Run a supported workflow config."""
     config = load_workflow_config(config_path)
     workflow = str(config["workflow"])
-    if workflow == "full_segmentation_retrain":
-        from eq.training.run_full_segmentation_retrain import run_full_segmentation_retrain
+    if workflow == "glomeruli_candidate_comparison":
+        from eq.training.run_glomeruli_candidate_comparison_workflow import (
+            run_glomeruli_candidate_comparison_workflow,
+        )
 
-        run_full_segmentation_retrain(config_path, dry_run=dry_run)
+        run_glomeruli_candidate_comparison_workflow(config_path, dry_run=dry_run)
+        return
+    if workflow == "glomeruli_transport_audit":
+        from eq.evaluation.run_glomeruli_transport_audit_workflow import (
+            run_glomeruli_transport_audit_workflow,
+        )
+
+        run_glomeruli_transport_audit_workflow(config_path, dry_run=dry_run)
+        return
+    if workflow == "highres_glomeruli_concordance":
+        from eq.evaluation.run_highres_glomeruli_concordance_workflow import (
+            run_highres_glomeruli_concordance_workflow,
+        )
+
+        run_highres_glomeruli_concordance_workflow(config_path, dry_run=dry_run)
+        return
+    if workflow == "endotheliosis_quantification":
+        from eq.quantification.run_endotheliosis_quantification_workflow import (
+            run_endotheliosis_quantification_workflow,
+        )
+
+        run_endotheliosis_quantification_workflow(config_path, dry_run=dry_run)
         return
     if workflow == "segmentation_mitochondria_pretraining":
         run_mitochondria_pretraining_config(config, dry_run=dry_run)

@@ -22,6 +22,7 @@ from eq.data_management.datablock_loader import (
     fixed_splitter_from_manifest,
     validate_supported_segmentation_training_root,
 )
+from eq.data_management.negative_glomeruli_crops import validate_negative_crop_manifest
 from eq.training.losses import make_loss
 from eq.training.segmentation_validation_audit import (
     build_glomeruli_training_provenance,
@@ -160,6 +161,8 @@ def load_model_for_transfer_learning(
     load_encoder_only: bool = True,
     reinit_decoder: bool = True,
     split_manifest_path: Optional[str] = None,
+    negative_crop_manifest_path: Optional[str] = None,
+    negative_crop_sampler_weight: float = 0.0,
     device: Optional[str] = None,
 ) -> Learner:
     """
@@ -202,6 +205,8 @@ def load_model_for_transfer_learning(
         min_pos_pixels=min_pos_pixels,
         pos_crop_attempts=pos_crop_attempts,
         stage="glomeruli_transfer",
+        negative_crop_manifest_path=negative_crop_manifest_path,
+        negative_crop_sampler_weight=negative_crop_sampler_weight,
         device=device,
     )
     
@@ -412,6 +417,9 @@ def transfer_learn_glomeruli(
     reinit_decoder: bool = True,
     seed: int = 42,
     split_manifest_path: Optional[str] = None,
+    negative_crop_manifest_path: Optional[str] = None,
+    negative_crop_sampler_weight: float = 0.0,
+    augmentation_variant: str = "fastai_default",
     device: Optional[str] = None,
 ) -> Learner:
     """
@@ -510,11 +518,24 @@ def transfer_learn_glomeruli(
         load_encoder_only=encoder_only,
         reinit_decoder=reinit_decoder,
         split_manifest_path=split_manifest_path,
+        negative_crop_manifest_path=negative_crop_manifest_path,
+        negative_crop_sampler_weight=negative_crop_sampler_weight,
         device=device,
     )
     train_items = list(getattr(learn.dls.train_ds, 'items', []))
     valid_items = list(getattr(learn.dls.valid_ds, 'items', []))
     transfer_base_metadata = load_supported_segmentation_artifact_metadata(base_model_path)
+    negative_crop_provenance = None
+    if negative_crop_manifest_path:
+        negative_crop_provenance = validate_negative_crop_manifest(
+            negative_crop_manifest_path
+        ).provenance(sampler_weight=negative_crop_sampler_weight)
+    augmentation_policy = {
+        "variant": augmentation_variant,
+        "fastai_aug_transforms": True,
+        "config_controls_active": False,
+        "gaussian_noise_active": False,
+    }
     training_provenance = build_glomeruli_training_provenance(
         data_root=data_root,
         train_items=train_items,
@@ -531,6 +552,8 @@ def transfer_learn_glomeruli(
         positive_focus_p=positive_focus_p,
         min_pos_pixels=min_pos_pixels,
         pos_crop_attempts=pos_crop_attempts,
+        negative_crop_provenance=negative_crop_provenance,
+        augmentation_policy=augmentation_policy,
         command=" ".join(sys.argv),
     )
     training_provenance["training_device"] = str(learn.dls.device)

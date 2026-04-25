@@ -67,11 +67,51 @@ def test_cli_run_config_dry_runs_all_committed_configs():
     for config_name in (
         'mito_pretraining_config.yaml',
         'glomeruli_finetuning_config.yaml',
-        'full_segmentation_retrain.yaml',
+        'glomeruli_candidate_comparison.yaml',
+        'glomeruli_transport_audit.yaml',
+        'highres_glomeruli_concordance.yaml',
+        'endotheliosis_quantification.yaml',
     ):
         result = run_cli('run-config', '--config', f'configs/{config_name}', '--dry-run')
         assert result.returncode == 0, result.stderr
         assert '/eq-mac/bin/python' in result.stdout
+
+
+def test_cli_run_config_rejects_retired_mixed_workflow(tmp_path):
+    config = tmp_path / "retired.yaml"
+    config.write_text("workflow: segmentation_fixedloader_full_retrain\n", encoding="utf-8")
+
+    result = run_cli('run-config', '--config', str(config), '--dry-run')
+
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert 'Retired mixed workflow' in combined
+    assert 'glomeruli_candidate_comparison' in combined
+
+
+def test_cli_downstream_workflows_fail_without_explicit_inputs(tmp_path):
+    config = tmp_path / "transport_missing_model.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "workflow: glomeruli_transport_audit",
+                "run:",
+                "  runtime_root_default: /tmp/eq_cli_smoke_runtime",
+                "inputs:",
+                "  manifest_path: raw_data/cohorts/manifest.csv",
+                "  segmentation_outputs: output/predictions/example.csv",
+                "outputs: {}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_cli('run-config', '--config', str(config), '--dry-run')
+
+    assert result.returncode != 0
+    assert 'Missing required transport-audit input: segmentation_artifact' in (
+        result.stdout + result.stderr
+    )
 
 
 def test_cli_mode_show_runs():

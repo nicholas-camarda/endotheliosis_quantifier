@@ -1,0 +1,35 @@
+# Runnable with:
+#   eq run-config --config configs/glomeruli_transport_audit.yaml
+#
+# Purpose:
+#   Audit a specific glomeruli segmentation artifact on a standard cohort or
+#   manifest slice. This workflow writes transport-evaluation artifacts and
+#   reusable prediction references only. It does not train segmentation
+#   candidates and does not run endotheliosis quantification.
+
+workflow: glomeruli_transport_audit
+
+run:
+  name: standard_transport_audit
+  runtime_root_env: EQ_RUNTIME_ROOT
+  runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
+  python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
+
+inputs:
+  # Required upstream segmentation artifact. This must be an explicit path; the
+  # workflow must not auto-discover "latest" models or retrain a replacement.
+  segmentation_artifact: models/segmentation/glomeruli/EXPLICIT_SUPPORTED_MODEL.pkl
+
+  # Required cohort manifest and optional standard cohort slice.
+  manifest_path: raw_data/cohorts/manifest.csv
+  cohort_id: vegfri_dox
+
+  # Required prediction/ROI status table for transport validation. Columns must
+  # include manifest_row_id, segmentation_status, accepted_roi_count, and
+  # grading_status.
+  segmentation_outputs: output/predictions/glomeruli_transport_audit/EXPLICIT_SEGMENTATION_OUTPUTS.csv
+
+outputs:
+  evaluation_dir: output/segmentation_evaluation/glomeruli_transport_audit/standard_transport_audit
+  predictions_dir: output/predictions/glomeruli_transport_audit/standard_transport_audit
+

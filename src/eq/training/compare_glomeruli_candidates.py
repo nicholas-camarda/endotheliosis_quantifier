@@ -467,17 +467,24 @@ def _candidate_audit_rows(
         "actual_fitted_mask_count": len(transfer_base_metadata.get("actual_pretraining_mask_paths") or []),
         "resize_policy": transfer_base_metadata.get("resize_policy"),
     }
+    has_background_false_positive = any(
+        "background_false_positive" in reason
+        for status in prediction_shape["family_status"].values()
+        for reason in status["reasons"]
+    )
+    has_negative_background_supervision = (
+        str(provenance.get("negative_crop_supervision_status") or "").strip().lower() == "present"
+    )
     root_cause = classify_root_causes(
         {
             "split_or_panel_bias": split_integrity["promotion_evidence_status"] != PROMOTION_ELIGIBLE,
-            "resize_policy_artifact": resize_parity["promotion_evidence_status"] != PROMOTION_ELIGIBLE,
+            "resize_policy_artifact": resize_parity["promotion_evidence_status"] != PROMOTION_ELIGIBLE
+            or resize_sensitivity["promotion_evidence_status"] != PROMOTION_ELIGIBLE,
             "class_channel_or_threshold_error": not preprocessing_parity["ok"],
-            "negative_background_supervision_missing": any(
-                "background_false_positive" in reason
-                for status in prediction_shape["family_status"].values()
-                for reason in status["reasons"]
-            ),
-            "training_signal_insufficient": bool(summary.get("gate", {}).get("blocked")),
+            "negative_background_supervision_missing": has_background_false_positive
+            and not has_negative_background_supervision,
+            "training_signal_insufficient": bool(summary.get("gate", {}).get("blocked"))
+            or has_background_false_positive,
             "mitochondria_base_defect": (
                 _candidate_requires_transfer_base(
                     CandidateRuntime(
@@ -586,6 +593,9 @@ def _candidate_command(
     from_scratch: bool,
     base_model: Path | None = None,
     split_manifest_path: Path | None = None,
+    negative_crop_manifest_path: Path | None = None,
+    negative_crop_sampler_weight: float = 0.0,
+    augmentation_variant: str = "fastai_default",
     device: str | None = None,
 ) -> list[str]:
     command = [
@@ -615,6 +625,16 @@ def _candidate_command(
         command.extend(["--loss", loss_name])
     if split_manifest_path is not None:
         command.extend(["--split-manifest", str(split_manifest_path)])
+    if negative_crop_manifest_path is not None:
+        command.extend(
+            [
+                "--negative-crop-manifest",
+                str(negative_crop_manifest_path),
+                "--negative-crop-sampler-weight",
+                str(negative_crop_sampler_weight),
+            ]
+        )
+    command.extend(["--augmentation-variant", augmentation_variant])
     if device:
         command.extend(["--device", device])
     if from_scratch:
@@ -713,10 +733,14 @@ def _predict_crop_with_audit(
     expected_size: int,
 ) -> tuple[np.ndarray, Dict[str, Any]]:
     core = create_prediction_core(expected_size)
-    pil_image = Image.fromarray(image_crop)
-    batch = learn.dls.test_dl([pil_image]).one_batch()
-    tensor = batch[0] if isinstance(batch, (tuple, list)) else batch
     device = next(learn.model.parameters()).device
+    pil_image = Image.fromarray(image_crop).convert("RGB")
+    resized = pil_image.resize((expected_size, expected_size), Image.Resampling.BILINEAR)
+    image_np = np.asarray(resized, dtype=np.float32) / 255.0
+    tensor = torch.from_numpy(image_np).permute(2, 0, 1).unsqueeze(0)
+    mean = torch.tensor([0.485, 0.456, 0.406], dtype=tensor.dtype).view(1, 3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225], dtype=tensor.dtype).view(1, 3, 1, 1)
+    tensor = (tensor - mean) / std
     with torch.no_grad():
         raw_output = learn.model(tensor.to(device))
     if raw_output.shape[1] == 2:
@@ -731,6 +755,7 @@ def _predict_crop_with_audit(
         "prediction_probability_shape": [int(value) for value in pred_np.shape],
         "prediction_resized_shape": [int(value) for value in pred_resized.shape],
         "threshold": float(COMPARE_PREDICTION_THRESHOLD),
+        "inference_preprocessing": "deterministic_resize_imagenet_normalize",
         "threshold_resize_order": "resize_probability_then_threshold",
     }
 
@@ -1104,6 +1129,13 @@ def _write_markdown_report(
                 f"- Transfer base fitted counts: `images={transfer_base_report.get('actual_fitted_image_count')}` `masks={transfer_base_report.get('actual_fitted_mask_count')}`",
                 f"- Transfer base resize policy: `{json.dumps(transfer_base_report.get('resize_policy'), sort_keys=True) if transfer_base_report.get('resize_policy') is not None else None}`",
                 f"- Resize sensitivity status: `{resize_sensitivity.get('status')}`",
+                f"- Negative crop supervision status: `{provenance.get('negative_crop_supervision_status', 'absent')}`",
+                f"- Negative crop manifest: `{provenance.get('negative_crop_manifest_path')}`",
+                f"- Negative crop counts: `total={provenance.get('negative_crop_count', 0)}` "
+                f"`mask_derived_background={provenance.get('mask_derived_background_crop_count', 0)}` "
+                f"`curated={provenance.get('curated_negative_crop_count', 0)}`",
+                f"- Negative crop sampler weight: `{provenance.get('negative_crop_sampler_weight', 0.0)}`",
+                f"- Augmentation policy: `{json.dumps(provenance.get('augmentation_policy', {}), sort_keys=True)}`",
                 f"- Root causes: `{', '.join(root_cause.get('root_causes', []))}`",
                 f"- Remediation path: `{root_cause.get('remediation_path')}`",
                 (
@@ -1302,6 +1334,9 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
                 from_scratch=False,
                 base_model=Path(args.transfer_base_model).expanduser() if args.transfer_base_model else None,
                 split_manifest_path=shared_split_path,
+                negative_crop_manifest_path=Path(args.negative_crop_manifest).expanduser() if args.negative_crop_manifest else None,
+                negative_crop_sampler_weight=args.negative_crop_sampler_weight,
+                augmentation_variant=args.augmentation_variant,
                 device=args.device,
             ),
             family="transfer",
@@ -1335,6 +1370,9 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
                 seed=args.seed,
                 from_scratch=True,
                 split_manifest_path=shared_split_path,
+                negative_crop_manifest_path=Path(args.negative_crop_manifest).expanduser() if args.negative_crop_manifest else None,
+                negative_crop_sampler_weight=args.negative_crop_sampler_weight,
+                augmentation_variant=args.augmentation_variant,
                 device=args.device,
             ),
             family="scratch",
@@ -1447,6 +1485,14 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
                 "reasons": "|".join(summary["gate"].get("reasons", [])),
                 "root_causes": "|".join(summary.get("root_cause", {}).get("root_causes", [])),
                 "remediation_path": summary.get("root_cause", {}).get("remediation_path"),
+                "negative_crop_supervision_status": summary.get("provenance", {}).get("negative_crop_supervision_status"),
+                "negative_crop_manifest_path": summary.get("provenance", {}).get("negative_crop_manifest_path"),
+                "negative_crop_manifest_sha256": summary.get("provenance", {}).get("negative_crop_manifest_sha256"),
+                "negative_crop_count": summary.get("provenance", {}).get("negative_crop_count"),
+                "mask_derived_background_crop_count": summary.get("provenance", {}).get("mask_derived_background_crop_count"),
+                "curated_negative_crop_count": summary.get("provenance", {}).get("curated_negative_crop_count"),
+                "negative_crop_sampler_weight": summary.get("provenance", {}).get("negative_crop_sampler_weight"),
+                "augmentation_policy": json.dumps(summary.get("provenance", {}).get("augmentation_policy", {}), sort_keys=True),
                 "dice": summary.get("metrics", {}).get("dice"),
                 "jaccard": summary.get("metrics", {}).get("jaccard"),
                 "precision": summary.get("metrics", {}).get("precision"),
@@ -1567,6 +1613,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Device forwarded to fresh candidate training commands. Omit to auto-select cuda, then mps, then cpu.",
     )
     parser.add_argument("--loss", default="", help="Optional loss override forwarded to the training CLI")
+    parser.add_argument("--negative-crop-manifest", help="Validated negative/background crop manifest forwarded to fresh candidate training")
+    parser.add_argument("--negative-crop-sampler-weight", type=float, default=0.0, help="Deterministic negative/background crop manifest sampling weight")
+    parser.add_argument("--augmentation-variant", default="fastai_default", choices=["fastai_default", "spatial_only", "current_plus_lighting"], help="Recorded augmentation policy variant for candidate provenance")
     parser.add_argument("--examples-per-category", type=int, default=DEFAULT_EXAMPLES_PER_CATEGORY, help="Deterministic manifest examples per category")
     parser.add_argument("--transfer-model-name", default="glomeruli_transfer_candidate", help="Transfer candidate model name prefix")
     parser.add_argument("--scratch-model-name", default="glomeruli_scratch_candidate", help="Scratch candidate model name prefix")

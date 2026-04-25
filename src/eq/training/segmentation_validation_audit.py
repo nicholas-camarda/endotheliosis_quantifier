@@ -877,6 +877,8 @@ def build_mitochondria_training_provenance(
     positive_focus_p: float | None = None,
     min_pos_pixels: int | None = None,
     pos_crop_attempts: int | None = None,
+    negative_crop_provenance: Mapping[str, Any] | None = None,
+    augmentation_policy: Mapping[str, Any] | None = None,
     command: str | None = None,
 ) -> Dict[str, Any]:
     """Build mitochondria transfer-base training-scope metadata."""
@@ -976,10 +978,22 @@ def build_glomeruli_training_provenance(
     positive_focus_p: float | None = None,
     min_pos_pixels: int | None = None,
     pos_crop_attempts: int | None = None,
+    negative_crop_provenance: Mapping[str, Any] | None = None,
+    augmentation_policy: Mapping[str, Any] | None = None,
     command: str | None = None,
 ) -> Dict[str, Any]:
-    train_paths = [_path_key(path) for path in train_items]
-    valid_paths = [_path_key(path) for path in valid_items]
+    def _item_path(item: Any) -> Any:
+        if isinstance(item, dict) and item.get("__eq_negative_crop_record__"):
+            return item.get("source_image_path")
+        return item
+
+    train_paths = [_path_key(_item_path(path)) for path in train_items]
+    valid_paths = [_path_key(_item_path(path)) for path in valid_items]
+    negative_train_crop_ids = [
+        str(item.get("negative_crop_id"))
+        for item in train_items
+        if isinstance(item, dict) and item.get("__eq_negative_crop_record__")
+    ]
     all_paths = train_paths + valid_paths
     mask_paths: list[str] = []
     try:
@@ -1002,6 +1016,7 @@ def build_glomeruli_training_provenance(
         "splitter_name": splitter_name,
         "train_images": train_paths,
         "valid_images": valid_paths,
+        "negative_train_crop_ids": negative_train_crop_ids,
         **manifest_context_summary(data_root),
         **source_size_summary(all_paths, mask_paths),
         "crop_size": int(crop_size),
@@ -1023,11 +1038,27 @@ def build_glomeruli_training_provenance(
             "fastai_aug_transforms": True,
             "spatial_crop_transform": "CropTransform",
         },
+        "augmentation_policy": dict(augmentation_policy or {
+            "variant": "fastai_default",
+            "config_controls_active": False,
+            "gaussian_noise_active": False,
+        }),
         "learner_preprocessing": {
             "int_to_float_tensor": True,
             "normalize": "imagenet_stats",
             "mask_preprocess_transform": "binary_threshold_uint8_masks",
         },
+        **dict(negative_crop_provenance or {
+            "negative_crop_supervision_status": "absent",
+            "negative_crop_manifest_path": None,
+            "negative_crop_manifest_sha256": None,
+            "negative_crop_count": 0,
+            "mask_derived_background_crop_count": 0,
+            "curated_negative_crop_count": 0,
+            "negative_crop_source_image_count": 0,
+            "negative_crop_review_protocol_version": "",
+            "negative_crop_sampler_weight": 0.0,
+        }),
         "transfer_base_artifact_path": str(transfer_base_artifact_path) if transfer_base_artifact_path else None,
         "transfer_base_metadata": dict(transfer_base_metadata or {}),
         "transfer_base_mitochondria_training_scope": (

@@ -278,6 +278,9 @@ def test_compare_glomeruli_candidates_writes_reports_for_tied_candidates(tmp_pat
             image_size=256,
             crop_size=32,
             loss="",
+            negative_crop_manifest=None,
+            negative_crop_sampler_weight=0.0,
+            augmentation_variant="fastai_default",
             examples_per_category=1,
             transfer_model_name="transfer_candidate",
             scratch_model_name="scratch_candidate",
@@ -315,6 +318,12 @@ def test_compare_glomeruli_candidates_writes_reports_for_tied_candidates(tmp_pat
     failure_text = (run_output / "failure_reproduction_audit.csv").read_text()
     assert "trace_source" in failure_text
     assert "transfer-validation-1" in failure_text
+    candidate_summary = (run_output / "candidate_summary.csv").read_text()
+    assert "negative_crop_supervision_status" in candidate_summary
+    assert "augmentation_policy" in candidate_summary
+    markdown_report = (run_output / "promotion_report.md").read_text()
+    assert "Negative crop supervision status" in markdown_report
+    assert "Augmentation policy" in markdown_report
     html_report = (run_output / "promotion_report.html").read_text()
     assert "Manifest Coverage" in html_report
     assert "Promotion evidence" in html_report
@@ -498,33 +507,25 @@ def test_compare_parser_defaults_to_runtime_output_root(monkeypatch, tmp_path):
     assert args.model_dir == str(runtime_root / "models" / "segmentation" / "glomeruli")
 
 
-def test_predict_crop_uses_learner_preprocessing_and_underconfident_threshold(monkeypatch):
+def test_predict_crop_uses_deterministic_preprocessing_and_underconfident_threshold(monkeypatch):
     class FakeCore:
         def resize_prediction_to_match(self, pred_mask, target_shape):
             return pred_mask
-
-    class FakeTestDl:
-        def one_batch(self):
-            return (torch.zeros((1, 3, 2, 2), dtype=torch.float32),)
-
-    class FakeDls:
-        def test_dl(self, items):
-            assert len(items) == 1
-            return FakeTestDl()
 
     class FakeModel(torch.nn.Module):
         def __init__(self):
             super().__init__()
             self.dummy = torch.nn.Parameter(torch.zeros(1))
+            self.seen_shape = None
 
         def forward(self, x):
+            self.seen_shape = tuple(x.shape)
             fg = torch.full((1, 2, 2), -4.0, dtype=torch.float32, device=x.device)
             bg = torch.zeros((1, 2, 2), dtype=torch.float32, device=x.device)
             return torch.stack([bg, fg], dim=1)
 
     class FakeLearn:
         def __init__(self):
-            self.dls = FakeDls()
             self.model = FakeModel()
 
     monkeypatch.setattr(

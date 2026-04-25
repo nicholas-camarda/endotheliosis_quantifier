@@ -1,0 +1,37 @@
+# Runnable with:
+#   eq run-config --config configs/endotheliosis_quantification.yaml
+#
+# Purpose:
+#   Run the contract-first endotheliosis quantification workflow from explicit
+#   upstream inputs. This workflow consumes a specific segmentation artifact and
+#   scored cohort/project data. It does not retrain segmentation candidates and
+#   does not run transport audit or high-resolution concordance implicitly.
+
+workflow: endotheliosis_quantification
+
+run:
+  name: endotheliosis_quantification
+  runtime_root_env: EQ_RUNTIME_ROOT
+  runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
+  python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
+
+inputs:
+  # Required scored project/cohort root with images, masks, and scores/metadata.
+  data_dir: raw_data/cohorts/lauren_preeclampsia
+
+  # Required explicit upstream segmentation artifact. Missing paths fail closed.
+  segmentation_model: models/segmentation/glomeruli/EXPLICIT_ACCEPTED_MODEL.pkl
+
+  # Optional score contract inputs.
+  score_source: auto
+  annotation_source:
+  mapping_file:
+
+options:
+  score_source: auto
+  apply_migration: false
+  stop_after: model
+
+outputs:
+  quantification_dir: output/quantification_results/endotheliosis_quantification
+
