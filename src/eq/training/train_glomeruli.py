@@ -36,11 +36,13 @@ from eq.core.constants import (
 )
 from eq.data_management.datablock_loader import (
     TRAINING_MODE_DYNAMIC_FULL_IMAGE,
+    augmentation_policy_for_variant,
     build_segmentation_dls_dynamic_patching,
     fixed_splitter_from_manifest,
     validate_supported_segmentation_training_root,
 )
 from eq.data_management.negative_glomeruli_crops import validate_negative_crop_manifest
+from eq.training.losses import loss_metadata, make_loss
 from eq.training.segmentation_validation_audit import (
     build_glomeruli_training_provenance,
 )
@@ -204,6 +206,7 @@ def train_glomeruli_with_datablock(
     negative_crop_manifest_path: Optional[str] = None,
     negative_crop_sampler_weight: float = 0.0,
     augmentation_variant: str = "fastai_default",
+    loss_name: Optional[str] = None,
     device: Optional[str] = None,
 ):
     """
@@ -265,6 +268,7 @@ def train_glomeruli_with_datablock(
         pos_crop_attempts=pos_crop_attempts,
         negative_crop_manifest_path=negative_crop_manifest_path,
         negative_crop_sampler_weight=negative_crop_sampler_weight,
+        augmentation_variant=augmentation_variant,
         stage="glomeruli",
         device=device,
     )
@@ -280,12 +284,9 @@ def train_glomeruli_with_datablock(
         negative_crop_provenance = validate_negative_crop_manifest(
             negative_crop_manifest_path
         ).provenance(sampler_weight=negative_crop_sampler_weight)
-    augmentation_policy = {
-        "variant": augmentation_variant,
-        "fastai_aug_transforms": True,
-        "config_controls_active": False,
-        "gaussian_noise_active": False,
-    }
+    augmentation_policy = augmentation_policy_for_variant(augmentation_variant)
+    custom_loss = make_loss(loss_name or "")
+    resolved_loss = loss_metadata(loss_name or "")
     training_provenance = build_glomeruli_training_provenance(
         data_root=data_root,
         train_items=train_items,
@@ -307,6 +308,8 @@ def train_glomeruli_with_datablock(
         command=" ".join(sys.argv),
     )
     training_provenance["training_device"] = str(dls.device)
+    training_provenance.update(resolved_loss)
+    training_provenance["run_intent"] = "production_training"
 
     # Save data splits manifest
     save_splits(output_path, model_folder_name, {
@@ -327,11 +330,12 @@ def train_glomeruli_with_datablock(
         n_out=2,  # 2 classes: background (0) + glomeruli (1)
         pretrained=True,
         metrics=[Dice, JaccardCoeff()],  # Track both Dice and IoU for segmentation quality
+        loss_func=custom_loss if custom_loss else None,
         path=output_path,  # Save artifacts directly under the model output directory
         model_dir='.'  # Ensure callbacks/save go inside output_path
     )
     
-    logger.info(f"Using default loss function with positive-aware cropping: {learn.loss_func}")
+    logger.info(f"Using loss function with positive-aware cropping: {learn.loss_func}")
     
     # Load pretrained model if provided
     if base_model_path:
@@ -501,11 +505,11 @@ def main():
     parser.add_argument('--learning-rate', type=float, default=DEFAULT_LEARNING_RATE, help='Learning rate')
     parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Final network input size (output_size)')
     parser.add_argument('--crop-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Dynamic patching crop size before resizing')
-    parser.add_argument('--loss', type=str, default='', help='Loss to use: dice | bcedice | tversky (default: fastai/weighted)')
+    parser.add_argument('--loss', type=str, default='', help='Loss to use: dice | bcedice | tversky | tversky_fp | tversky:alpha=<float>,beta=<float> (default: fastai/weighted)')
     parser.add_argument('--split-manifest', help='Explicit JSON train/validation split manifest to use for candidate training')
     parser.add_argument('--negative-crop-manifest', help='Validated negative/background crop manifest to add as training supervision')
     parser.add_argument('--negative-crop-sampler-weight', type=float, default=0.0, help='Deterministic negative/background crop manifest sampling weight')
-    parser.add_argument('--augmentation-variant', default='fastai_default', choices=['fastai_default', 'spatial_only', 'current_plus_lighting'], help='Recorded augmentation policy variant; unsupported names fail closed')
+    parser.add_argument('--augmentation-variant', default='fastai_default', choices=['fastai_default', 'spatial_only', 'no_aug'], help='Recorded augmentation policy variant; unsupported names fail closed')
     parser.add_argument('--skip-lr-find', action='store_true', help='Skip lr_find and use provided learning rate for fine-tune')
     parser.add_argument('--seed', type=int, default=42, help='Explicit training seed to record in provenance and use for bounded comparisons')
     parser.add_argument('--device', choices=["mps", "cuda", "cpu"], help='Training device. Omit to auto-select cuda, then mps, then cpu.')
@@ -631,8 +635,7 @@ def main():
                 negative_crop_sampler_weight=args.negative_crop_sampler_weight,
                 augmentation_variant=args.augmentation_variant,
                 device=args.device,
-                # TODO: implement loss_name
-                # loss_name=args.loss or None
+                loss_name=args.loss or None,
             )
         
         logger.info("🎉 Glomeruli training completed successfully!")

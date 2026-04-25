@@ -1,0 +1,88 @@
+# Runnable with:
+#   eq run-config --config openspec/changes/p0-calibrate-glomeruli-overcoverage-controls/quicktest_overcoverage_controls_5epoch.yaml
+#
+# Purpose:
+#   Re-evaluate the already-trained P0 5-epoch negative-background candidates
+#   with the overcoverage audit attached. The comparison derives the binary
+#   threshold from the audit sweep when comparison.prediction_threshold is left
+#   unset. This is a threshold-policy screening config, not a new full
+#   production training recipe.
+
+workflow: glomeruli_candidate_comparison
+
+run:
+  name: p0_negative_background_quick_5epoch_validation_threshold_audit
+  seed: 42
+  runtime_root_env: EQ_RUNTIME_ROOT
+  runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
+  python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
+  required_env:
+    PYTORCH_ENABLE_MPS_FALLBACK: "1"
+    MPLCONFIGDIR: /tmp/mpl_eq
+  training_device: mps
+  notes:
+    - This config intentionally loads existing 5-epoch quick candidate artifacts.
+    - It should not be used for README-facing model replacement assets.
+    - It screens threshold policy before sampler/loss/resize retraining.
+
+paths:
+  mito_data_dir: raw_data/mitochondria_data/training
+  glomeruli_data_dir: raw_data/cohorts
+  mito_model_dir: models/segmentation/mitochondria
+  glomeruli_model_dir: models/segmentation/glomeruli
+  comparison_output_dir: output/segmentation_evaluation/glomeruli_candidate_comparison
+  cohort_manifest: raw_data/cohorts/manifest.csv
+  cohort_manifest_summary: derived_data/cohort_manifest/manifest_summary.json
+
+mitochondria:
+  enabled: false
+  model_name: glomeruli_candidate_mito_base
+  epochs: 0
+  batch_size: 24
+  learning_rate: 1e-3
+  image_size: 256
+
+glomeruli_transfer:
+  enabled: false
+  model_name: p0_quick_glomeruli_transfer
+  epochs: 5
+  training_mode: dynamic_full_image_patching
+  candidate_family: mitochondria_transfer
+
+glomeruli_scratch:
+  enabled: false
+  model_name: p0_quick_glomeruli_no_mito_base
+  epochs: 5
+  training_mode: dynamic_full_image_patching
+  candidate_family: no_mitochondria_base
+  encoder_initialization: imagenet_pretrained_resnet34
+
+candidate_training:
+  batch_size: 12
+  learning_rate: 1e-3
+  image_size: 256
+  crop_size: 512
+
+negative_background_supervision:
+  enabled: false
+
+augmentation_audit:
+  variant: fastai_default
+
+comparison:
+  enabled: true
+  train_candidates: false
+  transfer_model_path: models/segmentation/glomeruli/transfer/p0_quick_glomeruli_transfer-transfer_s1lr1e-3_s2lr_lrfind_e5_b12_lr1e-3_sz256/p0_quick_glomeruli_transfer-transfer_s1lr1e-3_s2lr_lrfind_e5_b12_lr1e-3_sz256.pkl
+  scratch_model_path: models/segmentation/glomeruli/scratch/p0_quick_glomeruli_no_mito_base-scratch_e5_b12_lr1e-3_sz256/p0_quick_glomeruli_no_mito_base-scratch_e5_b12_lr1e-3_sz256.pkl
+  overcoverage_audit_dir: output/segmentation_evaluation/glomeruli_overcoverage_audit/p0_negative_background_quick_5epoch_no_training_audit
+  examples_per_category: 3
+  tie_margin: 0.02
+
+evidence:
+  files:
+    - candidate_summary.csv
+    - candidate_predictions.csv
+    - metric_by_category.csv
+    - promotion_report.json
+    - promotion_report.md
+    - promotion_report.html

@@ -14,6 +14,7 @@ from PIL import Image
 
 from eq.data_management import datablock_loader
 from eq.data_management.datablock_loader import (
+    augmentation_policy_for_variant,
     build_segmentation_dls_dynamic_patching,
     get_items_full_images,
     validate_supported_segmentation_training_root,
@@ -576,3 +577,19 @@ def test_prediction_review_blocks_undersegmented_positive_examples():
         "prediction_does_not_reasonably_cover_positive_glomerulus_examples"
         in review["reasons"]
     )
+
+
+def test_augmentation_variants_are_explicit_and_reject_unknown_names():
+    default_policy = augmentation_policy_for_variant("fastai_default")
+    spatial_policy = augmentation_policy_for_variant("spatial_only")
+    no_aug_policy = augmentation_policy_for_variant("no_aug")
+
+    assert default_policy["fastai_aug_transforms"] is True
+    assert default_policy["gaussian_noise_active"] is False
+    assert spatial_policy["fastai_aug_transforms"] is True
+    assert spatial_policy["max_lighting"] == 0.0
+    assert spatial_policy["gaussian_noise_active"] is False
+    assert no_aug_policy["fastai_aug_transforms"] is False
+    assert no_aug_policy["gaussian_noise_active"] is False
+    with pytest.raises(ValueError, match="Unsupported augmentation variant"):
+        augmentation_policy_for_variant("current_plus_lighting")

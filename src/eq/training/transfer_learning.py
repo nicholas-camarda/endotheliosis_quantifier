@@ -18,12 +18,13 @@ from fastai.vision.all import *
 # BCEWithLogitsLossFlat import removed - using FastAI v2 automatic loss selection
 from eq.data_management.datablock_loader import (
     TRAINING_MODE_DYNAMIC_FULL_IMAGE,
+    augmentation_policy_for_variant,
     build_segmentation_dls_dynamic_patching,
     fixed_splitter_from_manifest,
     validate_supported_segmentation_training_root,
 )
 from eq.data_management.negative_glomeruli_crops import validate_negative_crop_manifest
-from eq.training.losses import make_loss
+from eq.training.losses import loss_metadata, make_loss
 from eq.training.segmentation_validation_audit import (
     build_glomeruli_training_provenance,
 )
@@ -163,6 +164,7 @@ def load_model_for_transfer_learning(
     split_manifest_path: Optional[str] = None,
     negative_crop_manifest_path: Optional[str] = None,
     negative_crop_sampler_weight: float = 0.0,
+    augmentation_variant: str = "fastai_default",
     device: Optional[str] = None,
 ) -> Learner:
     """
@@ -207,6 +209,7 @@ def load_model_for_transfer_learning(
         stage="glomeruli_transfer",
         negative_crop_manifest_path=negative_crop_manifest_path,
         negative_crop_sampler_weight=negative_crop_sampler_weight,
+        augmentation_variant=augmentation_variant,
         device=device,
     )
     
@@ -479,8 +482,9 @@ def transfer_learn_glomeruli(
     try:
         if loss_name:
             k = (loss_name or "").strip().lower()
-            if k in ("dice", "bcedice", "tversky"):
-                _loss_key = k
+            base_k = k.split(":", 1)[0]
+            if base_k in ("dice", "bcedice", "tversky", "tversky_fp"):
+                _loss_key = base_k
             else:
                 _loss_key = "custom"
     except Exception:
@@ -520,6 +524,7 @@ def transfer_learn_glomeruli(
         split_manifest_path=split_manifest_path,
         negative_crop_manifest_path=negative_crop_manifest_path,
         negative_crop_sampler_weight=negative_crop_sampler_weight,
+        augmentation_variant=augmentation_variant,
         device=device,
     )
     train_items = list(getattr(learn.dls.train_ds, 'items', []))
@@ -530,12 +535,8 @@ def transfer_learn_glomeruli(
         negative_crop_provenance = validate_negative_crop_manifest(
             negative_crop_manifest_path
         ).provenance(sampler_weight=negative_crop_sampler_weight)
-    augmentation_policy = {
-        "variant": augmentation_variant,
-        "fastai_aug_transforms": True,
-        "config_controls_active": False,
-        "gaussian_noise_active": False,
-    }
+    augmentation_policy = augmentation_policy_for_variant(augmentation_variant)
+    resolved_loss = loss_metadata(loss_name or "")
     training_provenance = build_glomeruli_training_provenance(
         data_root=data_root,
         train_items=train_items,
@@ -557,6 +558,8 @@ def transfer_learn_glomeruli(
         command=" ".join(sys.argv),
     )
     training_provenance["training_device"] = str(learn.dls.device)
+    training_provenance.update(resolved_loss)
+    training_provenance["run_intent"] = "production_training"
     
     # Save data splits manifest
     save_splits(output_path, model_folder_name, {

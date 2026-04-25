@@ -61,6 +61,7 @@ TRAINING_MASK_LANES = {
     "manual_mask",
     "masked_external",
 }
+SUPPORTED_AUGMENTATION_VARIANTS = {"fastai_default", "spatial_only", "no_aug"}
 BLOCKED_RAW_PROJECT_ROOT_PARTS = {
     "_retired",
     "backup",
@@ -92,6 +93,44 @@ def resolve_segmentation_training_device(device: Optional[Union[str, torch.devic
     if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
+
+
+def augmentation_policy_for_variant(variant: str) -> dict[str, Any]:
+    """Return the explicit augmentation policy for supported segmentation variants."""
+    key = (variant or "fastai_default").strip().lower()
+    if key not in SUPPORTED_AUGMENTATION_VARIANTS:
+        raise ValueError(
+            f"Unsupported augmentation variant {variant!r}. "
+            f"Use one of {sorted(SUPPORTED_AUGMENTATION_VARIANTS)}."
+        )
+    if key == "no_aug":
+        return {
+            "variant": key,
+            "fastai_aug_transforms": False,
+            "config_controls_active": True,
+            "gaussian_noise_active": False,
+            "max_rotate": 0,
+            "flip_vert": False,
+            "min_zoom": 1.0,
+            "max_zoom": 1.0,
+            "max_warp": 0.0,
+            "max_lighting": 0.0,
+        }
+    policy = {
+        "variant": key,
+        "fastai_aug_transforms": True,
+        "config_controls_active": True,
+        "gaussian_noise_active": False,
+        "max_rotate": int(DEFAULT_MAX_ROTATE),
+        "flip_vert": DEFAULT_FLIP_VERT,
+        "min_zoom": DEFAULT_MIN_ZOOM,
+        "max_zoom": DEFAULT_MAX_ZOOM,
+        "max_warp": DEFAULT_MAX_WARP,
+        "max_lighting": DEFAULT_MAX_LIGHTING,
+    }
+    if key == "spatial_only":
+        policy["max_lighting"] = 0.0
+    return policy
 
 
 def default_get_y_path(x: Union[str, Path]) -> Path:
@@ -456,6 +495,7 @@ def build_segmentation_datablock_dynamic_patching(
     pos_crop_attempts: int = DEFAULT_POS_CROP_ATTEMPTS,
     negative_crop_manifest_path: Optional[Union[str, Path]] = None,
     negative_crop_sampler_weight: float = 0.0,
+    augmentation_variant: str = "fastai_default",
 ):
     """
     Create a DataBlock for binary segmentation with dynamic patching.
@@ -527,21 +567,27 @@ def build_segmentation_datablock_dynamic_patching(
         Resize(output_size, method=ResizeMethod.Squish),
     ]
     
-    # Batch transforms: apply additional augmentations with ImageNet normalization
-    batch_tfms = [
-        IntToFloatTensor(),
-        *aug_transforms(
-            # Do not pass size here; avoid RandomResizedCrop-like behavior
-            max_rotate=int(DEFAULT_MAX_ROTATE),
-            flip_vert=DEFAULT_FLIP_VERT,
-            min_zoom=DEFAULT_MIN_ZOOM,
-            max_zoom=DEFAULT_MAX_ZOOM,
-            max_warp=DEFAULT_MAX_WARP,
-            max_lighting=DEFAULT_MAX_LIGHTING,
-        ),
-        Normalize.from_stats(*imagenet_stats, cuda=False),
-        MaskPreprocessTransform(),
-    ]
+    # Batch transforms: apply named augmentation variants with ImageNet normalization.
+    augmentation_policy = augmentation_policy_for_variant(augmentation_variant)
+    batch_tfms = [IntToFloatTensor()]
+    if augmentation_policy["fastai_aug_transforms"]:
+        batch_tfms.extend(
+            aug_transforms(
+                # Do not pass size here; avoid RandomResizedCrop-like behavior.
+                max_rotate=int(augmentation_policy["max_rotate"]),
+                flip_vert=bool(augmentation_policy["flip_vert"]),
+                min_zoom=float(augmentation_policy["min_zoom"]),
+                max_zoom=float(augmentation_policy["max_zoom"]),
+                max_warp=float(augmentation_policy["max_warp"]),
+                max_lighting=float(augmentation_policy["max_lighting"]),
+            )
+        )
+    batch_tfms.extend(
+        [
+            Normalize.from_stats(*imagenet_stats, cuda=False),
+            MaskPreprocessTransform(),
+        ]
+    )
     
     block = DataBlock(
         blocks=[ImageBlock, MaskBlock(codes=codes)],  # Use codes for proper segmentation
@@ -571,6 +617,7 @@ def build_segmentation_dls_dynamic_patching(
     splitter: Optional[Callable] = None,
     negative_crop_manifest_path: Optional[Union[str, Path]] = None,
     negative_crop_sampler_weight: float = 0.0,
+    augmentation_variant: str = "fastai_default",
     device: Optional[Union[str, torch.device]] = None,
 ):
     """
@@ -630,6 +677,7 @@ def build_segmentation_dls_dynamic_patching(
         pos_crop_attempts=pos_crop_attempts,
         negative_crop_manifest_path=negative_crop_manifest_path,
         negative_crop_sampler_weight=negative_crop_sampler_weight,
+        augmentation_variant=augmentation_variant,
     )
     
     # Create DataLoaders on the required accelerator.  This is part of the

@@ -1,0 +1,124 @@
+# Runnable with:
+#   eq run-config --config openspec/changes/p0-calibrate-glomeruli-overcoverage-controls/quicktest_resize_screening.yaml
+#
+# Purpose:
+#   Resolve the remaining P0 resize evidence gate without launching a full
+#   production training run. This config evaluates the same existing P0
+#   5-epoch negative-background candidates under a reference 512->256 policy,
+#   a primary 512->512 no-downsample policy, and a 512->384 fallback only if
+#   the 512->512 attempt fails. These outputs are screening evidence only.
+
+workflow: glomeruli_candidate_comparison
+
+run:
+  name: p0_resize_screening_controlled
+  seed: 42
+  runtime_root_env: EQ_RUNTIME_ROOT
+  runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
+  python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
+  required_env:
+    PYTORCH_ENABLE_MPS_FALLBACK: "1"
+    MPLCONFIGDIR: /tmp/mpl_eq
+  training_device: mps
+  notes:
+    - This config intentionally loads existing 5-epoch quick candidate artifacts.
+    - It keeps split, seed, threshold policy, negative manifest, loss, sampler intent, and augmentation fixed.
+    - It should not be used for README-facing model replacement assets.
+
+paths:
+  mito_data_dir: raw_data/mitochondria_data/training
+  glomeruli_data_dir: raw_data/cohorts
+  mito_model_dir: models/segmentation/mitochondria
+  glomeruli_model_dir: models/segmentation/glomeruli
+  comparison_output_dir: output/segmentation_evaluation/glomeruli_candidate_comparison
+  cohort_manifest: raw_data/cohorts/manifest.csv
+  cohort_manifest_summary: derived_data/cohort_manifest/manifest_summary.json
+
+mitochondria:
+  enabled: false
+  model_name: glomeruli_candidate_mito_base
+  epochs: 0
+  batch_size: 24
+  learning_rate: 1e-3
+  image_size: 256
+
+glomeruli_transfer:
+  enabled: false
+  model_name: p0_quick_glomeruli_transfer
+  epochs: 5
+  training_mode: dynamic_full_image_patching
+  candidate_family: mitochondria_transfer
+
+glomeruli_scratch:
+  enabled: false
+  model_name: p0_quick_glomeruli_no_mito_base
+  epochs: 5
+  training_mode: dynamic_full_image_patching
+  candidate_family: no_mitochondria_base
+  encoder_initialization: imagenet_pretrained_resnet34
+
+candidate_training:
+  batch_size: 12
+  learning_rate: 1e-3
+  image_size: 256
+  crop_size: 512
+  loss: bce_dice
+
+negative_background_supervision:
+  enabled: true
+  curated_negative_manifest:
+    enabled: true
+    manifest_path: derived_data/glomeruli_negative_crops/manifests/p0_quick_mask_background.csv
+    sampler_weight: 0.5
+
+augmentation_audit:
+  variant: fastai_default
+
+comparison:
+  enabled: true
+  train_candidates: false
+  transfer_model_path: models/segmentation/glomeruli/transfer/p0_quick_glomeruli_transfer-transfer_s1lr1e-3_s2lr_lrfind_e5_b12_lr1e-3_sz256/p0_quick_glomeruli_transfer-transfer_s1lr1e-3_s2lr_lrfind_e5_b12_lr1e-3_sz256.pkl
+  scratch_model_path: models/segmentation/glomeruli/scratch/p0_quick_glomeruli_no_mito_base-scratch_e5_b12_lr1e-3_sz256/p0_quick_glomeruli_no_mito_base-scratch_e5_b12_lr1e-3_sz256.pkl
+  overcoverage_audit_dir: output/segmentation_evaluation/glomeruli_overcoverage_audit/p0_negative_background_quick_5epoch_no_training_audit
+  examples_per_category: 3
+  tie_margin: 0.02
+
+resize_screening:
+  enabled: true
+  record_failures: true
+  update_reference_with_summary: true
+  summary_run_id: p0_resize_screening_summary
+  reference_run_id: p0_resize_screen_current_512to256
+  primary_run_id: p0_resize_screen_512to512
+  fallback_run_id: p0_resize_screen_512to384
+  attempts:
+    - run_id: p0_resize_screen_current_512to256
+      crop_size: 512
+      image_size: 256
+      batch_size: 12
+      device: mps
+      run_if: always
+    - run_id: p0_resize_screen_512to512
+      crop_size: 512
+      image_size: 512
+      batch_size: 2
+      device: mps
+      run_if: always
+    - run_id: p0_resize_screen_512to384
+      crop_size: 512
+      image_size: 384
+      batch_size: 4
+      device: mps
+      run_if: primary_failed
+
+evidence:
+  files:
+    - candidate_summary.csv
+    - candidate_predictions.csv
+    - metric_by_category.csv
+    - category_gate_audit.csv
+    - resize_policy_audit.csv
+    - resize_policy_screening_summary.csv
+    - promotion_report.json
+    - promotion_report.md
+    - promotion_report.html

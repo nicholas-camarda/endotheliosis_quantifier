@@ -3,21 +3,31 @@ from argparse import Namespace
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 from PIL import Image
 
 from eq.training.compare_glomeruli_candidates import (
     COMPARE_PREDICTION_THRESHOLD,
+    THRESHOLD_POLICY_AUDIT_BACKED_FIXED,
+    THRESHOLD_POLICY_FIXED_REVIEW,
+    THRESHOLD_POLICY_UNVERIFIED,
+    THRESHOLD_POLICY_VALIDATION_DERIVED,
+    RESIZE_DECISION_CURRENT_CLEARED,
+    RESIZE_DECISION_SELECTED_LESS_DOWNSAMPLED,
     CandidateRuntime,
     _annotate_manifest_with_context,
     _merged_provenance,
     _candidate_command,
     _predict_crop,
+    _resize_sensitivity_from_screening,
+    _threshold_policy_from_audit,
     _validation_mask_paths,
     _write_shared_training_split,
     build_arg_parser,
     compare_glomeruli_candidates,
     determine_promotion_decision,
+    resize_screening_decision_from_rows,
 )
 
 
@@ -87,6 +97,134 @@ def test_determine_promotion_decision_marks_unavailable_family_as_insufficient_e
 
     assert decision["decision_state"] == "insufficient_evidence"
     assert decision["decision_reason"] == "candidate_family_unavailable:transfer"
+
+
+def test_resize_screening_decision_clears_current_policy_when_comparator_not_better():
+    rows = [
+        {
+            "row_type": "attempt",
+            "run_id": "p0_resize_screen_current_512to256",
+            "candidate_family": "transfer",
+            "runtime_status": "completed",
+            "crop_size": "512",
+            "image_size": "256",
+            "positive_boundary_dice": "0.90",
+            "positive_boundary_recall": "0.94",
+            "positive_boundary_prediction_to_truth_ratio_abs_error": "0.10",
+            "background_false_positive_foreground_fraction": "0.001",
+        },
+        {
+            "row_type": "attempt",
+            "run_id": "p0_resize_screen_512to512",
+            "candidate_family": "transfer",
+            "runtime_status": "completed",
+            "crop_size": "512",
+            "image_size": "512",
+            "positive_boundary_dice": "0.905",
+            "positive_boundary_recall": "0.945",
+            "positive_boundary_prediction_to_truth_ratio_abs_error": "0.095",
+            "background_false_positive_foreground_fraction": "0.001",
+        },
+    ]
+
+    decision = resize_screening_decision_from_rows(rows)
+    sensitivity = _resize_sensitivity_from_screening(
+        rows + [decision],
+        crop_size=512,
+        output_size=256,
+        summary_path="/tmp/resize_policy_screening_summary.csv",
+    )
+
+    assert decision["resize_decision_status"] == RESIZE_DECISION_CURRENT_CLEARED
+    assert sensitivity["promotion_evidence_status"] == "promotion_eligible"
+    assert sensitivity["status"] == "resize_benefit_cleared_current_policy"
+
+
+def test_resize_screening_decision_selects_less_downsampled_policy_when_materially_better():
+    rows = [
+        {
+            "row_type": "attempt",
+            "run_id": "p0_resize_screen_current_512to256",
+            "candidate_family": "scratch",
+            "runtime_status": "completed",
+            "crop_size": "512",
+            "image_size": "256",
+            "positive_boundary_dice": "0.70",
+            "positive_boundary_recall": "0.72",
+            "positive_boundary_prediction_to_truth_ratio_abs_error": "0.30",
+            "background_false_positive_foreground_fraction": "0.001",
+        },
+        {
+            "row_type": "attempt",
+            "run_id": "p0_resize_screen_512to512",
+            "candidate_family": "scratch",
+            "runtime_status": "completed",
+            "crop_size": "512",
+            "image_size": "512",
+            "positive_boundary_dice": "0.80",
+            "positive_boundary_recall": "0.84",
+            "positive_boundary_prediction_to_truth_ratio_abs_error": "0.12",
+            "background_false_positive_foreground_fraction": "0.002",
+        },
+    ]
+
+    decision = resize_screening_decision_from_rows(rows)
+    current_sensitivity = _resize_sensitivity_from_screening(
+        rows + [decision],
+        crop_size=512,
+        output_size=256,
+        summary_path="/tmp/resize_policy_screening_summary.csv",
+    )
+    selected_sensitivity = _resize_sensitivity_from_screening(
+        rows + [decision],
+        crop_size=512,
+        output_size=512,
+        summary_path="/tmp/resize_policy_screening_summary.csv",
+    )
+
+    assert decision["resize_decision_status"] == RESIZE_DECISION_SELECTED_LESS_DOWNSAMPLED
+    assert current_sensitivity["status"] == "resize_policy_not_selected"
+    assert current_sensitivity["promotion_evidence_status"] == "insufficient_evidence_for_promotion"
+    assert selected_sensitivity["status"] == "resize_policy_selected"
+    assert selected_sensitivity["promotion_evidence_status"] == "promotion_eligible"
+
+
+def test_resize_screening_decision_does_not_select_comparator_that_fails_category_gates():
+    rows = [
+        {
+            "row_type": "attempt",
+            "run_id": "p0_resize_screen_current_512to256",
+            "candidate_family": "transfer",
+            "runtime_status": "completed",
+            "crop_size": "512",
+            "image_size": "256",
+            "category_gate_status": "promotion_eligible",
+            "category_gate_failed_count": "0",
+            "positive_boundary_dice": "0.70",
+            "positive_boundary_recall": "0.72",
+            "positive_boundary_prediction_to_truth_ratio_abs_error": "0.30",
+            "background_false_positive_foreground_fraction": "0.001",
+        },
+        {
+            "row_type": "attempt",
+            "run_id": "p0_resize_screen_512to512",
+            "candidate_family": "transfer",
+            "runtime_status": "completed",
+            "crop_size": "512",
+            "image_size": "512",
+            "category_gate_status": "not_promotion_eligible",
+            "category_gate_failed_count": "2",
+            "positive_boundary_dice": "0.90",
+            "positive_boundary_recall": "0.92",
+            "positive_boundary_prediction_to_truth_ratio_abs_error": "0.10",
+            "background_false_positive_foreground_fraction": "0.001",
+        },
+    ]
+
+    decision = resize_screening_decision_from_rows(rows)
+
+    assert decision["resize_decision_status"] == RESIZE_DECISION_CURRENT_CLEARED
+    assert decision["resize_decision_reason"] == "less_downsampled_policy_failed_category_gates"
 
 
 def test_merged_provenance_loads_adjacent_split_sidecar(tmp_path):
@@ -204,7 +342,7 @@ def test_compare_glomeruli_candidates_writes_reports_for_tied_candidates(tmp_pat
         encoding="utf-8",
     )
 
-    def fake_evaluate(runtime, manifest, asset_dir, expected_size):
+    def fake_evaluate(runtime, manifest, asset_dir, expected_size, prediction_threshold=COMPARE_PREDICTION_THRESHOLD):
         asset_dir.mkdir(parents=True, exist_ok=True)
         review_panel = asset_dir / f"{runtime.family}_00.png"
         Image.fromarray(np.zeros((32, 96, 3), dtype=np.uint8)).save(review_panel)
@@ -219,6 +357,8 @@ def test_compare_glomeruli_candidates_writes_reports_for_tied_candidates(tmp_pat
             "provenance": {
                 "seed": 42,
                 "training_mode": "dynamic_full_image_patching",
+                "crop_size": 512,
+                "output_size": 256,
                 "train_images": [str(tmp_path / "held_out_subject_guard" / "train.jpg")],
                 "valid_images": valid_images,
                 **source_size_summary,
@@ -247,10 +387,12 @@ def test_compare_glomeruli_candidates_writes_reports_for_tied_candidates(tmp_pat
                     "crop_box": json.dumps(manifest[0]["crop_box"]),
                     "truth_foreground_fraction": manifest[0]["foreground_fraction"],
                     "prediction_foreground_fraction": manifest[0]["foreground_fraction"],
+                    "threshold": prediction_threshold,
                     "dice": metrics["dice"],
                     "jaccard": metrics["jaccard"],
                     "precision": metrics["precision"],
                     "recall": metrics["recall"],
+                    "pixel_accuracy": 1.0,
                     "review_panel_path": str(review_panel),
                 }
             ],
@@ -281,6 +423,8 @@ def test_compare_glomeruli_candidates_writes_reports_for_tied_candidates(tmp_pat
             negative_crop_manifest=None,
             negative_crop_sampler_weight=0.0,
             augmentation_variant="fastai_default",
+            overcoverage_audit_dir=None,
+            prediction_threshold=None,
             examples_per_category=1,
             transfer_model_name="transfer_candidate",
             scratch_model_name="scratch_candidate",
@@ -298,6 +442,7 @@ def test_compare_glomeruli_candidates_writes_reports_for_tied_candidates(tmp_pat
     assert (run_output / "candidate_predictions.csv").exists()
     assert (run_output / "metric_by_category.csv").exists()
     assert (run_output / "prediction_shape_audit.csv").exists()
+    assert (run_output / "category_gate_audit.csv").exists()
     assert (run_output / "resize_policy_audit.csv").exists()
     assert (run_output / "failure_reproduction_audit.csv").exists()
     assert (run_output / "documentation_claim_audit.md").exists()
@@ -321,14 +466,102 @@ def test_compare_glomeruli_candidates_writes_reports_for_tied_candidates(tmp_pat
     candidate_summary = (run_output / "candidate_summary.csv").read_text()
     assert "negative_crop_supervision_status" in candidate_summary
     assert "augmentation_policy" in candidate_summary
+    assert "threshold_policy_status" in candidate_summary
+    assert "threshold_policy_unverified" in candidate_summary
+    assert "category_gate_status" in candidate_summary
+    assert "resize_benefit_unproven" in candidate_summary
     markdown_report = (run_output / "promotion_report.md").read_text()
     assert "Negative crop supervision status" in markdown_report
     assert "Augmentation policy" in markdown_report
+    assert "Threshold policy status" in markdown_report
+    assert "Category gate status" in markdown_report
     html_report = (run_output / "promotion_report.html").read_text()
     assert "Manifest Coverage" in html_report
     assert "Promotion evidence" in html_report
+    assert "threshold policy=threshold_policy_unverified" in html_report
+    assert "Category gates" in html_report
     assert "inference_claim=not_applicable_for_inference_claim" in html_report
     assert "panel order: raw | truth overlay | prediction overlay" in html_report
+
+
+def test_threshold_policy_from_overcoverage_audit_reads_threshold_sweep(tmp_path):
+    sweep_path = tmp_path / "threshold_sweep.csv"
+    sweep_path.write_text(
+        "candidate_family,category,threshold,recall,false_positive_foreground_fraction\n"
+        "transfer,background,0.01,0.0,0.12\n"
+        "transfer,positive,0.01,0.9,\n"
+        "scratch,boundary,0.01,0.8,\n",
+        encoding="utf-8",
+    )
+
+    policy = _threshold_policy_from_audit(
+        {
+            "thresholds": [0.01, 0.05, 0.1],
+            "audit_summary_path": str(tmp_path / "audit_summary.json"),
+            "artifacts": {"threshold_sweep": str(sweep_path)},
+        },
+        selected_threshold=0.01,
+    )
+
+    assert policy["threshold_policy_status"] == THRESHOLD_POLICY_AUDIT_BACKED_FIXED
+    assert policy["threshold_is_promotion_ready"] is True
+    assert policy["threshold_grid"] == [0.01, 0.05, 0.1]
+    assert policy["background_false_positive_foreground_fraction"] == 0.12
+    assert policy["positive_boundary_recall"] == pytest.approx(0.85)
+
+
+def test_threshold_policy_without_audit_is_unverified():
+    policy = _threshold_policy_from_audit({}, selected_threshold=None, explicit_threshold=False)
+
+    assert policy["threshold_policy_status"] == THRESHOLD_POLICY_UNVERIFIED
+    assert policy["threshold"] == COMPARE_PREDICTION_THRESHOLD
+    assert policy["threshold_is_promotion_ready"] is False
+    assert policy["overcoverage_audit_summary_path"] is None
+
+
+def test_threshold_policy_without_audit_but_explicit_threshold_is_fixed_review_only():
+    policy = _threshold_policy_from_audit({}, selected_threshold=0.5, explicit_threshold=True)
+
+    assert policy["threshold_policy_status"] == THRESHOLD_POLICY_FIXED_REVIEW
+    assert policy["threshold"] == 0.5
+    assert policy["threshold_is_promotion_ready"] is False
+
+
+def test_threshold_policy_derives_threshold_from_overcoverage_sweep(tmp_path):
+    sweep_path = tmp_path / "threshold_sweep.csv"
+    sweep_path.write_text(
+        "candidate_family,category,threshold,recall,false_positive_foreground_fraction\n"
+        "transfer,background,0.01,0.0,0.20\n"
+        "scratch,background,0.01,0.0,0.15\n"
+        "transfer,positive,0.01,0.99,\n"
+        "scratch,boundary,0.01,0.98,\n"
+        "transfer,background,0.25,0.0,0.01\n"
+        "scratch,background,0.25,0.0,0.01\n"
+        "transfer,positive,0.25,0.90,\n"
+        "scratch,boundary,0.25,0.92,\n"
+        "transfer,background,0.50,0.0,0.00\n"
+        "scratch,background,0.50,0.0,0.00\n"
+        "transfer,positive,0.50,0.80,\n"
+        "scratch,boundary,0.50,0.82,\n",
+        encoding="utf-8",
+    )
+
+    policy = _threshold_policy_from_audit(
+        {
+            "thresholds": [0.01, 0.25, 0.5],
+            "audit_summary_path": str(tmp_path / "audit_summary.json"),
+            "artifacts": {"threshold_sweep": str(sweep_path)},
+        },
+        selected_threshold=None,
+        explicit_threshold=False,
+    )
+
+    assert policy["threshold_policy_status"] == THRESHOLD_POLICY_VALIDATION_DERIVED
+    assert policy["threshold"] == 0.25
+    assert policy["threshold_is_promotion_ready"] is True
+    assert policy["background_false_positive_foreground_fraction"] == pytest.approx(0.01)
+    assert policy["positive_boundary_recall"] == pytest.approx(0.91)
+    assert "background false-positive" in policy["threshold_selection_rule"]
 
 
 def test_candidate_comparison_writes_shared_split_before_fresh_training(tmp_path):

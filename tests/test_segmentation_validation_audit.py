@@ -15,6 +15,7 @@ from eq.training.segmentation_validation_audit import (
     aggregate_metric_by_category,
     audit_datablock_sampling,
     audit_dynamic_patching_datablock,
+    audit_category_gates,
     audit_manifest_rows,
     audit_paired_root_contract,
     audit_prediction_shapes,
@@ -309,6 +310,61 @@ def test_prediction_shape_audit_blocks_background_false_positive_and_overcoverag
     assert audit["blocked"] is True
     assert "background_false_positive_foreground_excess" in reasons
     assert "positive_or_boundary_overcoverage" in reasons
+
+
+def test_category_gate_audit_does_not_fail_background_on_empty_mask_dice():
+    rows = [
+        {
+            "family": "transfer",
+            "category": "background",
+            "manifest_index": 0,
+            "truth_foreground_fraction": 0.0,
+            "prediction_foreground_fraction": 0.0004,
+            "pixel_accuracy": 0.9996,
+            "dice": 0.0,
+            "jaccard": 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "threshold": 0.25,
+            "threshold_policy_status": "validation_derived_threshold",
+        }
+    ]
+
+    audit = audit_category_gates(rows)
+    shape_audit = audit_prediction_shapes(rows)
+
+    assert audit["blocked"] is False
+    assert audit["family_status"]["transfer"]["reasons"] == []
+    assert shape_audit["blocked"] is False
+    assert shape_audit["family_status"]["transfer"]["reasons"] == []
+
+
+def test_category_gate_audit_blocks_positive_overlap_failures():
+    rows = [
+        {
+            "family": "scratch",
+            "category": "positive",
+            "manifest_index": 1,
+            "truth_foreground_fraction": 0.5,
+            "prediction_foreground_fraction": 0.1,
+            "pixel_accuracy": 0.6,
+            "dice": 0.2,
+            "jaccard": 0.1,
+            "precision": 0.3,
+            "recall": 0.2,
+            "threshold": 0.25,
+            "threshold_policy_status": "validation_derived_threshold",
+        }
+    ]
+
+    audit = audit_category_gates(rows)
+    reasons = audit["family_status"]["scratch"]["reasons"]
+
+    assert audit["blocked"] is True
+    assert "low_foreground_dice" in reasons
+    assert "low_foreground_jaccard" in reasons
+    assert "low_foreground_recall" in reasons
+    assert "positive_or_boundary_undercoverage" in reasons
 
 
 def test_metric_by_category_aggregates_by_family_cohort_and_lane():

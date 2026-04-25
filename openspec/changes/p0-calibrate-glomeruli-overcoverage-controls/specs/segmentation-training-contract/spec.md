@@ -62,10 +62,33 @@ Glomeruli resize-policy changes SHALL be screened and recorded before a full pro
 - **THEN** the run records the tested crop size, output size, batch size, device, memory-related failures when present, and category-level overcoverage metrics
 - **AND** `resize_policy_comparison.csv` compares the policy against the current resize policy
 
+#### Scenario: No-downsample policy is screened
+- **WHEN** P0 runs the primary resize comparator
+- **THEN** the run uses `run_intent=resize_screening`, `crop_size=512`, and `image_size=512`
+- **AND** it records that the only intended comparison axis is output image size relative to the reference `crop_size=512` and `image_size=256`
+- **AND** it records the executed batch size, device, deterministic seed, negative-crop manifest, threshold-selection rule, candidate family, loss, sampler policy, `positive_focus_p`, and augmentation variant
+
+#### Scenario: Less-downsampled fallback policy is screened
+- **WHEN** the no-downsample `image_size=512` screen fails because of MPS memory, unsupported operation, or runtime constraints
+- **THEN** the fallback run uses `run_intent=resize_screening_fallback`, `crop_size=512`, and `image_size=384`
+- **AND** the failure from the `image_size=512` attempt remains recorded in the resize-screening summary
+- **AND** the fallback result is interpreted as less-downsampled evidence, not full no-downsample evidence
+
 #### Scenario: Less-downsampled policy cannot run
 - **WHEN** MPS memory or supported operations prevent a less-downsampled screening run
 - **THEN** the failure is recorded in `resize_policy_comparison.csv` and `audit-results.md`
 - **AND** the implementation does not silently skip the resize-policy question
+
+#### Scenario: Resize screen is requested after category-gate audit
+- **WHEN** category-appropriate gates show that positive or boundary performance remains limited after threshold correction
+- **THEN** the next resize screen changes only one resize axis unless explicitly labeled `combined_non_diagnostic`
+- **AND** the screen records whether `crop_size`, `output_size`, batch size, or prediction resize order changed
+- **AND** the screen is treated as short screening evidence unless it uses the final production training schedule and held-out evidence contract
+
+#### Scenario: Category-gate audit shows only background gate-semantics failure
+- **WHEN** category-appropriate gates show that background control is acceptable and positive/boundary categories pass
+- **THEN** resize screening SHALL NOT be required solely because legacy empty-background Dice/Jaccard failed
+- **AND** full retraining SHALL NOT be justified from that legacy category failure alone
 
 ### Requirement: Augmentation variants are explicit and non-silent
 Glomeruli augmentation changes SHALL be named, configured, and recorded before they are used to interpret overcoverage behavior.

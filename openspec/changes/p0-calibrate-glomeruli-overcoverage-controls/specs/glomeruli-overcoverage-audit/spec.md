@@ -99,6 +99,12 @@ The overcoverage audit SHALL classify overcoverage using explicit root-cause lab
 - **THEN** `audit_summary.json` records root cause `resize_policy_artifact`
 - **AND** `audit-results.md` identifies the resize policy that should be screened in the next candidate run
 
+#### Scenario: Resize evidence is the remaining gate
+- **WHEN** threshold-policy and category-gate evidence pass but `resize_benefit_unproven` remains
+- **THEN** `audit-results.md` identifies resize screening as the next P0 evidence target
+- **AND** it names `quicktest_resize_screening.yaml`, `p0_resize_screen_current_512to256`, `p0_resize_screen_512to512`, `p0_resize_screen_512to384`, and `resize_policy_screening_summary.csv`
+- **AND** it does not mark P0 complete until the resize screen has produced a selected policy, a cleared current-policy decision, or a recorded infeasibility state
+
 #### Scenario: Augmentation evidence changes the conclusion
 - **WHEN** a named augmentation variant materially worsens overcoverage compared with a controlled alternative
 - **THEN** `audit_summary.json` records root cause `augmentation_policy_artifact`

@@ -67,6 +67,20 @@ from eq.utils.run_io import metadata_path_for_model
 TIE_MARGIN = 0.02
 DEFAULT_EXAMPLES_PER_CATEGORY = 2
 COMPARE_PREDICTION_THRESHOLD = 0.01
+THRESHOLD_POLICY_UNVERIFIED = "threshold_policy_unverified"
+THRESHOLD_POLICY_FIXED_REVIEW = "fixed_review_threshold"
+THRESHOLD_POLICY_AUDIT_BACKED_FIXED = "audit_backed_fixed_threshold"
+THRESHOLD_POLICY_VALIDATION_DERIVED = "validation_derived_threshold"
+PROMOTION_READY_THRESHOLD_POLICIES = {
+    THRESHOLD_POLICY_AUDIT_BACKED_FIXED,
+    THRESHOLD_POLICY_VALIDATION_DERIVED,
+}
+BACKGROUND_FALSE_POSITIVE_LIMIT = 0.02
+RESIZE_SCREEN_MATERIAL_MARGIN = 0.02
+RESIZE_DECISION_CURRENT_CLEARED = "current_policy_cleared"
+RESIZE_DECISION_SELECTED_LESS_DOWNSAMPLED = "selected_less_downsampled_policy"
+RESIZE_DECISION_INFEASIBLE = "resize_screen_infeasible"
+RESIZE_DECISION_UNRESOLVED = "resize_screen_unresolved"
 
 logger = get_logger("eq.glomeruli_candidate_comparison")
 
@@ -95,6 +109,370 @@ def _read_metadata_if_available(model_path: Path | None) -> Dict[str, Any]:
         return {}
     with metadata_path.open() as handle:
         return json.load(handle)
+
+
+def _read_overcoverage_audit(audit_dir: str | Path | None) -> Dict[str, Any]:
+    if not audit_dir:
+        return {}
+    audit_path = Path(audit_dir).expanduser()
+    summary_path = audit_path / "audit_summary.json"
+    if not summary_path.exists():
+        raise FileNotFoundError(f"Overcoverage audit summary not found: {summary_path}")
+    with summary_path.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    payload["audit_dir"] = str(audit_path)
+    payload["audit_summary_path"] = str(summary_path)
+    return payload
+
+
+def _threshold_sweep_rows(audit: Dict[str, Any]) -> list[dict[str, Any]]:
+    sweep_path = Path(str(audit.get("artifacts", {}).get("threshold_sweep") or ""))
+    if not sweep_path.exists():
+        return []
+    with sweep_path.open(newline="", encoding="utf-8") as handle:
+        return [dict(row) for row in csv.DictReader(handle)]
+
+
+def _threshold_metric_summary(
+    rows: Sequence[Dict[str, Any]],
+    *,
+    selected_threshold: float,
+) -> tuple[float | None, float | None]:
+    background_values: list[float] = []
+    recall_values: list[float] = []
+    for row in rows:
+        if abs(float(row.get("threshold") or "nan") - float(selected_threshold)) > 1e-9:
+            continue
+        category = str(row.get("category") or "")
+        if category == "background" and row.get("false_positive_foreground_fraction") not in (None, ""):
+            background_values.append(float(row["false_positive_foreground_fraction"]))
+        if category in {"positive", "boundary"} and row.get("recall") not in (None, ""):
+            recall_values.append(float(row["recall"]))
+    background_fp = float(np.mean(background_values)) if background_values else None
+    positive_boundary_recall = float(np.mean(recall_values)) if recall_values else None
+    return background_fp, positive_boundary_recall
+
+
+def _select_validation_threshold(
+    rows: Sequence[Dict[str, Any]],
+    *,
+    background_limit: float = BACKGROUND_FALSE_POSITIVE_LIMIT,
+) -> dict[str, Any]:
+    thresholds = sorted({float(row["threshold"]) for row in rows if row.get("threshold") not in (None, "")})
+    if not thresholds:
+        raise ValueError("Cannot derive a glomeruli comparison threshold because threshold_sweep.csv has no threshold rows.")
+
+    candidates: list[dict[str, Any]] = []
+    for threshold in thresholds:
+        threshold_rows = [row for row in rows if abs(float(row.get("threshold") or "nan") - threshold) <= 1e-9]
+        families = sorted({str(row.get("candidate_family") or "") for row in threshold_rows if row.get("candidate_family")})
+        background_by_family: dict[str, list[float]] = defaultdict(list)
+        recall_values: list[float] = []
+        for row in threshold_rows:
+            family = str(row.get("candidate_family") or "")
+            category = str(row.get("category") or "")
+            if category == "background" and row.get("false_positive_foreground_fraction") not in (None, ""):
+                background_by_family[family].append(float(row["false_positive_foreground_fraction"]))
+            if category in {"positive", "boundary"} and row.get("recall") not in (None, ""):
+                recall_values.append(float(row["recall"]))
+        if not families or any(not background_by_family.get(family) for family in families):
+            continue
+        family_background = {
+            family: float(np.mean(values))
+            for family, values in background_by_family.items()
+        }
+        max_background = max(family_background.values())
+        if max_background > background_limit:
+            continue
+        candidates.append(
+            {
+                "threshold": threshold,
+                "max_background_false_positive_foreground_fraction": max_background,
+                "mean_background_false_positive_foreground_fraction": float(np.mean(list(family_background.values()))),
+                "positive_boundary_recall": float(np.mean(recall_values)) if recall_values else None,
+            }
+        )
+
+    if not candidates:
+        raise ValueError(
+            "Cannot derive a glomeruli comparison threshold because no threshold in threshold_sweep.csv "
+            f"keeps every candidate family background false-positive foreground fraction <= {background_limit}."
+        )
+
+    def score(row: dict[str, Any]) -> tuple[float, float, float]:
+        recall = -1.0 if row["positive_boundary_recall"] is None else float(row["positive_boundary_recall"])
+        return (
+            recall,
+            -float(row["mean_background_false_positive_foreground_fraction"]),
+            -float(row["threshold"]),
+        )
+
+    selected = max(candidates, key=score)
+    selected["selection_rule"] = (
+        "Choose the threshold in the audit sweep that keeps every candidate family's mean background "
+        f"false-positive foreground fraction <= {background_limit}, then maximize mean positive/boundary recall; "
+        "ties prefer lower background foreground fraction and then the lower threshold."
+    )
+    selected["background_false_positive_limit"] = background_limit
+    return selected
+
+
+def _threshold_policy_from_audit(
+    audit: Dict[str, Any],
+    *,
+    selected_threshold: float | None,
+    explicit_threshold: bool = True,
+) -> Dict[str, Any]:
+    if not audit:
+        threshold = COMPARE_PREDICTION_THRESHOLD if selected_threshold is None else float(selected_threshold)
+        status = THRESHOLD_POLICY_FIXED_REVIEW if explicit_threshold else THRESHOLD_POLICY_UNVERIFIED
+        rationale = (
+            "operator_supplied_fixed_threshold_without_overcoverage_audit"
+            if explicit_threshold
+            else "legacy_underconfident_threshold_without_overcoverage_audit"
+        )
+        return {
+            "threshold_policy_status": status,
+            "threshold": threshold,
+            "threshold_rationale": rationale,
+            "threshold_selection_rule": None,
+            "threshold_is_promotion_ready": False,
+            "threshold_grid": [],
+            "overcoverage_audit_dir": None,
+            "overcoverage_audit_summary_path": None,
+            "background_false_positive_foreground_fraction": None,
+            "positive_boundary_recall": None,
+        }
+
+    sweep_rows = _threshold_sweep_rows(audit)
+    if not sweep_rows:
+        raise ValueError("Overcoverage audit is missing usable threshold_sweep.csv rows; cannot set threshold policy.")
+
+    threshold_selection: dict[str, Any] | None = None
+    if selected_threshold is None:
+        threshold_selection = _select_validation_threshold(sweep_rows)
+        threshold = float(threshold_selection["threshold"])
+        status = THRESHOLD_POLICY_VALIDATION_DERIVED
+        rationale = "selected_from_overcoverage_threshold_sweep"
+        selection_rule = threshold_selection["selection_rule"]
+    else:
+        threshold = float(selected_threshold)
+        status = THRESHOLD_POLICY_AUDIT_BACKED_FIXED
+        rationale = "operator_supplied_fixed_threshold_with_threshold_sweep_evidence"
+        selection_rule = "Operator supplied a fixed threshold and attached the overcoverage audit sweep as supporting evidence."
+
+    background_fp, positive_boundary_recall = _threshold_metric_summary(
+        sweep_rows,
+        selected_threshold=threshold,
+    )
+    return {
+        "threshold_policy_status": status,
+        "threshold": threshold,
+        "threshold_rationale": rationale,
+        "threshold_selection_rule": selection_rule,
+        "threshold_selection": threshold_selection,
+        "threshold_is_promotion_ready": status in PROMOTION_READY_THRESHOLD_POLICIES,
+        "threshold_grid": audit.get("thresholds") or [],
+        "overcoverage_audit_dir": audit.get("audit_dir") or audit.get("output_dir"),
+        "overcoverage_audit_summary_path": audit.get("audit_summary_path"),
+        "background_false_positive_foreground_fraction": background_fp,
+        "positive_boundary_recall": positive_boundary_recall,
+    }
+
+
+def _read_resize_screening_summary(summary_path: str | Path | None) -> list[dict[str, Any]]:
+    if not summary_path:
+        return []
+    path = Path(summary_path).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(f"Resize-screening summary not found: {path}")
+    with path.open(newline="", encoding="utf-8") as handle:
+        return [dict(row) for row in csv.DictReader(handle)]
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def resize_screening_decision_from_rows(
+    rows: Sequence[dict[str, Any]],
+    *,
+    reference_run_id: str = "p0_resize_screen_current_512to256",
+    primary_run_id: str = "p0_resize_screen_512to512",
+    fallback_run_id: str = "p0_resize_screen_512to384",
+    background_limit: float = BACKGROUND_FALSE_POSITIVE_LIMIT,
+    material_margin: float = RESIZE_SCREEN_MATERIAL_MARGIN,
+) -> dict[str, Any]:
+    """Derive the resize-screen decision from per-family screening rows."""
+    attempt_rows = [row for row in rows if str(row.get("row_type") or "attempt") == "attempt"]
+    current_rows = [
+        row
+        for row in attempt_rows
+        if str(row.get("run_id") or "") == reference_run_id
+        and str(row.get("runtime_status") or "") == "completed"
+    ]
+    completed_primary = [
+        row
+        for row in attempt_rows
+        if str(row.get("run_id") or "") == primary_run_id
+        and str(row.get("runtime_status") or "") == "completed"
+    ]
+    completed_fallback = [
+        row
+        for row in attempt_rows
+        if str(row.get("run_id") or "") == fallback_run_id
+        and str(row.get("runtime_status") or "") == "completed"
+    ]
+    comparator_rows = completed_primary or completed_fallback
+    comparator_run_id = primary_run_id if completed_primary else (fallback_run_id if completed_fallback else None)
+    if not current_rows:
+        return {
+            "row_type": "decision",
+            "resize_decision_status": RESIZE_DECISION_UNRESOLVED,
+            "resize_decision_reason": "reference_resize_screen_missing_or_failed",
+            "selected_run_id": "",
+            "selected_crop_size": "",
+            "selected_image_size": "",
+        }
+    if not comparator_rows:
+        return {
+            "row_type": "decision",
+            "resize_decision_status": RESIZE_DECISION_INFEASIBLE,
+            "resize_decision_reason": "no_less_downsampled_or_no_downsample_screen_completed",
+            "selected_run_id": "",
+            "selected_crop_size": "",
+            "selected_image_size": "",
+        }
+
+    def mean_metric(metric: str, metric_rows: Sequence[dict[str, Any]]) -> float | None:
+        values = [_float_or_none(row.get(metric)) for row in metric_rows]
+        values = [value for value in values if value is not None]
+        return float(np.mean(values)) if values else None
+
+    current_dice = mean_metric("positive_boundary_dice", current_rows)
+    comparator_dice = mean_metric("positive_boundary_dice", comparator_rows)
+    current_recall = mean_metric("positive_boundary_recall", current_rows)
+    comparator_recall = mean_metric("positive_boundary_recall", comparator_rows)
+    current_ratio_error = mean_metric("positive_boundary_prediction_to_truth_ratio_abs_error", current_rows)
+    comparator_ratio_error = mean_metric("positive_boundary_prediction_to_truth_ratio_abs_error", comparator_rows)
+    comparator_background = mean_metric("background_false_positive_foreground_fraction", comparator_rows)
+    background_ok = comparator_background is None or comparator_background <= background_limit
+    category_gate_ok = all(
+        str(row.get("category_gate_status") or "") in {"", PROMOTION_ELIGIBLE}
+        and str(row.get("category_gate_failed_count") or "0") in {"", "0", "0.0"}
+        for row in comparator_rows
+    )
+    dice_improved = (
+        current_dice is not None
+        and comparator_dice is not None
+        and comparator_dice > current_dice + material_margin
+    )
+    recall_improved = (
+        current_recall is not None
+        and comparator_recall is not None
+        and comparator_recall > current_recall + material_margin
+    )
+    ratio_improved = (
+        current_ratio_error is not None
+        and comparator_ratio_error is not None
+        and comparator_ratio_error < current_ratio_error - material_margin
+    )
+    selected_row = comparator_rows[0]
+    if background_ok and category_gate_ok and (dice_improved or recall_improved or ratio_improved):
+        return {
+            "row_type": "decision",
+            "resize_decision_status": RESIZE_DECISION_SELECTED_LESS_DOWNSAMPLED,
+            "resize_decision_reason": "less_downsampled_policy_materially_improved_positive_or_boundary_metrics",
+            "selected_run_id": comparator_run_id or "",
+            "selected_crop_size": selected_row.get("crop_size") or "",
+            "selected_image_size": selected_row.get("image_size") or selected_row.get("output_size") or "",
+            "current_positive_boundary_dice": current_dice,
+            "selected_positive_boundary_dice": comparator_dice,
+            "current_positive_boundary_recall": current_recall,
+            "selected_positive_boundary_recall": comparator_recall,
+            "current_positive_boundary_prediction_to_truth_ratio_abs_error": current_ratio_error,
+            "selected_positive_boundary_prediction_to_truth_ratio_abs_error": comparator_ratio_error,
+            "selected_background_false_positive_foreground_fraction": comparator_background,
+        }
+    current_row = current_rows[0]
+    return {
+        "row_type": "decision",
+        "resize_decision_status": RESIZE_DECISION_CURRENT_CLEARED,
+        "resize_decision_reason": (
+            "less_downsampled_policy_failed_category_gates"
+            if not category_gate_ok
+            else "less_downsampled_policy_not_materially_better_than_current_policy"
+        ),
+        "selected_run_id": reference_run_id,
+        "selected_crop_size": current_row.get("crop_size") or "",
+        "selected_image_size": current_row.get("image_size") or current_row.get("output_size") or "",
+        "current_positive_boundary_dice": current_dice,
+        "selected_positive_boundary_dice": comparator_dice,
+        "current_positive_boundary_recall": current_recall,
+        "selected_positive_boundary_recall": comparator_recall,
+        "current_positive_boundary_prediction_to_truth_ratio_abs_error": current_ratio_error,
+        "selected_positive_boundary_prediction_to_truth_ratio_abs_error": comparator_ratio_error,
+        "selected_background_false_positive_foreground_fraction": comparator_background,
+    }
+
+
+def _resize_sensitivity_from_screening(
+    rows: Sequence[dict[str, Any]],
+    *,
+    crop_size: int,
+    output_size: int,
+    summary_path: str | Path | None,
+) -> dict[str, Any] | None:
+    if not rows:
+        return None
+    decision_rows = [row for row in rows if str(row.get("row_type") or "") == "decision"]
+    decision = decision_rows[-1] if decision_rows else resize_screening_decision_from_rows(rows)
+    status = str(decision.get("resize_decision_status") or RESIZE_DECISION_UNRESOLVED)
+    selected_crop_size = _int_or_none(decision.get("selected_crop_size"))
+    selected_output_size = _int_or_none(decision.get("selected_image_size") or decision.get("selected_output_size"))
+    selected_current_policy = selected_crop_size == int(crop_size) and selected_output_size == int(output_size)
+    if status == RESIZE_DECISION_CURRENT_CLEARED:
+        promotion_status = PROMOTION_ELIGIBLE if selected_current_policy else PROMOTION_INSUFFICIENT
+        gate_status = "resize_benefit_cleared_current_policy" if selected_current_policy else "resize_policy_not_selected"
+    elif status == RESIZE_DECISION_SELECTED_LESS_DOWNSAMPLED:
+        promotion_status = PROMOTION_ELIGIBLE if selected_current_policy else PROMOTION_INSUFFICIENT
+        gate_status = "resize_policy_selected" if selected_current_policy else "resize_policy_not_selected"
+    elif status == RESIZE_DECISION_INFEASIBLE:
+        promotion_status = PROMOTION_INSUFFICIENT
+        gate_status = RESIZE_DECISION_INFEASIBLE
+    else:
+        promotion_status = PROMOTION_INSUFFICIENT
+        gate_status = RESIZE_DECISION_UNRESOLVED
+    return {
+        "status": gate_status,
+        "promotion_evidence_status": promotion_status,
+        "required_comparison": None if promotion_status == PROMOTION_ELIGIBLE else "current_policy_vs_no_downsample_or_less_downsample",
+        "infeasibility_reason": (
+            decision.get("resize_decision_reason")
+            if status in {RESIZE_DECISION_INFEASIBLE, RESIZE_DECISION_UNRESOLVED}
+            else None
+        ),
+        "resize_screening_summary_path": str(Path(summary_path).expanduser()) if summary_path else None,
+        "resize_decision_status": status,
+        "resize_decision_reason": decision.get("resize_decision_reason"),
+        "selected_run_id": decision.get("selected_run_id"),
+        "selected_crop_size": selected_crop_size,
+        "selected_output_size": selected_output_size,
+    }
 
 
 def _split_path_for_model(model_path: Path) -> Path:
@@ -353,8 +731,20 @@ def _candidate_audit_rows(
     summary: Dict[str, Any],
     manifest: Sequence[Dict[str, Any]],
     expected_size: int,
+    prediction_threshold: float,
+    threshold_policy: Dict[str, Any],
+    resize_screening_rows: Sequence[dict[str, Any]] | None = None,
+    resize_screening_summary_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     provenance = summary.get("provenance", {})
+    prediction_rows = [
+        {
+            **dict(row),
+            "threshold_policy_status": threshold_policy.get("threshold_policy_status"),
+        }
+        for row in summary.get("prediction_rows", [])
+    ]
+    summary["prediction_rows"] = prediction_rows
     split_integrity = audit_split_overlap(
         train_images=provenance.get("train_images"),
         valid_images=provenance.get("valid_images"),
@@ -377,7 +767,7 @@ def _candidate_audit_rows(
         if resize_ratio != 1.0
         else ""
     )
-    for row in summary.get("prediction_rows", []):
+    for row in prediction_rows:
         resize_rows.append(
             {
                 "family": summary["family"],
@@ -429,7 +819,8 @@ def _candidate_audit_rows(
         training_policy=training_policy,
         evaluation_policy=eval_policy,
     )
-    prediction_shape = audit_prediction_shapes(summary.get("prediction_rows", []))
+    prediction_shape = audit_prediction_shapes(prediction_rows)
+    category_gate = prediction_shape.get("category_gate", {})
     resize_sensitivity = {
         "status": resize_sensitivity_status,
         "promotion_evidence_status": PROMOTION_INSUFFICIENT if resize_ratio != 1.0 else PROMOTION_ELIGIBLE,
@@ -440,6 +831,14 @@ def _candidate_audit_rows(
         ),
         "infeasibility_reason": resize_infeasibility_reason or None,
     }
+    screened_resize_sensitivity = _resize_sensitivity_from_screening(
+        list(resize_screening_rows or []),
+        crop_size=int(training_policy.get("crop_size") or expected_size),
+        output_size=int(training_policy.get("output_size") or expected_size),
+        summary_path=resize_screening_summary_path,
+    )
+    if screened_resize_sensitivity is not None:
+        resize_sensitivity = screened_resize_sensitivity
     artifact_status = classify_artifact_status(
         provenance,
         loadable=bool(summary.get("available")),
@@ -510,7 +909,7 @@ def _candidate_audit_rows(
             mask_path=row.get("mask_path"),
             crop_box=row.get("crop_box"),
             resize_policy=training_policy,
-            threshold=COMPARE_PREDICTION_THRESHOLD,
+            threshold=prediction_threshold,
             prediction_tensor_shape=row.get("prediction_tensor_shape"),
             overlay_path=row.get("review_panel_path"),
             root_causes=root_cause["root_causes"],
@@ -539,6 +938,7 @@ def _candidate_audit_rows(
         "resize_sensitivity": resize_sensitivity,
         "preprocessing_parity": preprocessing_parity,
         "prediction_shape": prediction_shape,
+        "category_gate": category_gate,
         "artifact_status": artifact_status,
         "transfer_base_report": transfer_base_report,
         "root_cause": root_cause,
@@ -731,6 +1131,7 @@ def _predict_crop_with_audit(
     image_crop: np.ndarray,
     truth_shape: tuple[int, int],
     expected_size: int,
+    threshold: float = COMPARE_PREDICTION_THRESHOLD,
 ) -> tuple[np.ndarray, Dict[str, Any]]:
     core = create_prediction_core(expected_size)
     device = next(learn.model.parameters()).device
@@ -749,12 +1150,12 @@ def _predict_crop_with_audit(
         pred_prob = torch.sigmoid(raw_output)
     pred_np = pred_prob.squeeze().detach().cpu().numpy()
     pred_resized = core.resize_prediction_to_match(pred_np, truth_shape)
-    return (pred_resized > COMPARE_PREDICTION_THRESHOLD).astype(np.uint8), {
+    return (pred_resized > float(threshold)).astype(np.uint8), {
         "input_tensor_shape": [int(value) for value in tensor.shape],
         "raw_output_shape": [int(value) for value in raw_output.shape],
         "prediction_probability_shape": [int(value) for value in pred_np.shape],
         "prediction_resized_shape": [int(value) for value in pred_resized.shape],
-        "threshold": float(COMPARE_PREDICTION_THRESHOLD),
+        "threshold": float(threshold),
         "inference_preprocessing": "deterministic_resize_imagenet_normalize",
         "threshold_resize_order": "resize_probability_then_threshold",
     }
@@ -766,6 +1167,7 @@ def _predict_crop(learn: Any, image_crop: np.ndarray, truth_shape: tuple[int, in
         image_crop,
         truth_shape,
         expected_size,
+        threshold=COMPARE_PREDICTION_THRESHOLD,
     )
     return pred
 
@@ -814,6 +1216,7 @@ def _evaluate_runtime(
     manifest: Sequence[Dict[str, Any]],
     asset_dir: Path,
     expected_size: int,
+    prediction_threshold: float = COMPARE_PREDICTION_THRESHOLD,
 ) -> Dict[str, Any]:
     provenance = _merged_provenance(runtime)
     summary: Dict[str, Any] = {
@@ -857,11 +1260,16 @@ def _evaluate_runtime(
             image_crop,
             truth_crop.shape,
             expected_size=expected_size,
+            threshold=prediction_threshold,
         )
         truth_masks.append(truth_crop)
         pred_masks.append(pred_crop)
         metrics = binary_dice_jaccard(truth_crop, pred_crop)
         metrics.update(binary_precision_recall(truth_crop, pred_crop))
+        metrics["pixel_accuracy"] = pixel_accuracy(
+            np.asarray(pred_crop).astype(np.uint8),
+            np.asarray(truth_crop).astype(np.uint8),
+        )
         image_name = str(item.get("image_name") or Path(str(item.get("image_path", ""))).name)
         subject_id = str(item.get("subject_id") or Path(str(item.get("image_path", ""))).parent.name)
         category = str(item.get("category"))
@@ -893,11 +1301,13 @@ def _evaluate_runtime(
                 "prediction_tensor_shape": predict_audit["raw_output_shape"],
                 "prediction_probability_shape": predict_audit["prediction_probability_shape"],
                 "prediction_resized_shape": predict_audit["prediction_resized_shape"],
+                "threshold": predict_audit["threshold"],
                 "threshold_resize_order": predict_audit["threshold_resize_order"],
                 "dice": metrics["dice"],
                 "jaccard": metrics["jaccard"],
                 "precision": metrics["precision"],
                 "recall": metrics["recall"],
+                "pixel_accuracy": metrics["pixel_accuracy"],
                 "review_panel_path": str(asset_path),
             }
         )
@@ -1108,6 +1518,8 @@ def _write_markdown_report(
         resize_sensitivity = summary.get("resize_sensitivity", {})
         provenance = summary.get("provenance", {})
         transfer_base_report = summary.get("transfer_base_report", {})
+        threshold_policy = summary.get("threshold_policy", {})
+        category_gate_status = summary.get("category_gate_status", {})
         lines.extend(
             [
                 f"### {summary['family']}",
@@ -1129,6 +1541,12 @@ def _write_markdown_report(
                 f"- Transfer base fitted counts: `images={transfer_base_report.get('actual_fitted_image_count')}` `masks={transfer_base_report.get('actual_fitted_mask_count')}`",
                 f"- Transfer base resize policy: `{json.dumps(transfer_base_report.get('resize_policy'), sort_keys=True) if transfer_base_report.get('resize_policy') is not None else None}`",
                 f"- Resize sensitivity status: `{resize_sensitivity.get('status')}`",
+                f"- Resize screening summary: `{resize_sensitivity.get('resize_screening_summary_path')}`",
+                f"- Resize decision status: `{resize_sensitivity.get('resize_decision_status')}`",
+                f"- Resize decision reason: `{resize_sensitivity.get('resize_decision_reason')}`",
+                f"- Selected resize run: `{resize_sensitivity.get('selected_run_id')}`",
+                f"- Selected resize policy: `crop_size={resize_sensitivity.get('selected_crop_size')}` "
+                f"`output_size={resize_sensitivity.get('selected_output_size')}`",
                 f"- Negative crop supervision status: `{provenance.get('negative_crop_supervision_status', 'absent')}`",
                 f"- Negative crop manifest: `{provenance.get('negative_crop_manifest_path')}`",
                 f"- Negative crop counts: `total={provenance.get('negative_crop_count', 0)}` "
@@ -1136,6 +1554,18 @@ def _write_markdown_report(
                 f"`curated={provenance.get('curated_negative_crop_count', 0)}`",
                 f"- Negative crop sampler weight: `{provenance.get('negative_crop_sampler_weight', 0.0)}`",
                 f"- Augmentation policy: `{json.dumps(provenance.get('augmentation_policy', {}), sort_keys=True)}`",
+                f"- Threshold policy status: `{threshold_policy.get('threshold_policy_status')}`",
+                f"- Threshold: `{threshold_policy.get('threshold')}`",
+                f"- Threshold rationale: `{threshold_policy.get('threshold_rationale')}`",
+                f"- Threshold selection rule: `{threshold_policy.get('threshold_selection_rule')}`",
+                f"- Threshold promotion-ready: `{threshold_policy.get('threshold_is_promotion_ready')}`",
+                f"- Threshold grid: `{threshold_policy.get('threshold_grid')}`",
+                f"- Overcoverage audit: `{threshold_policy.get('overcoverage_audit_summary_path')}`",
+                f"- Background false-positive foreground fraction at threshold: `{threshold_policy.get('background_false_positive_foreground_fraction')}`",
+                f"- Positive/boundary recall at threshold: `{threshold_policy.get('positive_boundary_recall')}`",
+                f"- Category gate status: `{category_gate_status.get('promotion_evidence_status')}`",
+                f"- Category gate reasons: `{', '.join(category_gate_status.get('reasons', []))}`",
+                f"- Category gates failed: `{category_gate_status.get('failed_gate_count')}` of `{category_gate_status.get('gate_count')}`",
                 f"- Root causes: `{', '.join(root_cause.get('root_causes', []))}`",
                 f"- Remediation path: `{root_cause.get('remediation_path')}`",
                 (
@@ -1170,6 +1600,8 @@ def _write_html_report(
     for summary in candidate_summaries:
         metrics = summary.get("metrics", {})
         prediction_rows = summary.get("prediction_rows", [])
+        threshold_policy = summary.get("threshold_policy", {})
+        category_gate_status = summary.get("category_gate_status", {})
         gallery = []
         for row in prediction_rows:
             image_label = html.escape(str(row.get("image_name") or Path(str(row.get("image_path", ""))).name))
@@ -1186,6 +1618,8 @@ def _write_html_report(
                 f"dice={float(row['dice']):.3f} | jaccard={float(row['jaccard']):.3f} | "
                 f"precision={float(row['precision']):.3f} | recall={float(row['recall']):.3f}<br>"
                 f"truth_fg={float(row['truth_foreground_fraction']):.3f} | pred_fg={float(row['prediction_foreground_fraction']):.3f}<br>"
+                f"threshold={float(row.get('threshold', threshold_policy.get('threshold') or COMPARE_PREDICTION_THRESHOLD)):.3f} | "
+                f"threshold policy={html.escape(str(threshold_policy.get('threshold_policy_status')))}<br>"
                 "panel order: raw | truth overlay | prediction overlay"
                 "</figcaption>"
                 "</figure>"
@@ -1229,8 +1663,26 @@ def _write_html_report(
             f"fitted_masks={html.escape(str(transfer_base_report.get('actual_fitted_mask_count')))} "
             f"resize={html.escape(str(transfer_base_report.get('resize_policy')))}</p>"
             f"<p class='artifact'><strong>Resize sensitivity:</strong> {html.escape(str(resize_sensitivity.get('status')))}</p>"
+            f"<p class='artifact'><strong>Resize decision:</strong> {html.escape(str(resize_sensitivity.get('resize_decision_status')))} "
+            f"reason={html.escape(str(resize_sensitivity.get('resize_decision_reason')))} "
+            f"selected_run={html.escape(str(resize_sensitivity.get('selected_run_id')))} "
+            f"selected_crop={html.escape(str(resize_sensitivity.get('selected_crop_size')))} "
+            f"selected_output={html.escape(str(resize_sensitivity.get('selected_output_size')))} "
+            f"summary={html.escape(str(resize_sensitivity.get('resize_screening_summary_path')))}</p>"
             f"<p class='artifact'><strong>Root causes:</strong> {html.escape(', '.join(root_cause.get('root_causes', [])))} "
             f"<strong>Remediation:</strong> {html.escape(str(root_cause.get('remediation_path')))}</p>"
+            f"<p class='artifact'><strong>Threshold policy:</strong> {html.escape(str(threshold_policy.get('threshold_policy_status')))} "
+            f"threshold={html.escape(str(threshold_policy.get('threshold')))} "
+            f"promotion_ready={html.escape(str(threshold_policy.get('threshold_is_promotion_ready')))} "
+            f"rationale={html.escape(str(threshold_policy.get('threshold_rationale')))} "
+            f"rule={html.escape(str(threshold_policy.get('threshold_selection_rule')))} "
+            f"audit={html.escape(str(threshold_policy.get('overcoverage_audit_summary_path')))} "
+            f"background_fp={html.escape(str(threshold_policy.get('background_false_positive_foreground_fraction')))} "
+            f"positive_boundary_recall={html.escape(str(threshold_policy.get('positive_boundary_recall')))}</p>"
+            f"<p class='artifact'><strong>Category gates:</strong> {html.escape(str(category_gate_status.get('promotion_evidence_status')))} "
+            f"failed={html.escape(str(category_gate_status.get('failed_gate_count')))} "
+            f"of={html.escape(str(category_gate_status.get('gate_count')))} "
+            f"reasons={html.escape(', '.join(category_gate_status.get('reasons', [])))}</p>"
             "<div class='gate-box'>"
             "<strong>Gate reasons</strong>"
             f"<ul>{reason_items}</ul>"
@@ -1300,6 +1752,17 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
     run_id = str(args.run_id or _generated_run_id(args.seed))
     output_root = Path(args.output_dir).expanduser() / run_id
     output_root.mkdir(parents=True, exist_ok=True)
+    overcoverage_audit = _read_overcoverage_audit(getattr(args, "overcoverage_audit_dir", None))
+    resize_screening_summary_path = getattr(args, "resize_screening_summary", None)
+    resize_screening_rows = _read_resize_screening_summary(resize_screening_summary_path)
+    explicit_threshold = getattr(args, "prediction_threshold", None) is not None
+    requested_threshold = float(args.prediction_threshold) if explicit_threshold else None
+    threshold_policy = _threshold_policy_from_audit(
+        overcoverage_audit,
+        selected_threshold=requested_threshold,
+        explicit_threshold=explicit_threshold,
+    )
+    prediction_threshold = float(threshold_policy["threshold"])
     model_root = Path(args.model_dir).expanduser()
     model_root.mkdir(parents=True, exist_ok=True)
     asset_dir = output_root / "review_assets"
@@ -1393,8 +1856,20 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
     _write_manifest(manifest, manifest_path)
 
     candidate_summaries = [
-        _evaluate_runtime(transfer_runtime, manifest, asset_dir, expected_size=args.image_size),
-        _evaluate_runtime(scratch_runtime, manifest, asset_dir, expected_size=args.image_size),
+        _evaluate_runtime(
+            transfer_runtime,
+            manifest,
+            asset_dir,
+            expected_size=args.image_size,
+            prediction_threshold=prediction_threshold,
+        ),
+        _evaluate_runtime(
+            scratch_runtime,
+            manifest,
+            asset_dir,
+            expected_size=args.image_size,
+            prediction_threshold=prediction_threshold,
+        ),
     ]
     candidate_audits: Dict[str, Dict[str, Any]] = {}
     for summary in candidate_summaries:
@@ -1402,6 +1877,10 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
             summary=summary,
             manifest=manifest,
             expected_size=args.image_size,
+            prediction_threshold=prediction_threshold,
+            threshold_policy=threshold_policy,
+            resize_screening_rows=resize_screening_rows,
+            resize_screening_summary_path=resize_screening_summary_path,
         )
         candidate_audits[summary["family"]] = audit
         summary["runtime_use_status"] = audit["artifact_status"]["runtime_use_status"]
@@ -1426,12 +1905,20 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
             summary["promotion_evidence_status"] = PROMOTION_ELIGIBLE
         summary["split_integrity"] = audit["split_integrity"]
         summary["prediction_shape_audit"] = audit["prediction_shape"]
+        summary["category_gate_audit"] = audit["category_gate"]
+        summary["category_gate_status"] = audit["category_gate"].get("family_status", {}).get(
+            summary["family"],
+            {"promotion_evidence_status": PROMOTION_ELIGIBLE, "reasons": [], "failed_gate_count": 0, "gate_count": 0},
+        )
         summary["resize_policy_parity"] = audit["resize_policy_parity"]
         summary["resize_sensitivity"] = audit["resize_sensitivity"]
         summary["preprocessing_parity"] = audit["preprocessing_parity"]
         summary["transfer_base_report"] = audit["transfer_base_report"]
         summary["root_cause"] = audit["root_cause"]
+        summary["threshold_policy"] = dict(threshold_policy)
         extra_gate_reasons = []
+        if not threshold_policy.get("threshold_is_promotion_ready"):
+            extra_gate_reasons.append(str(threshold_policy["threshold_policy_status"]))
         if audit["split_integrity"]["promotion_evidence_status"] != PROMOTION_ELIGIBLE:
             extra_gate_reasons.append(audit["split_integrity"]["reason"])
         for status in audit["prediction_shape"]["family_status"].values():
@@ -1444,6 +1931,8 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
             summary.setdefault("gate", {}).setdefault("reasons", [])
             summary["gate"]["reasons"] = sorted(set(summary["gate"]["reasons"] + extra_gate_reasons))
             summary["gate"]["blocked"] = True
+            if not threshold_policy.get("threshold_is_promotion_ready"):
+                summary["promotion_evidence_status"] = PROMOTION_INSUFFICIENT
 
     compatibility_summary = None
     if args.compat_model_path:
@@ -1461,6 +1950,7 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
             manifest,
             asset_dir,
             expected_size=args.image_size,
+            prediction_threshold=prediction_threshold,
         )
 
     decision = determine_promotion_decision(
@@ -1493,6 +1983,27 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
                 "curated_negative_crop_count": summary.get("provenance", {}).get("curated_negative_crop_count"),
                 "negative_crop_sampler_weight": summary.get("provenance", {}).get("negative_crop_sampler_weight"),
                 "augmentation_policy": json.dumps(summary.get("provenance", {}).get("augmentation_policy", {}), sort_keys=True),
+                "threshold_policy_status": summary.get("threshold_policy", {}).get("threshold_policy_status"),
+                "threshold": summary.get("threshold_policy", {}).get("threshold"),
+                "threshold_rationale": summary.get("threshold_policy", {}).get("threshold_rationale"),
+                "threshold_selection_rule": summary.get("threshold_policy", {}).get("threshold_selection_rule"),
+                "threshold_is_promotion_ready": summary.get("threshold_policy", {}).get("threshold_is_promotion_ready"),
+                "threshold_grid": json.dumps(summary.get("threshold_policy", {}).get("threshold_grid", [])),
+                "overcoverage_audit_dir": summary.get("threshold_policy", {}).get("overcoverage_audit_dir"),
+                "overcoverage_audit_summary_path": summary.get("threshold_policy", {}).get("overcoverage_audit_summary_path"),
+                "background_false_positive_foreground_fraction": summary.get("threshold_policy", {}).get("background_false_positive_foreground_fraction"),
+                "positive_boundary_recall": summary.get("threshold_policy", {}).get("positive_boundary_recall"),
+                "category_gate_status": summary.get("category_gate_status", {}).get("promotion_evidence_status"),
+                "category_gate_reasons": "|".join(summary.get("category_gate_status", {}).get("reasons", [])),
+                "category_gate_failed_count": summary.get("category_gate_status", {}).get("failed_gate_count"),
+                "category_gate_count": summary.get("category_gate_status", {}).get("gate_count"),
+                "resize_sensitivity_status": summary.get("resize_sensitivity", {}).get("status"),
+                "resize_screening_summary_path": summary.get("resize_sensitivity", {}).get("resize_screening_summary_path"),
+                "resize_decision_status": summary.get("resize_sensitivity", {}).get("resize_decision_status"),
+                "resize_decision_reason": summary.get("resize_sensitivity", {}).get("resize_decision_reason"),
+                "selected_resize_run_id": summary.get("resize_sensitivity", {}).get("selected_run_id"),
+                "selected_resize_crop_size": summary.get("resize_sensitivity", {}).get("selected_crop_size"),
+                "selected_resize_output_size": summary.get("resize_sensitivity", {}).get("selected_output_size"),
                 "dice": summary.get("metrics", {}).get("dice"),
                 "jaccard": summary.get("metrics", {}).get("jaccard"),
                 "precision": summary.get("metrics", {}).get("precision"),
@@ -1510,6 +2021,11 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
         row
         for audit in candidate_audits.values()
         for row in audit["prediction_shape"].get("rows", [])
+    ]
+    category_gate_rows = [
+        row
+        for audit in candidate_audits.values()
+        for row in audit.get("category_gate", {}).get("rows", [])
     ]
     resize_policy_rows = [
         row
@@ -1531,8 +2047,13 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
         "manifest_audit": manifest_audit,
         "candidate_summaries": candidate_summaries,
         "candidate_audits": candidate_audits,
+        "threshold_policy": threshold_policy,
+        "overcoverage_audit": overcoverage_audit,
+        "resize_screening_summary_path": str(Path(resize_screening_summary_path).expanduser()) if resize_screening_summary_path else None,
+        "resize_screening_summary_rows": resize_screening_rows,
         "metric_by_category_path": str(output_root / "metric_by_category.csv"),
         "prediction_shape_audit_path": str(output_root / "prediction_shape_audit.csv"),
+        "category_gate_audit_path": str(output_root / "category_gate_audit.csv"),
         "resize_policy_audit_path": str(output_root / "resize_policy_audit.csv"),
         "failure_reproduction_audit_path": str(output_root / "failure_reproduction_audit.csv"),
         "documentation_claim_audit_path": str(output_root / "documentation_claim_audit.md"),
@@ -1545,6 +2066,7 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
     _write_csv(prediction_rows, output_root / "candidate_predictions.csv")
     write_csv_rows(metric_by_category_rows, output_root / "metric_by_category.csv")
     write_csv_rows(prediction_shape_rows, output_root / "prediction_shape_audit.csv")
+    write_csv_rows(category_gate_rows, output_root / "category_gate_audit.csv")
     write_csv_rows(resize_policy_rows, output_root / "resize_policy_audit.csv")
     write_csv_rows(failure_reproduction_rows, output_root / "failure_reproduction_audit.csv")
     docs_to_audit: Dict[str, str] = {}
@@ -1615,7 +2137,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--loss", default="", help="Optional loss override forwarded to the training CLI")
     parser.add_argument("--negative-crop-manifest", help="Validated negative/background crop manifest forwarded to fresh candidate training")
     parser.add_argument("--negative-crop-sampler-weight", type=float, default=0.0, help="Deterministic negative/background crop manifest sampling weight")
-    parser.add_argument("--augmentation-variant", default="fastai_default", choices=["fastai_default", "spatial_only", "current_plus_lighting"], help="Recorded augmentation policy variant for candidate provenance")
+    parser.add_argument("--augmentation-variant", default="fastai_default", choices=["fastai_default", "spatial_only", "no_aug"], help="Recorded augmentation policy variant for candidate provenance")
+    parser.add_argument("--overcoverage-audit-dir", help="Optional glomeruli-overcoverage-audit output directory containing audit_summary.json and threshold_sweep.csv")
+    parser.add_argument("--resize-screening-summary", help="Optional resize_policy_screening_summary.csv used to clear, select, or retain resize_benefit_unproven")
+    parser.add_argument(
+        "--prediction-threshold",
+        type=float,
+        default=None,
+        help=(
+            "Foreground probability threshold for deterministic binary masks. "
+            "When --overcoverage-audit-dir is supplied and this is omitted, "
+            "the comparison derives a threshold from the audit sweep; without "
+            "an audit, omission uses the legacy unverified 0.01 threshold."
+        ),
+    )
     parser.add_argument("--examples-per-category", type=int, default=DEFAULT_EXAMPLES_PER_CATEGORY, help="Deterministic manifest examples per category")
     parser.add_argument("--transfer-model-name", default="glomeruli_transfer_candidate", help="Transfer candidate model name prefix")
     parser.add_argument("--scratch-model-name", default="glomeruli_scratch_candidate", help="Scratch candidate model name prefix")

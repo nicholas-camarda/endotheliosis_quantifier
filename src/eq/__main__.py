@@ -2,6 +2,7 @@
 """Main CLI entry point for the endotheliosis quantifier package."""
 
 import argparse
+import json
 import logging
 import os
 import sys
@@ -109,6 +110,13 @@ def _load_organize_lucchi_dataset():
     from eq.data_management.organize_lucchi_dataset import organize_lucchi_dataset
 
     return organize_lucchi_dataset
+
+
+def _load_glomeruli_overcoverage_audit():
+    """Import the glomeruli overcoverage audit runner lazily."""
+    from eq.training.glomeruli_overcoverage_audit import run_overcoverage_audit
+
+    return run_overcoverage_audit
 
 
 def _load_visualizers():
@@ -629,6 +637,14 @@ def backup_project_data_command(args):
     print(f"  manifest.meta: {artifact.manifest_meta}")
 
 
+@log_function_call
+def glomeruli_overcoverage_audit_command(args):
+    """Run deterministic probability and threshold audit for glomeruli candidates."""
+    run_overcoverage_audit = _load_glomeruli_overcoverage_audit()
+    summary = run_overcoverage_audit(args)
+    print(json.dumps(summary, indent=2, sort_keys=True))
+
+
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -750,6 +766,28 @@ Examples:
         help='Print commands without launching training or analysis.',
     )
     run_config_parser.set_defaults(func=run_config_command)
+
+    overcoverage_parser = subparsers.add_parser(
+        'glomeruli-overcoverage-audit',
+        help='Audit glomeruli overcoverage across probability thresholds before retraining',
+        description='Run deterministic no-training probability and threshold audit for glomeruli transfer and scratch candidates.',
+    )
+    overcoverage_parser.add_argument('--run-id', required=True, help='Run directory name for this audit')
+    overcoverage_parser.add_argument('--transfer-model-path', required=True, help='Current-namespace transfer candidate artifact')
+    overcoverage_parser.add_argument('--scratch-model-path', required=True, help='Current-namespace scratch/no-mito-base candidate artifact')
+    overcoverage_parser.add_argument('--data-dir', required=True, help='Supported glomeruli raw-data root or manifest-backed cohorts root')
+    overcoverage_parser.add_argument('--output-dir', help='Optional output root; run id is appended when supplied')
+    overcoverage_parser.add_argument(
+        '--thresholds',
+        default='0.01,0.05,0.10,0.25,0.50',
+        help='Comma-separated foreground probability threshold grid',
+    )
+    overcoverage_parser.add_argument('--image-size', type=int, default=256, help='Model input size')
+    overcoverage_parser.add_argument('--crop-size', type=int, default=512, help='Deterministic validation crop size')
+    overcoverage_parser.add_argument('--examples-per-category', type=int, default=2, help='Examples per background/boundary/positive category')
+    overcoverage_parser.add_argument('--device', choices=['mps', 'cuda', 'cpu'], default='cpu', help='Device label recorded in audit provenance')
+    overcoverage_parser.add_argument('--negative-crop-manifest', help='Optional validated negative/background crop manifest path')
+    overcoverage_parser.set_defaults(func=glomeruli_overcoverage_audit_command)
 
     dox_mask_quality_parser = subparsers.add_parser(
         'dox-mask-quality-audit',

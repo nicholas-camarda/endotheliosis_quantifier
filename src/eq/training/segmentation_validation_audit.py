@@ -669,25 +669,46 @@ def audit_prediction_shapes(
     *,
     background_false_positive_limit: float = 0.02,
     positive_overcoverage_ratio_limit: float = 1.5,
+    positive_undercoverage_ratio_limit: float = 0.5,
     minimum_category_dice: float = 0.3,
+    minimum_category_jaccard: float = 0.15,
+    minimum_positive_precision: float = 0.1,
+    minimum_positive_recall: float = 0.5,
 ) -> Dict[str, Any]:
     """Detect broad oversegmentation and category-specific failure."""
     audit_rows: list[Dict[str, Any]] = []
     reasons_by_family: Dict[str, set[str]] = defaultdict(set)
+    category_gate = audit_category_gates(
+        rows,
+        background_false_positive_limit=background_false_positive_limit,
+        positive_overcoverage_ratio_limit=positive_overcoverage_ratio_limit,
+        positive_undercoverage_ratio_limit=positive_undercoverage_ratio_limit,
+        minimum_category_dice=minimum_category_dice,
+        minimum_category_jaccard=minimum_category_jaccard,
+        minimum_positive_precision=minimum_positive_precision,
+        minimum_positive_recall=minimum_positive_recall,
+    )
+    gate_reasons_by_key: Dict[tuple[str, str, str], set[str]] = defaultdict(set)
+    def _manifest_key(value: Any) -> str:
+        return "" if value is None else str(value)
+
+    for gate_row in category_gate["rows"]:
+        if str(gate_row.get("gate_passed")) == "False" or gate_row.get("gate_passed") is False:
+            key = (
+                str(gate_row.get("family", "unknown")),
+                str(gate_row.get("category", "unknown")),
+                _manifest_key(gate_row.get("manifest_index")),
+            )
+            gate_reasons_by_key[key].add(str(gate_row.get("failure_reason") or gate_row.get("gate_name")))
     for row in rows:
         family = str(row.get("family", "unknown"))
         category = str(row.get("category", "unknown"))
+        manifest_index = _manifest_key(row.get("manifest_index"))
         truth_fg = float(row.get("truth_foreground_fraction", 0.0) or 0.0)
         pred_fg = float(row.get("prediction_foreground_fraction", 0.0) or 0.0)
-        dice = float(row.get("dice", 0.0) or 0.0)
         overcoverage_ratio = None if truth_fg <= 0 else float(pred_fg / truth_fg)
-        reasons: list[str] = []
-        if category == "background" and pred_fg > background_false_positive_limit:
-            reasons.append("background_false_positive_foreground_excess")
-        if category in {"positive", "boundary"} and overcoverage_ratio is not None:
-            if overcoverage_ratio > positive_overcoverage_ratio_limit:
-                reasons.append("positive_or_boundary_overcoverage")
-        if dice < minimum_category_dice and category in {"background", "boundary", "positive"}:
+        reasons = sorted(gate_reasons_by_key.get((family, category, manifest_index), set()))
+        if reasons:
             reasons.append("category_metric_failure")
         for reason in reasons:
             reasons_by_family[family].add(reason)
@@ -699,15 +720,200 @@ def audit_prediction_shapes(
                 "shape_gate_reasons": "|".join(reasons),
             }
         )
+    families = sorted({str(row.get("family", "unknown")) for row in rows} | set(reasons_by_family))
     family_status = {
         family: {
-            "promotion_evidence_status": PROMOTION_NOT_ELIGIBLE if reasons else PROMOTION_ELIGIBLE,
-            "reasons": sorted(reasons),
+            "promotion_evidence_status": PROMOTION_NOT_ELIGIBLE if reasons_by_family.get(family) else PROMOTION_ELIGIBLE,
+            "reasons": sorted(reasons_by_family.get(family, set())),
         }
-        for family, reasons in sorted(reasons_by_family.items())
+        for family in families
     }
     return {
         "rows": audit_rows,
+        "family_status": family_status,
+        "blocked": any(status["reasons"] for status in family_status.values()),
+        "category_gate": category_gate,
+    }
+
+
+def audit_category_gates(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    background_false_positive_limit: float = 0.02,
+    minimum_background_pixel_accuracy: float = 0.98,
+    positive_overcoverage_ratio_limit: float = 1.5,
+    positive_undercoverage_ratio_limit: float = 0.5,
+    minimum_category_dice: float = 0.3,
+    minimum_category_jaccard: float = 0.15,
+    minimum_positive_precision: float = 0.1,
+    minimum_positive_recall: float = 0.5,
+) -> Dict[str, Any]:
+    """Evaluate category-specific gates without using empty-background Dice as the background gate."""
+    gate_rows: list[Dict[str, Any]] = []
+    reasons_by_family: Dict[str, set[str]] = defaultdict(set)
+    categories_by_family: Dict[str, set[str]] = defaultdict(set)
+
+    def add_gate(
+        *,
+        row: Mapping[str, Any],
+        gate_name: str,
+        metric_name: str,
+        observed_value: float | None,
+        required_comparator: str,
+        required_value: float,
+        rationale: str,
+        failure_reason: str,
+    ) -> None:
+        family = str(row.get("family", "unknown"))
+        category = str(row.get("category", "unknown"))
+        categories_by_family[family].add(category)
+        if observed_value is None:
+            passed = False
+        elif required_comparator == "<=":
+            passed = observed_value <= required_value
+        elif required_comparator == ">=":
+            passed = observed_value >= required_value
+        else:
+            raise ValueError(f"Unsupported category gate comparator: {required_comparator}")
+        if not passed:
+            reasons_by_family[family].add(failure_reason)
+        gate_rows.append(
+            {
+                "family": family,
+                "category": category,
+                "manifest_index": row.get("manifest_index"),
+                "cohort_id": row.get("cohort_id"),
+                "lane_assignment": row.get("lane_assignment"),
+                "image_path": row.get("image_path"),
+                "mask_path": row.get("mask_path"),
+                "crop_box": row.get("crop_box"),
+                "gate_name": gate_name,
+                "metric_name": metric_name,
+                "observed_value": observed_value,
+                "required_comparator": required_comparator,
+                "required_value": required_value,
+                "gate_passed": passed,
+                "threshold": row.get("threshold"),
+                "threshold_policy_status": row.get("threshold_policy_status"),
+                "rationale": rationale,
+                "failure_reason": "" if passed else failure_reason,
+            }
+        )
+
+    for row in rows:
+        category = str(row.get("category", "unknown"))
+        truth_fg = float(row.get("truth_foreground_fraction", 0.0) or 0.0)
+        pred_fg = float(row.get("prediction_foreground_fraction", 0.0) or 0.0)
+        pixel_accuracy = row.get("pixel_accuracy")
+        pixel_accuracy_value = None if pixel_accuracy in (None, "") else float(pixel_accuracy)
+        if category == "background":
+            add_gate(
+                row=row,
+                gate_name="background_false_positive_control",
+                metric_name="prediction_foreground_fraction",
+                observed_value=pred_fg,
+                required_comparator="<=",
+                required_value=background_false_positive_limit,
+                rationale="True-background crops are gated by predicted foreground fraction, not empty-mask Dice/Jaccard.",
+                failure_reason="background_false_positive_foreground_excess",
+            )
+            add_gate(
+                row=row,
+                gate_name="background_pixel_correctness",
+                metric_name="pixel_accuracy",
+                observed_value=pixel_accuracy_value,
+                required_comparator=">=",
+                required_value=minimum_background_pixel_accuracy,
+                rationale="Background crops should remain mostly background at the selected threshold.",
+                failure_reason="background_pixel_accuracy_low",
+            )
+            continue
+
+        if category not in {"positive", "boundary"}:
+            continue
+
+        dice = float(row.get("dice", 0.0) or 0.0)
+        jaccard = float(row.get("jaccard", 0.0) or 0.0)
+        precision = float(row.get("precision", 0.0) or 0.0)
+        recall = float(row.get("recall", 0.0) or 0.0)
+        ratio = None if truth_fg <= 0 else float(pred_fg / truth_fg)
+        add_gate(
+            row=row,
+            gate_name="foreground_overlap_dice",
+            metric_name="dice",
+            observed_value=dice,
+            required_comparator=">=",
+            required_value=minimum_category_dice,
+            rationale="Foreground-containing crops require minimum overlap.",
+            failure_reason="low_foreground_dice",
+        )
+        add_gate(
+            row=row,
+            gate_name="foreground_overlap_jaccard",
+            metric_name="jaccard",
+            observed_value=jaccard,
+            required_comparator=">=",
+            required_value=minimum_category_jaccard,
+            rationale="Foreground-containing crops require minimum overlap.",
+            failure_reason="low_foreground_jaccard",
+        )
+        add_gate(
+            row=row,
+            gate_name="foreground_precision",
+            metric_name="precision",
+            observed_value=precision,
+            required_comparator=">=",
+            required_value=minimum_positive_precision,
+            rationale="Foreground-containing crops should not be dominated by false-positive foreground.",
+            failure_reason="low_foreground_precision",
+        )
+        add_gate(
+            row=row,
+            gate_name="foreground_recall",
+            metric_name="recall",
+            observed_value=recall,
+            required_comparator=">=",
+            required_value=minimum_positive_recall,
+            rationale="Foreground-containing crops should preserve most annotated foreground.",
+            failure_reason="low_foreground_recall",
+        )
+        add_gate(
+            row=row,
+            gate_name="foreground_size_overcoverage",
+            metric_name="prediction_to_truth_foreground_ratio",
+            observed_value=ratio,
+            required_comparator="<=",
+            required_value=positive_overcoverage_ratio_limit,
+            rationale="Foreground prediction area should not substantially exceed annotated area.",
+            failure_reason="positive_or_boundary_overcoverage",
+        )
+        add_gate(
+            row=row,
+            gate_name="foreground_size_undercoverage",
+            metric_name="prediction_to_truth_foreground_ratio",
+            observed_value=ratio,
+            required_comparator=">=",
+            required_value=positive_undercoverage_ratio_limit,
+            rationale="Foreground prediction area should not substantially undershoot annotated area.",
+            failure_reason="positive_or_boundary_undercoverage",
+        )
+
+    family_status = {
+        family: {
+            "promotion_evidence_status": PROMOTION_NOT_ELIGIBLE if reasons_by_family.get(family) else PROMOTION_ELIGIBLE,
+            "reasons": sorted(reasons_by_family.get(family, set())),
+            "categories_evaluated": sorted(categories_by_family.get(family, set())),
+            "failed_gate_count": sum(
+                1
+                for row in gate_rows
+                if row["family"] == family and row["gate_passed"] is False
+            ),
+            "gate_count": sum(1 for row in gate_rows if row["family"] == family),
+        }
+        for family in sorted(categories_by_family)
+    }
+    return {
+        "rows": gate_rows,
         "family_status": family_status,
         "blocked": any(status["reasons"] for status in family_status.values()),
     }
