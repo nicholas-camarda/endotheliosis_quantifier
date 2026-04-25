@@ -24,6 +24,7 @@ class _FakeDls:
     def __init__(self, items):
         self.train_ds = _FakeDataset(items[:4])
         self.valid_ds = _FakeDataset(items[4:])
+        self.device = "cpu"
 
 
 class _FakeRecorder:
@@ -129,6 +130,7 @@ def test_mitochondria_training_entrypoint_smoke_uses_dynamic_full_image_root(tmp
     assert metadata["model_path"] == str(model_path)
     assert metadata["encoder_initialization"] == "imagenet_pretrained_resnet34"
     assert metadata["candidate_family"] == "mitochondria_no_domain_base"
+    assert metadata["training_device"] == "cpu"
     assert metadata["package_versions"]["torch"]
     assert "torchvision" in metadata["package_versions"]
     assert "fastai" in metadata["package_versions"]
@@ -151,6 +153,22 @@ def test_glomeruli_transfer_training_smoke_validates_full_image_root(tmp_path, m
     _make_full_image_root(data_root)
     base_model = tmp_path / "mito.pkl"
     base_model.write_text("fake base model")
+    (tmp_path / "mito_run_metadata.json").write_text(
+        json.dumps(
+            {
+                "training_mode": "dynamic_full_image_patching",
+                "artifact_status": "supported_runtime",
+                "data_root": str(tmp_path / "mitochondria_data" / "training"),
+                "model_path": str(base_model),
+                "command": "unit test",
+                "code": {"commit": "test"},
+                "package_versions": {"torch": "test"},
+                "mitochondria_training_scope": "all_available_pretraining",
+                "mitochondria_inference_claim_status": "not_applicable_for_inference_claim",
+            }
+        ),
+        encoding="utf-8",
+    )
     output_root = tmp_path / "models"
     seen = {}
 
@@ -189,6 +207,7 @@ def test_glomeruli_transfer_training_smoke_validates_full_image_root(tmp_path, m
     assert metadata["training_mode"] == "dynamic_full_image_patching"
     assert metadata["data_root"] == str(data_root)
     assert metadata["base_model_path"] == str(base_model)
+    assert metadata["training_device"] == "cpu"
     assert metadata["package_versions"]["torch"]
     assert "model_path" in metadata
 
@@ -377,6 +396,7 @@ def test_glomeruli_scratch_training_preserves_requested_crop_size(tmp_path, monk
     assert metadata["invocation"]["output_size"] == 64
     assert metadata["encoder_initialization"] == "imagenet_pretrained_resnet34"
     assert metadata["candidate_family"] == "no_mitochondria_base"
+    assert metadata["training_device"] == "cpu"
 
 
 def _make_static_patch_root(root: Path) -> None:

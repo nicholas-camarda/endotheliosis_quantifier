@@ -24,10 +24,11 @@ The current glomeruli segmentation evidence is not rigorous enough to support RE
 
 ## Impact
 
-- Affected CLI/config surfaces: no new user-facing CLI or YAML config; current relevant surfaces include `configs/segmentation_fixedloader_full_retrain.yaml`, `configs/glomeruli_finetuning_config.yaml`, and `eq.training.compare_glomeruli_candidates`.
+- Affected CLI/config surfaces: no new user-facing CLI or YAML config; current relevant surfaces include `configs/full_segmentation_retrain.yaml`, `configs/glomeruli_finetuning_config.yaml`, and `eq.training.compare_glomeruli_candidates`.
 - Affected modules: `src/eq/data_management/datablock_loader.py`, `src/eq/training/train_mitochondria.py`, `src/eq/training/train_glomeruli.py`, `src/eq/training/transfer_learning.py`, `src/eq/training/compare_glomeruli_candidates.py`, `src/eq/training/promotion_gates.py`, and `src/eq/training/segmentation_validation_audit.py`.
 - Affected tests: new or updated tests for split-overlap detection, deterministic manifest source restriction, DataBlock crop-distribution audit, augmentation alignment, preprocessing parity, prediction-shape gates, report schema generation, README/docs claim gating, and optional local runtime artifact checks.
 - Affected artifacts: model sidecar metadata, split manifests, promotion reports, review panels, pytest-generated audit reports under test temp directories, `candidate_summary.csv`, `candidate_predictions.csv`, and docs that summarize current segmentation performance.
+- Audit record: `audit-results.md` is the durable decision log for audit findings, validation evidence, production decisions, and remaining blockers.
 
 ## Explicit Decisions
 
@@ -37,6 +38,7 @@ The current glomeruli segmentation evidence is not rigorous enough to support RE
 - The optional real-runtime integration test file is `tests/integration/test_glomeruli_segmentation_validation_audit_runtime.py`; it is run deliberately when local runtime artifacts or README-facing claims need verification.
 - Pytest-generated audit reports are written under pytest-managed temporary directories, not under a stable runtime output root, unless candidate comparison itself is producing promotion artifacts.
 - Candidate-comparison promotion reports remain the user-facing artifact surface for actual model evidence.
+- Audit conclusions and production-level decisions must be recorded in `audit-results.md` or the capability specs before they are considered settled.
 - Promotion-facing README or onboarding claims must cite only held-out promotion evidence that clears the hardened gates; compatibility-only, research-use-only, partly in-sample, not-promotion-eligible, or audit-failed reports may be discussed only as limitations or internal evidence.
 - Mitochondria base artifacts are audited as transfer-learning inputs. If the physical mitochondria `testing/` split is included in base-model training, mitochondria held-out performance claims become ineligible, but the base may still be eligible as representation pretraining for glomeruli transfer if the glomeruli promotion evidence is held out and audit-passing.
 

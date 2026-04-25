@@ -138,7 +138,7 @@ def test_current_docs_and_configs_use_operation_specific_output_roots():
         Path("README.md"),
         Path("docs/OUTPUT_STRUCTURE.md"),
         Path("docs/ONBOARDING_GUIDE.md"),
-        Path("configs/segmentation_fixedloader_full_retrain.yaml"),
+        Path("configs/full_segmentation_retrain.yaml"),
         Path("configs/glomeruli_finetuning_config.yaml"),
         Path("configs/mito_pretraining_config.yaml"),
         Path("openspec/specs/scored-only-quantification-cohort/spec.md"),

@@ -2,7 +2,7 @@
 
 The repository currently mixes three different responsibilities across stale names and partially overlapping control surfaces: glomeruli candidate promotion, external-cohort segmentation transport or prediction, and downstream endotheliosis quantification. That makes the supported workflow hard to understand, makes provenance harder to audit, and blurs the boundary between segmentation validation, predictive ROI generation, and ordinal grading.
 
-The split now matters because the current OpenSpec contracts already treat these as distinct stages with different gates. Candidate comparison determines whether a glomeruli artifact is promotion-worthy, transport audit determines whether that artifact is usable on external cohorts such as MR, and quantification determines image-level endotheliosis outputs once the input ROI surface is accepted. One mixed workflow name such as `run_segmentation_fixedloader_full.py` obscures that separation.
+The split now matters because the current OpenSpec contracts already treat these as distinct stages with different gates. Candidate comparison determines whether a glomeruli artifact is promotion-worthy, transport audit determines whether that artifact is usable on external cohorts such as MR, and quantification determines image-level endotheliosis outputs once the input ROI surface is accepted. The current full-retraining workflow runner still mixes manifest refresh, mitochondria base training, and glomeruli candidate comparison, so a later split should give each stage a precise workflow surface.
 
 ## What Changes
 

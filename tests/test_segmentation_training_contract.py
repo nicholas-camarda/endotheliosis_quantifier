@@ -4,6 +4,7 @@ import random
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -126,7 +127,7 @@ def test_dynamic_dls_uses_selected_training_root_only(tmp_path: Path, monkeypatc
     class FakeDataBlock:
         def dataloaders(self, path, **kwargs):
             seen_paths.append(("dataloaders", Path(path)))
-            return object()
+            return SimpleNamespace(device=kwargs["device"])
 
     monkeypatch.setattr(datablock_loader, "get_items_full_images", fake_get_items)
     monkeypatch.setattr(

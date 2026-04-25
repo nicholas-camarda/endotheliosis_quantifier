@@ -1,5 +1,5 @@
 # Runnable with:
-#   eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
+#   eq run-config --config configs/full_segmentation_retrain.yaml
 #
 # Purpose:
 #   This is the overnight all-in-one segmentation run. It refreshes the cohort
@@ -10,10 +10,10 @@
 # Do not manually stitch shell commands from this YAML. The command above is the
 # supported entrypoint.
 
-workflow: segmentation_fixedloader_full_retrain
+workflow: full_segmentation_retrain
 
 run:
-  name: all_manual_mask_glomeruli_seed42
+  name: latest_run
   seed: 42
   runtime_root_env: EQ_RUNTIME_ROOT
   runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
@@ -21,6 +21,7 @@ run:
   required_env:
     PYTORCH_ENABLE_MPS_FALLBACK: "1"
     MPLCONFIGDIR: /tmp/mpl_eq
+  training_device: mps
   notes:
     - Use the eq-mac environment on macOS.
     - Run real MPS training from a normal macOS terminal.
@@ -46,12 +47,17 @@ paths:
 mitochondria:
   enabled: true
   model_name: fixedloader_full_mito_base
-  epochs: 50
+  epochs: 25
   batch_size: 24
   learning_rate: 1e-3
   image_size: 256
   training_mode: dynamic_full_image_patching
   encoder_initialization: imagenet_pretrained_resnet34
+  training_scope_decision: heldout_test_preserved
+  inference_claim_status: heldout_evaluable
+  decision_evidence: "The current workflow trains on raw_data/mitochondria_data/training only. The physical testing root is preserved for explicit evaluation and is not used for representation pretraining unless this config is intentionally changed."
+  resize_policy_decision: resize_benefit_unproven
+  resize_decision_evidence: "256x256 is the current mitochondria base input policy. This config records reproducibility, not evidence that 256 is scientifically optimal."
 
 glomeruli_transfer:
   enabled: true
@@ -62,14 +68,14 @@ glomeruli_transfer:
   # model_name, epochs, batch_size, learning_rate, and image_size.
   base_model: latest_current_mito_run
 
-  epochs: 30
+  epochs: 20
   training_mode: dynamic_full_image_patching
   candidate_family: mitochondria_transfer
 
 glomeruli_scratch:
   enabled: true
   model_name: fixedloader_full_glomeruli_no_mito_base
-  epochs: 50
+  epochs: 25
   training_mode: dynamic_full_image_patching
 
   # This is the comparator without a mitochondria/base artifact. It still uses
@@ -86,6 +92,8 @@ candidate_training:
   learning_rate: 1e-3
   image_size: 256
   crop_size: 512
+  resize_policy_decision: resize_benefit_unproven
+  resize_decision_evidence: "The current glomeruli policy crops 512x512 regions and resizes them to 256x256 network inputs. Promotion-facing claims require the resize sensitivity in P0 task 4.7; until then this policy is reproducible but not proven beneficial."
 
 comparison:
   enabled: true

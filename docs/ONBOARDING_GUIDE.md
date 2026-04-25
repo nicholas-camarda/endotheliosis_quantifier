@@ -23,18 +23,13 @@ That segmentation output supports image-level endotheliosis quantification workf
 
 ## Current Training Snapshot
 
-The current checked-in segmentation results come from the canonical April 24, 2026 workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/all_manual_mask_glomeruli_seed42/`.
+The current checked-in segmentation results come from the canonical April 24, 2026 workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/latest_run/`.
 
 - Current mitochondria base artifact: `fixedloader_full_mito_base-pretrain_e50_b24_lr1e-3_sz256`
 - Deterministic glomeruli review panel: `30` crops across `29` images and `25` subjects
 - Category balance: `10` background, `10` boundary, `10` positive
 
-| Candidate | Dice | Jaccard | Precision | Recall | Current decision state |
-| --- | ---: | ---: | ---: | ---: | --- |
-| `transfer` | `0.8954` | `0.8106` | `0.8106` | `1.0000` | within tie margin |
-| `scratch` | `0.8913` | `0.8040` | `0.8040` | `1.0000` | within tie margin |
-
-The current candidate comparison result is `insufficient_evidence`, so neither glomeruli candidate is the sole promoted default. Here that means both candidates passed the gates on this internal deterministic panel, but neither beat the other by enough to become the sole default. `blocked` means something else: a candidate failed the promotion gates. Treat these as internal deterministic validation metrics, not as external validation or a deployment-ready promotion claim. The checked-in figures live in [TECHNICAL_LAB_NOTEBOOK.md](TECHNICAL_LAB_NOTEBOOK.md#current-segmentation-training-snapshot).
+The current glomeruli candidates are research-use artifacts, not current defaults. The internal deterministic panel is useful for debugging and comparison, but onboarding does not cite it as current model performance until the hardened validation audit passes with held-out split provenance, prediction-shape gates, resize-policy evidence, and documentation-claim gating. The checked-in internal figures live in [TECHNICAL_LAB_NOTEBOOK.md](TECHNICAL_LAB_NOTEBOOK.md#current-segmentation-training-snapshot).
 
 ## What Data You Need
 

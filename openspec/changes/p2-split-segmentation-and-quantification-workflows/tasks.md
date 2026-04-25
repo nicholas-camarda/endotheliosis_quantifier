@@ -1,6 +1,6 @@
 ## 1. Rename and split the current mixed candidate-comparison surface
 
-- [ ] 1.1 Inventory every code path, config, test, and doc reference to `segmentation_fixedloader_full_retrain`, `run_segmentation_fixedloader_full.py`, and `run_fixedloader_full`.
+- [ ] 1.1 Inventory every code path, config, test, and doc reference to `full_segmentation_retrain`, `run_full_segmentation_retrain.py`, and `run_full_segmentation_retrain(...)`.
 - [ ] 1.2 Rename the mixed candidate-comparison runner to the exact module `src/eq/training/run_glomeruli_candidate_comparison_workflow.py` with the exact entrypoint `run_glomeruli_candidate_comparison_workflow(...)`, keeping its responsibility limited to manifest refresh plus candidate-comparison orchestration.
 - [ ] 1.3 Replace the retired workflow identifier with the exact dedicated candidate-comparison workflow ID `glomeruli_candidate_comparison` in `src/eq/run_config.py` and any related dispatch or help text.
 - [ ] 1.4 Replace `configs/segmentation_fixedloader_full_retrain.yaml` with the exact config `configs/glomeruli_candidate_comparison.yaml`, whose comments and fields describe promotion evidence only.

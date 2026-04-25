@@ -262,7 +262,7 @@ In this repo, that behavior is controlled in `src/eq/data_management/datablock_l
 
 #### Current Segmentation Training Snapshot
 
-These checked-in figures come from the canonical April 24, 2026 segmentation workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/all_manual_mask_glomeruli_seed42/`. They show the current repository training outputs and candidate-comparison evidence. They do **not** by themselves establish external validity, scientific readiness, or an unconditional promotion claim.
+These checked-in figures come from the canonical April 24, 2026 segmentation workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/latest_run/`. They show repository training outputs and internal candidate-comparison evidence. They do **not** by themselves establish external validity, scientific readiness, or an unconditional promotion claim.
 
 Current artifact names:
 
@@ -277,25 +277,27 @@ Current deterministic glomeruli review-panel composition:
 - `10` boundary crops
 - `10` positive crops
 
-Current candidate-comparison summary:
+Internal candidate-comparison summary:
 
-| Candidate | Dice | Jaccard | Precision | Recall | Gate blocked | Current decision state |
+| Candidate | Dice | Jaccard | Precision | Recall | Runtime use status | Promotion evidence status |
 | --- | ---: | ---: | ---: | ---: | --- | --- |
-| `transfer` | `0.8954` | `0.8106` | `0.8106` | `1.0000` | `False` | within tie margin |
-| `scratch` | `0.8913` | `0.8040` | `0.8040` | `1.0000` | `False` | within tie margin |
+| `transfer` | `0.8954` | `0.8106` | `0.8106` | `1.0000` | `available_research_use` | audit pending for promotion-facing claims |
+| `scratch` | `0.8913` | `0.8040` | `0.8040` | `1.0000` | `available_research_use` | audit pending for promotion-facing claims |
 
 Current comparison outcome:
 
 - report decision: `insufficient_evidence`
 - reason: `transfer_and_scratch_are_within_practical_tie_margin`
 - promoted family: `None`
-- interpretation: both candidates cleared the gates on this internal deterministic panel, but neither separated enough to become the sole default
+- interpretation: both candidates remain available for research and runtime development, but front-page performance claims require the hardened validation audit to pass
 
 Decision-label meaning in this repo:
 
-- `insufficient_evidence`: non-blocked tie case; candidates passed the gates but neither wins clearly enough to become the sole default
-- `blocked`: candidate failed the promotion gates
-- `promoted`: candidate cleared the gates and separated enough to become the sole default
+- `runtime_use_status=available_research_use`: artifact loads and can be used for exploratory development or pipeline smoke testing
+- `promotion_evidence_status=audit_missing`: required split, transfer-base, resize, prediction-shape, or documentation evidence is missing
+- `promotion_evidence_status=not_promotion_eligible`: evidence is present but fails one or more promotion gates
+- `promotion_evidence_status=insufficient_evidence_for_promotion`: evidence is not structurally invalid, but it is not enough to support a promoted default or README-facing performance claim
+- `promotion_evidence_status=promotion_eligible`: held-out audit evidence clears the required gates
 
 These panels are useful because they make the task concrete: the network is not producing one global score first. It is producing a spatial mask, and those masks are then visually compared against held-out targets.
 
@@ -430,7 +432,7 @@ Important nuance:
 
 - the README YAML-first workflow is the recommended workflow documentation
 - the `train_glomeruli.py` module resolves a machine-aware default batch size and currently starts at `12` on the powerful Apple Silicon MPS machine class when using `512x512` crops
-- `eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml` is the normal candidate-comparison control surface
+- `eq run-config --config configs/full_segmentation_retrain.yaml` is the normal candidate-comparison control surface
 - transfer training with `--base-model` must load that artifact and copy compatible weights; `--from-scratch` means no mitochondria/base artifact and currently uses an ImageNet-pretrained ResNet34 encoder
 - the direct training module CLI remains useful for targeted runs outside the full YAML workflow
 

@@ -7,7 +7,7 @@ The repository already has three distinct workflow domains with different scient
 3. high-resolution concordance on large-field microscope images such as the MR TIFF lane,
 4. downstream endotheliosis quantification and ordinal grading.
 
-The current workflow-config surface does not reflect that split cleanly. `eq run-config` dispatches `segmentation_fixedloader_full_retrain` to `src/eq/training/run_segmentation_fixedloader_full.py`, whose implementation refreshes the cohort manifest, trains a mitochondria base, derives the new base artifact path, and launches glomeruli candidate comparison. The name still encodes stale implementation jargon (`fixedloader_full`) instead of the actual contract. At the same time, quantification still has a separate direct CLI surface (`quant-endo` plus `prepare-quant-contract`), and the scored-only cohort spec already treats transport audit and MR concordance as explicit gates before downstream grading use.
+The current workflow-config surface does not reflect that split cleanly. `eq run-config` dispatches `full_segmentation_retrain` to `src/eq/training/run_full_segmentation_retrain.py`, whose implementation refreshes the cohort manifest, trains a mitochondria base, derives the new base artifact path, and launches glomeruli candidate comparison. The name now matches the committed full-retraining config, but the runner still mixes stages that should become separate workflow contracts. At the same time, quantification still has a separate direct CLI surface (`quant-endo` plus `prepare-quant-contract`), and the scored-only cohort spec already treats transport audit and MR concordance as explicit gates before downstream grading use.
 
 That leaves the repository in an inconsistent state:
 
@@ -67,7 +67,7 @@ Because these stages produce different artifact classes under different runtime 
    - Allow downstream workflows to fall back to training or prediction when an input is missing. Rejected because that conflates gates and violates the no-fallback rule.
 
 5. **Rename the current mixed candidate-comparison runner to one exact glomeruli-specific surface and retire the stale name.**
-   - Rationale: this repository is specifically about glomerular segmentation and endotheliosis quantification, so the workflow name should be precise rather than generic. `run_segmentation_fixedloader_full.py` is implementation-era jargon. The exact replacement is:
+   - Rationale: this repository is specifically about glomerular segmentation and endotheliosis quantification, so the split workflow name should be precise rather than a broad full-retraining label. The exact dedicated candidate-comparison surface is:
      - module: `src/eq/training/run_glomeruli_candidate_comparison_workflow.py`
      - function: `run_glomeruli_candidate_comparison_workflow(...)`
      - workflow ID: `glomeruli_candidate_comparison`

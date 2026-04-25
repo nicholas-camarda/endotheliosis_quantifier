@@ -15,7 +15,7 @@ import yaml
 
 SUPPORTED_WORKFLOWS = {
     "segmentation_glomeruli_transfer",
-    "segmentation_fixedloader_full_retrain",
+    "full_segmentation_retrain",
     "segmentation_mitochondria_pretraining",
 }
 
@@ -41,10 +41,10 @@ def run_config(config_path: Path, *, dry_run: bool = False) -> None:
     """Run a supported workflow config."""
     config = load_workflow_config(config_path)
     workflow = str(config["workflow"])
-    if workflow == "segmentation_fixedloader_full_retrain":
-        from eq.training.run_segmentation_fixedloader_full import run_fixedloader_full
+    if workflow == "full_segmentation_retrain":
+        from eq.training.run_full_segmentation_retrain import run_full_segmentation_retrain
 
-        run_fixedloader_full(config_path, dry_run=dry_run)
+        run_full_segmentation_retrain(config_path, dry_run=dry_run)
         return
     if workflow == "segmentation_mitochondria_pretraining":
         run_mitochondria_pretraining_config(config, dry_run=dry_run)

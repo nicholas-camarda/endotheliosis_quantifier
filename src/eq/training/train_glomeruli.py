@@ -11,8 +11,8 @@ pretrained mitochondria segmentation model. The approach:
 This is the second stage of the two-stage training pipeline.
 """
 
-import re
 import random
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -22,28 +22,39 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
 
 from fastai.vision.all import *
 
-from eq.utils.logger import get_logger
-from eq.utils.run_io import (
-    save_splits, attach_best_model_callback, save_plots, 
-    save_training_history, save_run_metadata, export_final_model,
-    load_supported_segmentation_artifact_metadata,
+# BCEWithLogitsLossFlat import removed - using FastAI v2 automatic loss selection
+from eq.core.constants import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_EPOCHS,
+    DEFAULT_GLOMERULI_MODEL_DIR,
+    DEFAULT_IMAGE_SIZE,
+    DEFAULT_LEARNING_RATE,
+    DEFAULT_MIN_POS_PIXELS,
+    DEFAULT_MITOCHONDRIA_MODEL_DIR,
+    DEFAULT_POS_CROP_ATTEMPTS,
+    DEFAULT_POSITIVE_FOCUS_P,
 )
 from eq.data_management.datablock_loader import (
     TRAINING_MODE_DYNAMIC_FULL_IMAGE,
     build_segmentation_dls_dynamic_patching,
+    fixed_splitter_from_manifest,
     validate_supported_segmentation_training_root,
+)
+from eq.training.segmentation_validation_audit import (
+    build_glomeruli_training_provenance,
 )
 from eq.training.transfer_learning import transfer_learn_glomeruli
 from eq.utils.hardware_detection import get_segmentation_training_batch_size
+from eq.utils.logger import get_logger
 from eq.utils.paths import resolve_runtime_path
-
-
-# BCEWithLogitsLossFlat import removed - using FastAI v2 automatic loss selection
-from eq.core.constants import (
-    DEFAULT_IMAGE_SIZE,
-    DEFAULT_BATCH_SIZE, DEFAULT_EPOCHS, DEFAULT_LEARNING_RATE,
-    DEFAULT_GLOMERULI_MODEL_DIR, DEFAULT_MITOCHONDRIA_MODEL_DIR,
-    DEFAULT_POSITIVE_FOCUS_P, DEFAULT_MIN_POS_PIXELS, DEFAULT_POS_CROP_ATTEMPTS
+from eq.utils.run_io import (
+    attach_best_model_callback,
+    export_final_model,
+    load_supported_segmentation_artifact_metadata,
+    save_plots,
+    save_run_metadata,
+    save_splits,
+    save_training_history,
 )
 
 logger = get_logger("eq.retrain_glomeruli_original")
@@ -113,6 +124,8 @@ def train_glomeruli_with_transfer_learning(
     crop_size: Optional[int] = None,
     use_lr_find: bool = True,
     seed: int = 42,
+    split_manifest_path: Optional[str] = None,
+    device: Optional[str] = None,
 ) -> Learner:
     """
     Train glomeruli model using transfer learning from mitochondria model.
@@ -158,6 +171,8 @@ def train_glomeruli_with_transfer_learning(
         crop_size=crop_size,
         use_lr_find=use_lr_find,
         seed=seed,
+        split_manifest_path=split_manifest_path,
+        device=device,
     )
     
     return learn
@@ -178,6 +193,8 @@ def train_glomeruli_with_datablock(
     min_pos_pixels: int = DEFAULT_MIN_POS_PIXELS,
     pos_crop_attempts: int = DEFAULT_POS_CROP_ATTEMPTS,
     seed: int = 42,
+    split_manifest_path: Optional[str] = None,
+    device: Optional[str] = None,
 ):
     """
     Train glomeruli segmentation model using FastAI v2 DataBlock approach with transfer learning.
@@ -232,19 +249,48 @@ def train_glomeruli_with_datablock(
         num_workers=0,
         crop_size=(crop_size if crop_size is not None else image_size),
         output_size=image_size,
+        splitter=fixed_splitter_from_manifest(split_manifest_path) if split_manifest_path else None,
         positive_focus_p=positive_focus_p,
         min_pos_pixels=min_pos_pixels,
         pos_crop_attempts=pos_crop_attempts,
         stage="glomeruli",
+        device=device,
     )
+    train_items = list(getattr(dls.train_ds, 'items', []))
+    valid_items = list(getattr(dls.valid_ds, 'items', []))
+    transfer_base_metadata = (
+        load_supported_segmentation_artifact_metadata(base_model_path)
+        if base_model_path
+        else {}
+    )
+    training_provenance = build_glomeruli_training_provenance(
+        data_root=data_root,
+        train_items=train_items,
+        valid_items=valid_items,
+        seed=seed,
+        split_seed=42,
+        crop_size=int(crop_size) if crop_size is not None else int(image_size),
+        output_size=int(image_size),
+        candidate_family='mitochondria_transfer' if base_model_path else 'no_mitochondria_base',
+        training_mode=TRAINING_MODE_DYNAMIC_FULL_IMAGE,
+        splitter_name="explicit_shared_rng_split" if split_manifest_path else "RandomSplitter",
+        transfer_base_artifact_path=base_model_path,
+        transfer_base_metadata=transfer_base_metadata,
+        positive_focus_p=positive_focus_p,
+        min_pos_pixels=min_pos_pixels,
+        pos_crop_attempts=pos_crop_attempts,
+        command=" ".join(sys.argv),
+    )
+    training_provenance["training_device"] = str(dls.device)
 
     # Save data splits manifest
     save_splits(output_path, model_folder_name, {
         "stage": "glomeruli",
         "training_mode": TRAINING_MODE_DYNAMIC_FULL_IMAGE,
         "data_root": str(data_root),
-        "train_items": getattr(dls.train_ds, 'items', []),
-        "valid_items": getattr(dls.valid_ds, 'items', [])
+        "train_items": train_items,
+        "valid_items": valid_items,
+        **training_provenance,
     })
     
     logger.info(f"Data loaded: {len(dls.train_ds)} train, {len(dls.valid_ds)} val samples")
@@ -293,10 +339,17 @@ def train_glomeruli_with_datablock(
         'training_mode': TRAINING_MODE_DYNAMIC_FULL_IMAGE,
         'data_root': str(data_root),
         'seed': seed,
+        **training_provenance,
     })
 
     # Generate training visualizations
     logger.info("Generating training visualizations...")
+    learn.eq_validation_trace_context = {
+        "stage": "glomeruli",
+        "candidate_family": "mitochondria_transfer" if base_model_path else "no_mitochondria_base",
+        "resize_policy": training_provenance.get("resize_policy"),
+        "threshold": None,
+    }
     save_plots(learn, output_path, model_folder_name)
 
     # Save the model
@@ -317,6 +370,7 @@ def train_glomeruli_with_datablock(
             "base_model_path": base_model_path or None,
             "candidate_family": "mitochondria_transfer" if base_model_path else "no_mitochondria_base",
             "encoder_initialization": TRANSFER_BASE_INITIALIZATION if base_model_path else SCRATCH_ENCODER_INITIALIZATION,
+            **training_provenance,
             "invocation": {
                 "data_dir": str(data_root),
                 "output_dir": str(output_dir),
@@ -423,8 +477,10 @@ def main():
     parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Final network input size (output_size)')
     parser.add_argument('--crop-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Dynamic patching crop size before resizing')
     parser.add_argument('--loss', type=str, default='', help='Loss to use: dice | bcedice | tversky (default: fastai/weighted)')
+    parser.add_argument('--split-manifest', help='Explicit JSON train/validation split manifest to use for candidate training')
     parser.add_argument('--skip-lr-find', action='store_true', help='Skip lr_find and use provided learning rate for fine-tune')
     parser.add_argument('--seed', type=int, default=42, help='Explicit training seed to record in provenance and use for bounded comparisons')
+    parser.add_argument('--device', choices=["mps", "cuda", "cpu"], help='Training device. Omit to auto-select cuda, then mps, then cpu.')
     
     args = parser.parse_args()
 
@@ -523,6 +579,8 @@ def main():
                 # Skip lr_find if user asked to, or use provided LR directly
                 use_lr_find=(not args.skip_lr_find),
                 seed=args.seed,
+                split_manifest_path=args.split_manifest,
+                device=args.device,
             )
         else:
             model = train_glomeruli_with_datablock(
@@ -537,6 +595,8 @@ def main():
                 crop_size=args.crop_size,
                 config_path=config_path,
                 seed=args.seed,
+                split_manifest_path=args.split_manifest,
+                device=args.device,
                 # TODO: implement loss_name
                 # loss_name=args.loss or None
             )

@@ -648,7 +648,7 @@ def main():
 Examples:
   eq quant-endo --data-dir <raw-project> --segmentation-model <model.pkl>
   eq prepare-quant-contract --data-dir <raw-project> --segmentation-model <model.pkl>
-  eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml --dry-run
+  eq run-config --config configs/full_segmentation_retrain.yaml --dry-run
   eq capabilities
   eq mode --set development --show --validate
   eq orchestrator  # Interactive menu

@@ -27,18 +27,26 @@ logger = get_logger("eq.run_io")
 def save_splits(output_dir: Path, model_folder_name: str, data_info: Dict[str, Any]) -> None:
     """Save data splits manifest with prefixed filename."""
     try:
+        train_images = [str(p) for p in data_info.get("train_images", data_info.get("train_items", []))]
+        valid_images = [str(p) for p in data_info.get("valid_images", data_info.get("valid_items", []))]
         split_manifest = {
             "stage": data_info.get("stage", "unknown"),
             "training_mode": data_info.get("training_mode"),
             "data_root": data_info.get("data_root"),
             "generated_at": datetime.now().isoformat(),
-            "train_images": [str(p) for p in data_info.get("train_items", [])],
-            "valid_images": [str(p) for p in data_info.get("valid_items", [])],
+            "split_seed": data_info.get("split_seed"),
+            "splitter_name": data_info.get("splitter_name"),
+            "train_images": train_images,
+            "valid_images": valid_images,
             "counts": {
-                "train": int(len(data_info.get("train_items", []))),
-                "valid": int(len(data_info.get("valid_items", [])))
+                "train": int(len(train_images)),
+                "valid": int(len(valid_images))
             }
         }
+        for key, value in data_info.items():
+            if key in {"train_items", "valid_items", "train_images", "valid_images"}:
+                continue
+            split_manifest.setdefault(key, value)
         
         splits_file = output_dir / f"{model_folder_name}_splits.json"
         split_manifest = {k: v for k, v in split_manifest.items() if v is not None}
@@ -183,7 +191,16 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
             pass
         
         # Always decode to display-ready space; never assume channels
+        validation_trace_rows: list[Dict[str, Any]] = []
+        validation_panel_path = output_dir / f"{model_folder_name}_validation_predictions.png"
+        artifact_path = output_dir / f"{model_folder_name}.pkl"
+        trace_context = getattr(learn, "eq_validation_trace_context", {}) or {}
+        trace_family = str(trace_context.get("candidate_family") or trace_context.get("stage") or "unknown")
+        trace_resize_policy = trace_context.get("resize_policy")
+        trace_threshold = trace_context.get("threshold")
         for i in range(min(3, len(images))):
+            raw_path_for_trace = None
+            mask_path_for_trace = None
             dec_x, _ = learn.dls.decode((images[i], masks[i]))
             # Convert decoded image to numpy robustly
             try:
@@ -311,10 +328,12 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
                     try:
                         mask_path = Path(_get_mask_path(raw_path))
                         mask_name = mask_path.name
+                        mask_path_for_trace = mask_path
                     except Exception as _e2:
                         mask_name = "(unresolved)"
                         logger.warning(f"Failed to resolve mask path for {raw_path.name}: {_e2}")
 
+                    raw_path_for_trace = raw_path
                     logger.info(
                         f"PAIR[{i}] image={raw_path.name} mask={mask_name} | RAW shape={raw_np.shape} dtype={raw_np.dtype} min={float(np.nanmin(raw_np)):.4f} max={float(np.nanmax(raw_np)):.4f}"
                     )
@@ -361,6 +380,7 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
             pred_i = preds[0][i]
             if hasattr(pred_i, 'detach'):
                 pred_i = pred_i.detach().cpu()
+            raw_prediction_shape = tuple(int(value) for value in getattr(pred_i, "shape", ()))
             # Squeeze any leading singleton dims
             while pred_i.ndim > 3 and pred_i.shape[0] == 1:
                 pred_i = pred_i[0]
@@ -404,12 +424,53 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
             axes[i, 4].imshow(overlay, alpha=0.4, vmin=0, vmax=1)
             axes[i, 4].set_title(f'Overlay {i+1}\n(Green=TP, Red=FP, Blue=FN)')
             axes[i, 4].axis('off')
+            try:
+                from eq.training.segmentation_validation_audit import (
+                    failure_reproduction_row,
+                    resize_policy_record,
+                )
+
+                if trace_resize_policy is None:
+                    observed_size = int(images[i].shape[-1])
+                    resize_policy = resize_policy_record(
+                        crop_size=observed_size,
+                        output_size=observed_size,
+                    )
+                else:
+                    resize_policy = trace_resize_policy
+                validation_trace_rows.append(
+                    failure_reproduction_row(
+                        candidate_family=trace_family,
+                        panel_id=f"{model_folder_name}-validation-{i + 1}",
+                        artifact_path=artifact_path,
+                        image_path=raw_path_for_trace,
+                        mask_path=mask_path_for_trace,
+                        crop_box="not_recorded_validation_datablock_crop",
+                        resize_policy=resize_policy,
+                        threshold=trace_threshold,
+                        prediction_tensor_shape=raw_prediction_shape,
+                        overlay_path=validation_panel_path,
+                        root_causes=[],
+                        remediation_path="audit_trace_only_not_a_root_cause_classification",
+                    )
+                )
+            except Exception as _e:
+                logger.warning(f"Failed to build validation panel trace row {i}: {_e}")
         
         # Leave room for the suptitle
         plt.tight_layout(rect=[0, 0, 1, 0.96])
-        plt.savefig(output_dir / f"{model_folder_name}_validation_predictions.png", dpi=150, bbox_inches='tight')
+        plt.savefig(validation_panel_path, dpi=150, bbox_inches='tight')
         plt.close()
-        logger.info(f"Validation predictions saved to: {output_dir / f'{model_folder_name}_validation_predictions.png'}")
+        if validation_trace_rows:
+            try:
+                from eq.training.segmentation_validation_audit import write_csv_rows
+
+                trace_path = output_dir / f"{model_folder_name}_validation_prediction_trace.csv"
+                write_csv_rows(validation_trace_rows, trace_path)
+                logger.info(f"Validation prediction trace saved to: {trace_path}")
+            except Exception as _e:
+                logger.warning(f"Could not write validation prediction trace: {_e}")
+        logger.info(f"Validation predictions saved to: {validation_panel_path}")
     except Exception as e:
         logger.warning(f"Could not save validation predictions: {e}")
 

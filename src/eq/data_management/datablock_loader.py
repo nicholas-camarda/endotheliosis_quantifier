@@ -5,8 +5,9 @@ Supported segmentation training uses full-image `images/` and `masks/`
 directories with on-the-fly dynamic patching.
 """
 
+import json
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, Iterable, List, Optional, Union
 
 import numpy as np
 import torch
@@ -65,6 +66,30 @@ BLOCKED_RAW_PROJECT_ROOT_PARTS = {
     "clean_backup",
     "old",
 }
+
+
+def resolve_segmentation_training_device(device: Optional[Union[str, torch.device]] = None) -> torch.device:
+    """Resolve the requested segmentation training device.
+
+    CPU remains supported for small tests and explicit low-resource runs. A
+    workflow that requires MPS or CUDA must pass that device explicitly so it
+    fails instead of silently using CPU.
+    """
+    if device is not None:
+        requested = torch.device(device)
+        if requested.type == "mps" and not (
+            getattr(torch.backends, "mps", None) is not None
+            and torch.backends.mps.is_available()
+        ):
+            raise RuntimeError("Requested segmentation training device `mps`, but MPS is unavailable.")
+        if requested.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("Requested segmentation training device `cuda`, but CUDA is unavailable.")
+        return requested
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
 
 
 def default_get_y_path(x: Union[str, Path]) -> Path:
@@ -370,6 +395,52 @@ def get_items_full_images(path: Path) -> List[Any]:
     return valid_images
 
 
+def fixed_splitter_from_paths(
+    *,
+    train_images: Iterable[str | Path],
+    valid_images: Iterable[str | Path],
+) -> Callable[[list[Any]], tuple[list[int], list[int]]]:
+    """Build a strict splitter from explicit image path provenance."""
+    train_set = {str(Path(path).expanduser()) for path in train_images}
+    valid_set = {str(Path(path).expanduser()) for path in valid_images}
+    overlap = train_set & valid_set
+    if overlap:
+        examples = ", ".join(sorted(overlap)[:5])
+        raise ValueError(f"Explicit split has train/valid overlap: {examples}")
+    if not train_set or not valid_set:
+        raise ValueError("Explicit split requires non-empty train_images and valid_images.")
+
+    def splitter(items: list[Any]) -> tuple[list[int], list[int]]:
+        train_idx: list[int] = []
+        valid_idx: list[int] = []
+        unknown: list[str] = []
+        for index, item in enumerate(items):
+            key = str(Path(str(item)).expanduser())
+            if key in train_set:
+                train_idx.append(index)
+            elif key in valid_set:
+                valid_idx.append(index)
+            else:
+                unknown.append(key)
+        if unknown:
+            examples = ", ".join(unknown[:5])
+            raise ValueError(f"Explicit split does not cover {len(unknown)} item(s): {examples}")
+        return train_idx, valid_idx
+
+    return splitter
+
+
+def fixed_splitter_from_manifest(split_manifest_path: str | Path) -> Callable[[list[Any]], tuple[list[int], list[int]]]:
+    """Load a strict explicit train/validation splitter from a JSON manifest."""
+    path = Path(split_manifest_path).expanduser()
+    with path.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    return fixed_splitter_from_paths(
+        train_images=payload.get("train_images") or [],
+        valid_images=payload.get("valid_images") or [],
+    )
+
+
 def build_segmentation_datablock_dynamic_patching(
     codes: Optional[List[int]] = None,
     crop_size: int = DEFAULT_IMAGE_SIZE,
@@ -463,6 +534,8 @@ def build_segmentation_dls_dynamic_patching(
     min_pos_pixels: int = DEFAULT_MIN_POS_PIXELS,
     pos_crop_attempts: int = DEFAULT_POS_CROP_ATTEMPTS,
     stage: str = "segmentation",
+    splitter: Optional[Callable] = None,
+    device: Optional[Union[str, torch.device]] = None,
 ):
     """
     Create DataLoaders for binary segmentation with dynamic patching.
@@ -515,15 +588,19 @@ def build_segmentation_dls_dynamic_patching(
         min_scale=min_scale,
         flip_p=flip_p,
         max_rotate=max_rotate,
+        splitter=splitter,
         positive_focus_p=positive_focus_p,
         min_pos_pixels=min_pos_pixels,
         pos_crop_attempts=pos_crop_attempts,
     )
     
-    # Create DataLoaders
-    dls = db.dataloaders(root, bs=bs, num_workers=num_workers, device=torch.device("cpu"))
+    # Create DataLoaders on the required accelerator.  This is part of the
+    # runtime contract: segmentation training must not silently run on CPU.
+    training_device = resolve_segmentation_training_device(device)
+    dls = db.dataloaders(root, bs=bs, num_workers=num_workers, device=training_device)
     
     logger = get_logger("eq.datablock_loader")
+    logger.info(f"Segmentation DataLoaders device: {dls.device}")
     logger.info("✅ Dynamic patching DataLoaders created - positive-aware cropping enabled" if positive_focus_p > 0 else "✅ Dynamic patching DataLoaders created")
     # Crop coverage diagnostic
     try:

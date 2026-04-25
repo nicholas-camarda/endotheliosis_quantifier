@@ -1,4 +1,4 @@
-"""Run the fixed-loader full segmentation retraining workflow from YAML."""
+"""Run the full segmentation retraining workflow from YAML."""
 
 from __future__ import annotations
 
@@ -111,7 +111,7 @@ def _latest_pkl(runtime_root: Path, config: dict[str, Any]) -> Path:
     return matches[-1]
 
 
-def run_fixedloader_full(config_path: Path, *, dry_run: bool = False) -> Path:
+def run_full_segmentation_retrain(config_path: Path, *, dry_run: bool = False) -> Path:
     """Run manifest refresh, mitochondria base training, and candidate comparison."""
     config = _load_config(config_path)
     runtime_root = _runtime_root(config)
@@ -132,6 +132,9 @@ def run_fixedloader_full(config_path: Path, *, dry_run: bool = False) -> Path:
     python = str(config.get("run", {}).get("python") or sys.executable)
     if not Path(python).exists():
         raise FileNotFoundError(f"Configured Python does not exist: {python}")
+    training_device = str(config.get("run", {}).get("training_device") or "").strip()
+    if not training_device:
+        raise ValueError("run.training_device must be set explicitly, for example `mps` on macOS.")
 
     log_path = _run_config_log_path(runtime_root, run_id, dry_run=dry_run)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -165,6 +168,8 @@ def run_fixedloader_full(config_path: Path, *, dry_run: bool = False) -> Path:
                     str(mito["learning_rate"]),
                     "--image-size",
                     str(mito["image_size"]),
+                    "--device",
+                    training_device,
                 ],
                 env,
                 dry_run=dry_run,
@@ -204,6 +209,8 @@ def run_fixedloader_full(config_path: Path, *, dry_run: bool = False) -> Path:
                     str(candidate_training["image_size"]),
                     "--crop-size",
                     str(candidate_training["crop_size"]),
+                    "--device",
+                    training_device,
                     "--examples-per-category",
                     str(comparison["examples_per_category"]),
                     "--transfer-model-name",
@@ -221,12 +228,12 @@ def run_fixedloader_full(config_path: Path, *, dry_run: bool = False) -> Path:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run fixed-loader full segmentation retraining from YAML."
+        description="Run full segmentation retraining from YAML."
     )
     parser.add_argument(
         "--config",
-        default="configs/segmentation_fixedloader_full_retrain.yaml",
-        help="Fixed-loader full retraining YAML config.",
+        default="configs/full_segmentation_retrain.yaml",
+        help="Full segmentation retraining YAML config.",
     )
     parser.add_argument(
         "--dry-run",
@@ -238,7 +245,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_arg_parser().parse_args()
-    run_fixedloader_full(Path(args.config), dry_run=args.dry_run)
+    run_full_segmentation_retrain(Path(args.config), dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

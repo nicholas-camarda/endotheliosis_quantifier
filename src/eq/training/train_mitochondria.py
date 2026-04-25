@@ -12,6 +12,7 @@ The trained mitochondria model serves as a pretrained base for transfer learning
 to glomeruli segmentation in the second stage.
 """
 
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -39,6 +40,7 @@ from eq.data_management.datablock_loader import (
 )
 from eq.utils.hardware_detection import get_segmentation_training_batch_size
 from eq.utils.paths import resolve_runtime_path
+from eq.training.segmentation_validation_audit import build_mitochondria_training_provenance
 
 MITOCHONDRIA_ENCODER_INITIALIZATION = "imagenet_pretrained_resnet34"
 
@@ -67,6 +69,7 @@ def train_mitochondria_with_datablock(
     positive_focus_p: float = DEFAULT_POSITIVE_FOCUS_P,
     min_pos_pixels: int = DEFAULT_MIN_POS_PIXELS,
     pos_crop_attempts: int = DEFAULT_POS_CROP_ATTEMPTS,
+    device: Optional[str] = None,
 ):
     """
     Train mitochondria segmentation model using FastAI v2 DataBlock approach.
@@ -114,17 +117,36 @@ def train_mitochondria_with_datablock(
         positive_focus_p=positive_focus_p,
         min_pos_pixels=min_pos_pixels,
         pos_crop_attempts=pos_crop_attempts,
+        device=device,
     )
 
     # Mask validation handled centrally in datablock loader
+    train_items = list(getattr(dls.train_ds, 'items', []))
+    valid_items = list(getattr(dls.valid_ds, 'items', []))
+    training_provenance = build_mitochondria_training_provenance(
+        data_root=data_root,
+        train_items=train_items,
+        valid_items=valid_items,
+        image_size=image_size,
+        crop_size=image_size,
+        output_size=image_size,
+        positive_focus_p=positive_focus_p,
+        min_pos_pixels=min_pos_pixels,
+        pos_crop_attempts=pos_crop_attempts,
+        command=" ".join(sys.argv),
+    )
+    training_provenance["training_device"] = str(dls.device)
 
     # Save data splits manifest
     save_splits(output_path, model_folder_name, {
         "stage": "mitochondria",
         "training_mode": TRAINING_MODE_DYNAMIC_FULL_IMAGE,
         "data_root": str(data_root),
-        "train_items": getattr(dls.train_ds, 'items', []),
-        "valid_items": getattr(dls.valid_ds, 'items', [])
+        "train_items": train_items,
+        "valid_items": valid_items,
+        "split_seed": 42,
+        "splitter_name": "RandomSplitter",
+        **training_provenance,
     })
     
     logger.info(f"✅ Data loaded: {len(dls.train_ds)} train, {len(dls.valid_ds)} val samples")
@@ -167,10 +189,17 @@ def train_mitochondria_with_datablock(
         'encoder_initialization': MITOCHONDRIA_ENCODER_INITIALIZATION,
         'training_mode': TRAINING_MODE_DYNAMIC_FULL_IMAGE,
         'data_root': str(data_root),
+        **training_provenance,
     })
 
     # Generate training visualizations
     logger.info("📊 Generating training visualizations...")
+    learn.eq_validation_trace_context = {
+        "stage": "mitochondria",
+        "candidate_family": "mitochondria_no_domain_base",
+        "resize_policy": training_provenance.get("resize_policy"),
+        "threshold": None,
+    }
     save_plots(learn, output_path, model_folder_name)
     
     # Print training summary
@@ -219,6 +248,7 @@ def train_mitochondria_with_datablock(
             "model_path": str(model_path),
             "candidate_family": "mitochondria_no_domain_base",
             "encoder_initialization": MITOCHONDRIA_ENCODER_INITIALIZATION,
+            **training_provenance,
             "invocation": {
                 "data_dir": str(data_root),
                 "output_dir": str(output_dir),
@@ -248,6 +278,11 @@ def main():
     parser.add_argument('--batch-size', type=int, default=None, help='Training batch size (default: machine-aware recommendation)')
     parser.add_argument('--learning-rate', type=float, default=DEFAULT_LEARNING_RATE, help='Learning rate')
     parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Input image size')
+    parser.add_argument(
+        '--device',
+        choices=["mps", "cuda", "cpu"],
+        help='Training device. Omit to auto-select cuda, then mps, then cpu.',
+    )
     
     args = parser.parse_args()
 
@@ -305,6 +340,7 @@ def main():
             learning_rate=args.learning_rate,
             image_size=args.image_size,
             config_path=config_path,
+            device=args.device,
         )
         
         logger.info("🎉 Mitochondria training completed successfully!")

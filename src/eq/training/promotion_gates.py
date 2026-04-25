@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
@@ -168,7 +169,13 @@ def _crop_category(crop: np.ndarray) -> str:
 
 
 def _image_subject_id(image_path: Path) -> str:
-    return image_path.parent.name if image_path.parent != image_path else image_path.stem
+    if image_path.parent != image_path and image_path.parent.name not in {"images", "masks"}:
+        return image_path.parent.name
+    stem = image_path.stem.removesuffix("_mask")
+    match = re.match(r"(?P<subject>.+?)_image\d+$", stem, flags=re.IGNORECASE)
+    if match:
+        return match.group("subject")
+    return stem
 
 
 def _candidate_sort_key(item: Dict[str, Any]) -> Tuple[Any, ...]:

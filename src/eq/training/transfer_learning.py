@@ -6,27 +6,37 @@ This module provides utilities for transfer learning between segmentation models
 specifically handling the namespace issues with custom functions.
 """
 
+import random
+import sys
 from pathlib import Path
 from typing import Optional, Union
-import random
-import torch
-import matplotlib.pyplot as plt
-from fastai.vision.all import *
-# BCEWithLogitsLossFlat import removed - using FastAI v2 automatic loss selection
 
+import matplotlib.pyplot as plt
+import torch
+from fastai.vision.all import *
+
+# BCEWithLogitsLossFlat import removed - using FastAI v2 automatic loss selection
 from eq.data_management.datablock_loader import (
     TRAINING_MODE_DYNAMIC_FULL_IMAGE,
     build_segmentation_dls_dynamic_patching,
+    fixed_splitter_from_manifest,
     validate_supported_segmentation_training_root,
 )
 from eq.training.losses import make_loss
-from eq.utils.logger import get_logger
-from eq.utils.run_io import (
-    save_splits, attach_best_model_callback, save_plots, 
-    save_training_history, save_run_metadata, export_final_model,
-    load_supported_segmentation_artifact_metadata,
+from eq.training.segmentation_validation_audit import (
+    build_glomeruli_training_provenance,
 )
 from eq.utils.hardware_detection import get_segmentation_training_batch_size
+from eq.utils.logger import get_logger
+from eq.utils.run_io import (
+    attach_best_model_callback,
+    export_final_model,
+    load_supported_segmentation_artifact_metadata,
+    save_plots,
+    save_run_metadata,
+    save_splits,
+    save_training_history,
+)
 
 logger = get_logger("eq.transfer_learning")
 
@@ -149,6 +159,8 @@ def load_model_for_transfer_learning(
     pos_crop_attempts: int = 10,
     load_encoder_only: bool = True,
     reinit_decoder: bool = True,
+    split_manifest_path: Optional[str] = None,
+    device: Optional[str] = None,
 ) -> Learner:
     """
     Load a pretrained model for transfer learning, handling namespace issues.
@@ -185,10 +197,12 @@ def load_model_for_transfer_learning(
         num_workers=num_workers,
         crop_size=(crop_size if crop_size is not None else image_size),
         output_size=image_size,
+        splitter=fixed_splitter_from_manifest(split_manifest_path) if split_manifest_path else None,
         positive_focus_p=positive_focus_p,
         min_pos_pixels=min_pos_pixels,
         pos_crop_attempts=pos_crop_attempts,
         stage="glomeruli_transfer",
+        device=device,
     )
     
     logger.info(f"Created target data loaders: {len(target_dls.train_ds)} train, {len(target_dls.valid_ds)} val")
@@ -397,6 +411,8 @@ def transfer_learn_glomeruli(
     encoder_only: bool = True,
     reinit_decoder: bool = True,
     seed: int = 42,
+    split_manifest_path: Optional[str] = None,
+    device: Optional[str] = None,
 ) -> Learner:
     """
     Perform transfer learning from mitochondria to glomeruli segmentation using FastAI v2 best practices.
@@ -493,15 +509,40 @@ def transfer_learn_glomeruli(
         pos_crop_attempts=pos_crop_attempts,
         load_encoder_only=encoder_only,
         reinit_decoder=reinit_decoder,
+        split_manifest_path=split_manifest_path,
+        device=device,
     )
+    train_items = list(getattr(learn.dls.train_ds, 'items', []))
+    valid_items = list(getattr(learn.dls.valid_ds, 'items', []))
+    transfer_base_metadata = load_supported_segmentation_artifact_metadata(base_model_path)
+    training_provenance = build_glomeruli_training_provenance(
+        data_root=data_root,
+        train_items=train_items,
+        valid_items=valid_items,
+        seed=seed,
+        split_seed=42,
+        crop_size=int(crop_size) if crop_size is not None else int(image_size),
+        output_size=int(image_size),
+        candidate_family="mitochondria_transfer",
+        training_mode=TRAINING_MODE_DYNAMIC_FULL_IMAGE,
+        splitter_name="explicit_shared_rng_split" if split_manifest_path else "RandomSplitter",
+        transfer_base_artifact_path=base_model_path,
+        transfer_base_metadata=transfer_base_metadata,
+        positive_focus_p=positive_focus_p,
+        min_pos_pixels=min_pos_pixels,
+        pos_crop_attempts=pos_crop_attempts,
+        command=" ".join(sys.argv),
+    )
+    training_provenance["training_device"] = str(learn.dls.device)
     
     # Save data splits manifest
     save_splits(output_path, model_folder_name, {
         "stage": "glomeruli_transfer",
         "training_mode": TRAINING_MODE_DYNAMIC_FULL_IMAGE,
         "data_root": str(data_root),
-        "train_items": getattr(learn.dls.train_ds, 'items', []),
-        "valid_items": getattr(learn.dls.valid_ds, 'items', [])
+        "train_items": train_items,
+        "valid_items": valid_items,
+        **training_provenance,
     })
     
     # STAGE 1: Train with frozen encoder (FastAI v2 best practice)
@@ -571,10 +612,17 @@ def transfer_learn_glomeruli(
         'training_mode': TRAINING_MODE_DYNAMIC_FULL_IMAGE,
         'data_root': str(data_root),
         'seed': seed,
+        **training_provenance,
     })
     
     # Generate training visualizations (may call get_preds etc.)
     logger.info("Generating training visualizations...")
+    learn.eq_validation_trace_context = {
+        "stage": "glomeruli_transfer",
+        "candidate_family": "mitochondria_transfer",
+        "resize_policy": training_provenance.get("resize_policy"),
+        "threshold": None,
+    }
     save_plots(learn, output_path, model_folder_name)
 
     # Save the model
@@ -596,6 +644,7 @@ def transfer_learn_glomeruli(
             "candidate_family": "mitochondria_transfer",
             "architecture_initialization": TRANSFER_ARCHITECTURE_INITIALIZATION,
             "encoder_initialization": TRANSFER_ENCODER_INITIALIZATION,
+            **training_provenance,
             "invocation": {
                 "base_model_path": str(base_model_path),
                 "glomeruli_data_dir": str(data_root),

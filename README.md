@@ -10,8 +10,8 @@ For the full curated documentation set, see [docs/README.md](docs/README.md).
 The main workflow entrypoint is `eq run-config`. If you want the easiest supported way to run the segmentation workflows in this repo, use one of the committed YAML configs:
 
 ```bash
-eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml --dry-run
-eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
+eq run-config --config configs/full_segmentation_retrain.yaml --dry-run
+eq run-config --config configs/full_segmentation_retrain.yaml
 ```
 
 Other supported workflow configs use the same entrypoint:
@@ -158,15 +158,15 @@ The normal segmentation workflow is controlled by YAML files in `configs/`. Edit
 The all-in-one segmentation run is:
 
 ```bash
-eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
+eq run-config --config configs/full_segmentation_retrain.yaml
 ```
 
-That command reads `configs/segmentation_fixedloader_full_retrain.yaml`, refreshes the cohort manifest, trains a fresh mitochondria base, uses that exported base artifact for glomeruli transfer, trains the no-mitochondria-base comparator, writes trained models under `$EQ_RUNTIME_ROOT/models/segmentation/`, writes comparison evidence under `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/`, and tees the workflow output to `$EQ_RUNTIME_ROOT/logs/run_config/<run_id>/`.
+That command reads `configs/full_segmentation_retrain.yaml`, refreshes the cohort manifest, trains a fresh mitochondria base, uses that exported base artifact for glomeruli transfer, trains the no-mitochondria-base comparator, writes trained models under `$EQ_RUNTIME_ROOT/models/segmentation/`, writes comparison evidence under `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/`, and tees the workflow output to `$EQ_RUNTIME_ROOT/logs/run_config/<run_id>/`.
 
 Dry-run the resolved commands before launching training:
 
 ```bash
-eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml --dry-run
+eq run-config --config configs/full_segmentation_retrain.yaml --dry-run
 ```
 
 Supported workflow configs use the same entrypoint:
@@ -174,7 +174,7 @@ Supported workflow configs use the same entrypoint:
 ```bash
 eq run-config --config configs/mito_pretraining_config.yaml
 eq run-config --config configs/glomeruli_finetuning_config.yaml
-eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
+eq run-config --config configs/full_segmentation_retrain.yaml
 ```
 
 Use the full retraining YAML when you want candidate evidence for the current glomeruli segmentation baseline. Use the mitochondria or glomeruli YAMLs only when you intentionally want to run one stage.
@@ -189,25 +189,20 @@ The YAML owns the routine settings:
 Environment variables are only local overrides. In the common case, you do not need to define model names, model directories, training roots, annotation paths, or MPS fallback flags by hand. Set `EQ_RUNTIME_ROOT` only when you want to run the same YAML against a different runtime tree than the checkout default:
 
 ```bash
-EQ_RUNTIME_ROOT=/path/to/runtime eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
+EQ_RUNTIME_ROOT=/path/to/runtime eq run-config --config configs/full_segmentation_retrain.yaml
 ```
 
 Site-specific source-location overrides are defined in `src/eq/utils/paths.py` for local cohort ingestion. Treat those as local data plumbing, not as part of the ordinary run recipe.
 
 ## Current Segmentation Snapshot
 
-The current checked-in segmentation snapshot comes from the canonical April 24, 2026 workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/all_manual_mask_glomeruli_seed42/`.
+The current checked-in segmentation snapshot comes from the canonical April 24, 2026 workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/latest_run/`.
 
 - Current mitochondria base artifact: `fixedloader_full_mito_base-pretrain_e50_b24_lr1e-3_sz256`
 - Current deterministic glomeruli review panel: `30` crops across `29` images and `25` subjects
 - Review-panel category balance: `10` background, `10` boundary, `10` positive
 
-| Candidate | Dice | Jaccard | Precision | Recall | Current decision state |
-| --- | ---: | ---: | ---: | ---: | --- |
-| `transfer` | `0.8954` | `0.8106` | `0.8106` | `1.0000` | within tie margin |
-| `scratch` | `0.8913` | `0.8040` | `0.8040` | `1.0000` | within tie margin |
-
-The current comparison report is `insufficient_evidence`, so neither candidate is the sole promoted default. In this repo, `insufficient_evidence` is the non-blocked tie case: both candidates cleared the gates on this internal panel, but neither separated enough to become the sole default. `blocked` is a different outcome and means a candidate failed the promotion gates. These figures come from an internal deterministic validation panel and are not external validation. For the checked-in figures and a fuller interpretation, see [docs/TECHNICAL_LAB_NOTEBOOK.md](docs/TECHNICAL_LAB_NOTEBOOK.md#current-segmentation-training-snapshot).
+The current glomeruli candidates are available as research-use artifacts, but the repository does not currently make a front-page segmentation performance claim from that internal panel. Promotion-facing metrics require the hardened validation audit to pass with auditable split provenance, prediction-shape gates, resize-policy evidence, transfer-base provenance, and documentation-claim gating. For the checked-in internal evidence and interpretation, see [docs/TECHNICAL_LAB_NOTEBOOK.md](docs/TECHNICAL_LAB_NOTEBOOK.md#current-segmentation-training-snapshot).
 
 ## Typical Run
 
@@ -220,11 +215,11 @@ The current comparison report is `insufficient_evidence`, so neither candidate i
 ```bash
 eq capabilities
 eq mode --show
-eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml --dry-run
-eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml
+eq run-config --config configs/full_segmentation_retrain.yaml --dry-run
+eq run-config --config configs/full_segmentation_retrain.yaml
 ```
 
-The comparison output reports explicit decision states: `promoted`, `blocked`, or `insufficient_evidence`. If transfer and no-mitochondria-base candidates are within the configured practical tie margin, neither becomes the sole promoted default and both remain explicit research-use comparators.
+The comparison output reports explicit decision and evidence states. Transfer and no-mitochondria-base candidates can remain explicit research-use comparators even when the evidence is `insufficient_evidence`, `audit_missing`, or `not_promotion_eligible` for front-page performance claims.
 
 ## Utility Commands
 
@@ -284,7 +279,7 @@ The main workflow configs live here:
 
 - `configs/mito_pretraining_config.yaml`
 - `configs/glomeruli_finetuning_config.yaml`
-- `configs/segmentation_fixedloader_full_retrain.yaml`
+- `configs/full_segmentation_retrain.yaml`
 
 Path helpers centralize repo-local defaults, runtime roots, and external cohort sources. Prefer YAML-relative paths and the path helpers in `src/eq/utils/paths.py` over hardcoded machine-specific paths.
 

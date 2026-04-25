@@ -1,6 +1,6 @@
 ## Context
 
-The current glomeruli workflow has the right high-level shape but insufficient evidence hygiene. Training uses `src/eq/data_management/datablock_loader.py` for full-image dynamic patching, `src/eq/training/train_glomeruli.py` and `src/eq/training/transfer_learning.py` for transfer/no-base candidate training, and `src/eq/training/compare_glomeruli_candidates.py` plus `src/eq/training/promotion_gates.py` for promotion evidence. The latest README-facing table cites a report under `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/all_manual_mask_glomeruli_seed42/`, but the deterministic panel can include images used during training and is foreground-heavy.
+The current glomeruli workflow has the right high-level shape but insufficient evidence hygiene. Training uses `src/eq/data_management/datablock_loader.py` for full-image dynamic patching, `src/eq/training/train_glomeruli.py` and `src/eq/training/transfer_learning.py` for transfer/no-base candidate training, and `src/eq/training/compare_glomeruli_candidates.py` plus `src/eq/training/promotion_gates.py` for promotion evidence. The full workflow is controlled by `configs/full_segmentation_retrain.yaml` and writes comparison evidence under `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/latest_run/`. Promotion-facing documentation must not cite that report unless the regenerated artifacts pass the hardened audit gates.
 
 The immediate problem is not just one metric. It is the chain from data admission through DataBlock sampling, synchronized crop/augmentation behavior, preprocessing parity, candidate training, deterministic evaluation, promotion gates, and documentation claims.
 
@@ -28,6 +28,8 @@ The Research Partner review stance for this change is:
 - scientific interpretation: prevent internal Dice from being described as external validity or scientific promotion
 - robustness tests: create regression tests for silent leakage, misaligned transforms, threshold drift, and degenerate masks
 - documentation consistency: ensure README/onboarding claims cite only eligible evidence
+
+Audit findings and production decisions are tracked in `audit-results.md`. Chat discussion is not authoritative unless the result is recorded there or in the capability specs.
 
 ## Goals / Non-Goals
 
@@ -149,6 +151,7 @@ The Research Partner review stance for this change is:
 ## Explicit Decisions
 
 - No new workflow ID, committed audit YAML, `eq run-config` dispatch, or user-facing audit CLI is introduced.
+- Durable audit findings and production-level decisions for this change are recorded in `openspec/changes/p0-harden-glomeruli-segmentation-validation/audit-results.md`.
 - Helper module: `src/eq/training/segmentation_validation_audit.py`.
 - Primary regression tests: `tests/test_segmentation_validation_audit.py`.
 - Optional local-runtime integration tests: `tests/integration/test_glomeruli_segmentation_validation_audit_runtime.py`.

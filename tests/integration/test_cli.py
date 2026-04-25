@@ -67,7 +67,7 @@ def test_cli_run_config_dry_runs_all_committed_configs():
     for config_name in (
         'mito_pretraining_config.yaml',
         'glomeruli_finetuning_config.yaml',
-        'segmentation_fixedloader_full_retrain.yaml',
+        'full_segmentation_retrain.yaml',
     ):
         result = run_cli('run-config', '--config', f'configs/{config_name}', '--dry-run')
         assert result.returncode == 0, result.stderr
