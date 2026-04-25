@@ -1,0 +1,90 @@
+# Runnable with:
+#   eq run-config --config openspec/changes/p0-negative-background-glomeruli-supervision/quicktest_negative_background_5epoch.yaml
+#
+# Purpose:
+#   Short real workflow smoke test for negative/background glomeruli supervision.
+#   This keeps the full workflow shape but caps mito, transfer, and scratch/no-base
+#   legs at 5 epochs.
+
+workflow: glomeruli_candidate_comparison
+
+run:
+  name: p0_negative_background_quick_5epoch
+  seed: 42
+  runtime_root_env: EQ_RUNTIME_ROOT
+  runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
+  python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
+  required_env:
+    PYTORCH_ENABLE_MPS_FALLBACK: "1"
+    MPLCONFIGDIR: /tmp/mpl_eq
+  training_device: mps
+
+paths:
+  mito_data_dir: raw_data/mitochondria_data/training
+  glomeruli_data_dir: raw_data/cohorts
+  mito_model_dir: models/segmentation/mitochondria
+  glomeruli_model_dir: models/segmentation/glomeruli
+  comparison_output_dir: output/segmentation_evaluation/glomeruli_candidate_comparison
+  cohort_manifest: raw_data/cohorts/manifest.csv
+  cohort_manifest_summary: derived_data/cohort_manifest/manifest_summary.json
+
+mitochondria:
+  enabled: true
+  model_name: p0_quick_mito_base
+  epochs: 5
+  batch_size: 24
+  learning_rate: 1e-3
+  image_size: 256
+  training_mode: dynamic_full_image_patching
+
+glomeruli_transfer:
+  enabled: true
+  model_name: p0_quick_glomeruli_transfer
+  base_model: latest_current_mito_run
+  epochs: 5
+  training_mode: dynamic_full_image_patching
+  candidate_family: mitochondria_transfer
+
+glomeruli_scratch:
+  enabled: true
+  model_name: p0_quick_glomeruli_no_mito_base
+  epochs: 5
+  training_mode: dynamic_full_image_patching
+  candidate_family: no_mitochondria_base
+  encoder_initialization: imagenet_pretrained_resnet34
+
+candidate_training:
+  batch_size: 12
+  learning_rate: 1e-3
+  image_size: 256
+  crop_size: 512
+
+negative_background_supervision:
+  enabled: true
+  mask_derived_background:
+    enabled: true
+    curation_id: p0_quick_mask_background
+    crops_per_image_limit: 2
+    sampler_weight: 0.5
+    min_foreground_pixels: 0
+  curated_negative_manifest:
+    enabled: false
+    manifest_path: null
+    sampler_weight: 0.5
+
+augmentation_audit:
+  variant: fastai_default
+
+comparison:
+  enabled: true
+  train_candidates: true
+  examples_per_category: 3
+  tie_margin: 0.02
+
+evidence:
+  files:
+    - candidate_summary.csv
+    - candidate_predictions.csv
+    - promotion_report.json
+    - promotion_report.md
+    - metric_by_category.csv

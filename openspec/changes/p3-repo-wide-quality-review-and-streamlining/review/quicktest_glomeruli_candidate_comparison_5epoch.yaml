@@ -1,0 +1,81 @@
+# P3 validation-only quick workflow.
+# Runnable with:
+#   eq run-config --config openspec/changes/p3-repo-wide-quality-review-and-streamlining/review/quicktest_glomeruli_candidate_comparison_5epoch.yaml
+#
+# This keeps the full candidate-comparison workflow shape but caps training
+# epochs for runtime validation. It is not a promotion-evidence config.
+
+workflow: glomeruli_candidate_comparison
+
+run:
+  name: p3_quick_5epoch
+  seed: 42
+  runtime_root_env: EQ_RUNTIME_ROOT
+  runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
+  python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
+  required_env:
+    PYTORCH_ENABLE_MPS_FALLBACK: "1"
+    MPLCONFIGDIR: /tmp/mpl_eq
+  training_device: mps
+
+paths:
+  mito_data_dir: raw_data/mitochondria_data/training
+  glomeruli_data_dir: raw_data/cohorts
+  mito_model_dir: models/segmentation/mitochondria
+  glomeruli_model_dir: models/segmentation/glomeruli
+  comparison_output_dir: output/segmentation_evaluation/glomeruli_candidate_comparison
+  cohort_manifest: raw_data/cohorts/manifest.csv
+  cohort_manifest_summary: derived_data/cohort_manifest/manifest_summary.json
+
+mitochondria:
+  enabled: true
+  model_name: p3_quick_mito_base
+  epochs: 5
+  batch_size: 24
+  learning_rate: 1e-3
+  image_size: 256
+  training_mode: dynamic_full_image_patching
+  encoder_initialization: imagenet_pretrained_resnet34
+  training_scope_decision: heldout_test_preserved
+  inference_claim_status: heldout_evaluable
+  decision_evidence: "P3 quick validation trains only on raw_data/mitochondria_data/training."
+  resize_policy_decision: resize_benefit_unproven
+  resize_decision_evidence: "P3 quick validation preserves the current 256x256 policy without making performance claims."
+
+glomeruli_transfer:
+  enabled: true
+  model_name: p3_quick_glomeruli_transfer
+  base_model: latest_current_mito_run
+  epochs: 5
+  training_mode: dynamic_full_image_patching
+  candidate_family: mitochondria_transfer
+
+glomeruli_scratch:
+  enabled: true
+  model_name: p3_quick_glomeruli_no_mito_base
+  epochs: 5
+  training_mode: dynamic_full_image_patching
+  candidate_family: no_mitochondria_base
+  encoder_initialization: imagenet_pretrained_resnet34
+
+candidate_training:
+  batch_size: 12
+  learning_rate: 1e-3
+  image_size: 256
+  crop_size: 512
+  resize_policy_decision: resize_benefit_unproven
+  resize_decision_evidence: "P3 quick validation checks execution, not resize-policy superiority."
+
+comparison:
+  enabled: true
+  train_candidates: true
+  examples_per_category: 3
+  tie_margin: 0.02
+
+evidence:
+  files:
+    - candidate_summary.csv
+    - candidate_predictions.csv
+    - promotion_report.json
+    - promotion_report.md
+    - promotion_report.html

@@ -180,7 +180,7 @@ The validation audit SHALL classify why candidate performance is poor before the
 
 #### Scenario: Root cause implies insufficient supervision
 - **WHEN** the root cause is `negative_background_supervision_missing` or `training_signal_insufficient`
-- **THEN** the report SHALL identify whether `p2-add-negative-glomeruli-crop-supervision` is the required remediation path
+- **THEN** the report SHALL identify whether `p1-add-negative-glomeruli-crop-supervision` is the required remediation path
 - **AND** it SHALL keep current artifacts available only as research-use candidates until the supervision gap is addressed and reevaluated
 
 ### Requirement: Documentation claims are gated by validation audit evidence

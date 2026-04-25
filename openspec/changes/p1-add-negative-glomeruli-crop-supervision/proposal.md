@@ -13,7 +13,7 @@ This should be tracked as a separate change rather than left as an implicit comp
 
 ## Explicit Decisions
 
-- Change ID: `p2-add-negative-glomeruli-crop-supervision`.
+- Change ID: `p1-add-negative-glomeruli-crop-supervision`.
 - Negative-crop source material: larger MR/TIFF glomeruli source images that do not have full segmentation masks.
 - Supported negative example contract: a crop may be treated as a true negative only when an auditable manifest row records source image path, crop box, negative label, and review provenance or equivalent source-to-mask mapping.
 - Source/artifact boundary: source images remain under `raw_data`; generated negative-crop manifests, audits, and review assets belong under `derived_data`.
@@ -25,3 +25,15 @@ This should be tracked as a separate change rather than left as an implicit comp
 - Affected specs: `segmentation-training-contract`, `glomeruli-candidate-comparison`, `negative-glomeruli-crop-supervision`
 - Affected code: future glomeruli data curation, crop-manifest generation, training samplers, provenance, and promotion audits
 - Affected artifacts: negative-crop annotation manifests, review panels, curation audit summaries, and future training-side provenance that records whether curated negative crops were used
+
+## Required Follow-On
+
+This change defines the supported contract and records that no supported true-negative crop annotations currently exist. It does not create the negative-crop curation artifacts or wire negative-crop manifests into the training sampler.
+
+The next method-development implementation change must:
+
+- curate or generate review batches from `raw_data/cohorts/vegfri_mr/images/`
+- record reviewed crop-level negatives under `derived_data/glomeruli_negative_crops/...`
+- validate the required negative-crop manifest fields
+- add sampler/training provenance support for `negative_crop_supervision_status=present`
+- rerun glomeruli candidate comparison only after those artifacts exist

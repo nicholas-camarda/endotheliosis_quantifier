@@ -11,7 +11,7 @@ The current glomeruli segmentation evidence is not rigorous enough to support RE
 - Audit mitochondria pretraining provenance because the mitochondria base artifact directly affects the glomeruli transfer candidate, even when the mitochondria model is not used for downstream inference.
 - Add hard failure behavior for biased promotion evidence: train/evaluation overlap, missing split provenance, foreground-heavy-only panels, all-foreground-like overcoverage, background false positives, or documentation claims that cite non-held-out evidence make a report not promotion-eligible for front-page claims.
 - Separate runtime availability from promotion eligibility so the current scratch and transfer artifacts can remain available research-use candidates even when they do not support scientific promotion or README-facing performance claims.
-- Keep `p2-add-negative-glomeruli-crop-supervision` separate: curated negative-crop supervision remains a related but distinct data-enrichment change, while this change hardens the validation and audit contract around whatever supervised data currently exists.
+- Keep `p1-add-negative-glomeruli-crop-supervision` separate: curated negative-crop supervision remains a related but distinct data-enrichment change, while this change hardens the validation and audit contract around whatever supervised data currently exists.
 
 ## Capabilities
 
@@ -24,7 +24,7 @@ The current glomeruli segmentation evidence is not rigorous enough to support RE
 
 ## Impact
 
-- Affected CLI/config surfaces: no new user-facing CLI or YAML config; current relevant surfaces include `configs/full_segmentation_retrain.yaml`, `configs/glomeruli_finetuning_config.yaml`, and `eq.training.compare_glomeruli_candidates`.
+- Affected CLI/config surfaces: no new user-facing CLI or YAML config; current relevant surfaces include `configs/glomeruli_candidate_comparison.yaml`, `configs/glomeruli_finetuning_config.yaml`, and `eq.training.compare_glomeruli_candidates`.
 - Affected modules: `src/eq/data_management/datablock_loader.py`, `src/eq/training/train_mitochondria.py`, `src/eq/training/train_glomeruli.py`, `src/eq/training/transfer_learning.py`, `src/eq/training/compare_glomeruli_candidates.py`, `src/eq/training/promotion_gates.py`, and `src/eq/training/segmentation_validation_audit.py`.
 - Affected tests: new or updated tests for split-overlap detection, deterministic manifest source restriction, DataBlock crop-distribution audit, augmentation alignment, preprocessing parity, prediction-shape gates, report schema generation, README/docs claim gating, and optional local runtime artifact checks.
 - Affected artifacts: model sidecar metadata, split manifests, promotion reports, review panels, pytest-generated audit reports under test temp directories, `candidate_summary.csv`, `candidate_predictions.csv`, and docs that summarize current segmentation performance.
@@ -45,4 +45,4 @@ The current glomeruli segmentation evidence is not rigorous enough to support RE
 ## Open Questions
 
 - [audit_first_then_decide] Whether the current admitted masked cohort can support a subject-held-out panel with enough positive, boundary, and background examples for every required category. The deciding evidence source is the optional runtime integration test `tests/integration/test_glomeruli_segmentation_validation_audit_runtime.py` when run against the current ProjectsRuntime artifacts.
-- [defer_ok] Whether curated negative-crop supervision from `p2-add-negative-glomeruli-crop-supervision` should later become mandatory before scientific promotion. This change must expose the current negative/background limitation, but it does not need to solve negative-crop curation.
+- [defer_ok] Whether curated negative-crop supervision from `p1-add-negative-glomeruli-crop-supervision` should later become mandatory before scientific promotion. This change must expose the current negative/background limitation, but it does not need to solve negative-crop curation.

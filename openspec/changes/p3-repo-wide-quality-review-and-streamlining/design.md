@@ -79,7 +79,7 @@ Final validation includes:
 - `PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq --help`
 - `PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq run-config --config configs/mito_pretraining_config.yaml --dry-run`
 - `PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq run-config --config configs/glomeruli_finetuning_config.yaml --dry-run`
-- `PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq run-config --config configs/segmentation_fixedloader_full_retrain.yaml --dry-run`
+- `PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq run-config --config configs/glomeruli_candidate_comparison.yaml --dry-run`
 
 Rationale: This change can affect process, docs, CLI, configs, and tests. A single unit-test run is not enough to prove the repo remains coherent.
 
@@ -112,7 +112,7 @@ Rollback is ordinary git rollback for tracked repo edits. Runtime or cloud-adjac
 - The three required lane reports are `review/documentation-wizard-report.md`, `review/workspace-governor-report.md`, and `review/research-partner-report.md`.
 - The synthesis report is `review/repo-wide-quality-synthesis.md`.
 - The preflight map is `review/preflight-path-and-artifact-map.md`.
-- The supported YAML configs to validate are `configs/mito_pretraining_config.yaml`, `configs/glomeruli_finetuning_config.yaml`, and `configs/segmentation_fixedloader_full_retrain.yaml`.
+- The supported YAML configs to validate are `configs/mito_pretraining_config.yaml`, `configs/glomeruli_finetuning_config.yaml`, and `configs/glomeruli_candidate_comparison.yaml`.
 - The canonical Mac interpreter for project validation is `/Users/ncamarda/mambaforge/envs/eq-mac/bin/python`.
 
 ## Open Questions

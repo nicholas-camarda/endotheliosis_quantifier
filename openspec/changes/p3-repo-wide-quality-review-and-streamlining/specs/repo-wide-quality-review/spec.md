@@ -107,7 +107,7 @@ The change SHALL finish with explicit validation that covers OpenSpec, CLI behav
 - **AND** validation SHALL include `python3 scripts/check_openspec_explicitness.py openspec/changes/p3-repo-wide-quality-review-and-streamlining`
 - **AND** validation SHALL include `/Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m pytest -q`
 - **AND** validation SHALL include `PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq --help`
-- **AND** validation SHALL include dry-runs for `configs/mito_pretraining_config.yaml`, `configs/glomeruli_finetuning_config.yaml`, and `configs/segmentation_fixedloader_full_retrain.yaml` through `eq run-config`
+- **AND** validation SHALL include dry-runs for `configs/mito_pretraining_config.yaml`, `configs/glomeruli_finetuning_config.yaml`, and `configs/glomeruli_candidate_comparison.yaml` through `eq run-config`
 
 #### Scenario: Accepted actions are closed out
 - **WHEN** final validation has run

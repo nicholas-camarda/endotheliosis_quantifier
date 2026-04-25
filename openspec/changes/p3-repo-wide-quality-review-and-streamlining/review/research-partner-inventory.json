@@ -1,0 +1,173 @@
+{
+  "scope": "analysis-review-preflight",
+  "artifact_map": {
+    "repo_root": "/Users/ncamarda/Projects/endotheliosis_quantifier",
+    "project_doc": "/Users/ncamarda/Projects/endotheliosis_quantifier/AGENTS.md",
+    "analysis_registry": "/Users/ncamarda/Projects/endotheliosis_quantifier/analysis_registry.yaml",
+    "scripts_and_tests": [
+      "scripts/check_openspec_explicitness.py",
+      "tests/check_mask_distribution.py",
+      "tests/inspect_masks.py",
+      "tests/test_data_processing_validation.py",
+      "tests/test_datablock_loader.py",
+      "tests/test_glomeruli_candidate_comparison.py",
+      "tests/test_glomeruli_training.py",
+      "tests/test_segmentation_training_contract.py",
+      "tests/test_segmentation_validation_audit.py",
+      "tests/test_training_entrypoint_contract.py",
+      "tests/test_training_smoke_v2.py"
+    ],
+    "notebooks": [],
+    "data_like_dirs": [],
+    "declared_paths": [
+      "- A promoted glomeruli segmentation model requires a current-namespace artifact, an explicit training-data audit with background/negative coverage, validation metrics, and a non-degenerate prediction review. The current local MPS glomeruli export is a Mac compatibility artifact until that promotion gate passes.",
+      "- A supported segmentation model artifact must be exported from the current `src/eq` namespace, load under the current certified environment, and carry enough provenance to identify the training command, code version, package versions, data root, and training mode.",
+      "- Fast import/CLI smoke check: `python -m eq --help`.",
+      "- Keep OpenSpec proposals tied to concrete `src/eq`, CLI, config, data-contract, and artifact changes.",
+      "- Mac commands that need Metal/MPS access must run outside the Codex sandbox. If a sandboxed command reports MPS unavailable, crashes in MPS code, or cannot load a Mac-exported supported artifact, rerun the same substantive command unsandboxed with the `eq-mac` interpreter before drawing conclusions.",
+      "- On macOS, use the `eq-mac` conda environment for project execution, segmentation training, segmentation validation, model export, and model loading. The canonical interpreter is `/Users/ncamarda/mambaforge/envs/eq-mac/bin/python`; do not use the generic `eq` environment for Mac MPS segmentation work.",
+      "- Path defaults and environment overrides live in `src/eq/utils/paths.py`; avoid hardcoded machine-specific paths in code, configs, and docs.",
+      "- Questions tagged `[resolve_before_apply]` are implementation blockers and should be resolved or reclassified before `/opsx:apply`.",
+      "- Real Mac segmentation training/validation: run unsandboxed with `env PYTORCH_ENABLE_MPS_FALLBACK=1 MPLCONFIGDIR=/tmp/mpl_eq /Users/ncamarda/mambaforge/envs/eq-mac/bin/python ...`.",
+      "- Segmentation training should use full-image `images/` plus `masks/` dynamic patching. Mitochondria training uses the physical `training/` full-image root for the internal dynamic train/validation split, while the physical `testing/` root is held out for explicit evaluation. Old static patch datasets were retired to `/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/_retired/glomeruli_static_patch_datasets_2026-04-22` and `/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/_retired/mitochondria_static_patch_datasets_2026-04-22`; do not use or recreate them as active training inputs.",
+      "- The current quantification baseline uses Label Studio image-level grades joined to image/mask pairs and full multi-component union ROI semantics.",
+      "- The development target is WSL with CUDA-capable PyTorch. This checkout may be on macOS with artifact roots symlinked to OneDrive or `~/ProjectsRuntime`.",
+      "- WSL/CUDA setup: `mamba env create -f environment.yml`, then `conda activate eq`, then `pip install -e .[dev]`.",
+      "- `endotheliosis_quantifier` is a Python package with source under `src/eq/` and the `eq` CLI entrypoint.",
+      "- macOS/MPS Python: `/Users/ncamarda/mambaforge/envs/eq-mac/bin/python`.",
+      "- macOS/MPS setup: `mamba env create -f environment-macos.yml`, then `conda activate eq-mac`, then `pip install -e .[dev]`.",
+      "cloud_home: /Users/ncamarda/Library/CloudStorage/OneDrive-Personal/SideProjects/endotheliosis_quantifier",
+      "runtime_home: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier"
+    ],
+    "workspace_path_review": {
+      "status": "ok",
+      "source": "workspace-governor dry-run",
+      "topology_mode": "research-layout",
+      "topology_confidence": "high",
+      "topology_evidence": [
+        "repo lives under a canonical research workspace root",
+        "project metadata declares absolute or home-relative paths",
+        "project metadata references a missing declared path",
+        "AGENTS.md is present",
+        "analysis_registry.yaml is present",
+        "scripts or tests were discovered"
+      ],
+      "proposed_code_root": "/Users/ncamarda/Projects/endotheliosis_quantifier",
+      "proposed_runtime_root": "/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier",
+      "proposed_cloud_home": "/Users/ncamarda/Library/CloudStorage/OneDrive-Personal/SideProjects/endotheliosis_quantifier",
+      "doc_contract_passed": true,
+      "rewrite_candidate_count": 0,
+      "question_count": 1
+    }
+  },
+  "findings": [
+    {
+      "title": "Declared path missing: /negative",
+      "severity": "P2",
+      "evidence_basis": "Direct",
+      "message": "A path declared in project metadata does not exist locally."
+    },
+    {
+      "title": "Declared path missing: /eq",
+      "severity": "P2",
+      "evidence_basis": "Direct",
+      "message": "A path declared in project metadata does not exist locally."
+    },
+    {
+      "title": "Declared path missing: /CLI",
+      "severity": "P2",
+      "evidence_basis": "Direct",
+      "message": "A path declared in project metadata does not exist locally."
+    },
+    {
+      "title": "Declared path missing: /eq",
+      "severity": "P2",
+      "evidence_basis": "Direct",
+      "message": "A path declared in project metadata does not exist locally."
+    },
+    {
+      "title": "Declared path missing: /MPS",
+      "severity": "P2",
+      "evidence_basis": "Direct",
+      "message": "A path declared in project metadata does not exist locally."
+    },
+    {
+      "title": "Declared path missing: /eq/utils/paths.py",
+      "severity": "P2",
+      "evidence_basis": "Direct",
+      "message": "A path declared in project metadata does not exist locally."
+    },
+    {
+      "title": "Declared path missing: /opsx:apply",
+      "severity": "P2",
+      "evidence_basis": "Direct",
+      "message": "A path declared in project metadata does not exist locally."
+    },
+    {
+      "title": "Declared path missing: /validation",
+      "severity": "P2",
+      "evidence_basis": "Direct",
+      "message": "A path declared in project metadata does not exist locally."
+    },
+    {
+      "title": "Declared path missing: /validation",
+      "severity": "P2",
+      "evidence_basis": "Direct",
+      "message": "A path declared in project metadata does not exist locally."
+    },
+    {
+      "title": "Declared path missing: /mask",
+      "severity": "P2",
+      "evidence_basis": "Direct",
+      "message": "A path declared in project metadata does not exist locally."
+    },
+    {
+      "title": "Declared path missing: /CUDA",
+      "severity": "P2",
+      "evidence_basis": "Direct",
+      "message": "A path declared in project metadata does not exist locally."
+    },
+    {
+      "title": "Declared path missing: /eq",
+      "severity": "P2",
+      "evidence_basis": "Direct",
+      "message": "A path declared in project metadata does not exist locally."
+    },
+    {
+      "title": "Declared path missing: /MPS",
+      "severity": "P2",
+      "evidence_basis": "Direct",
+      "message": "A path declared in project metadata does not exist locally."
+    },
+    {
+      "title": "Declared path missing: /MPS",
+      "severity": "P2",
+      "evidence_basis": "Direct",
+      "message": "A path declared in project metadata does not exist locally."
+    },
+    {
+      "title": "Workspace topology remains unresolved",
+      "severity": "P2",
+      "evidence_basis": "Direct",
+      "message": "workspace-governor dry-run reported unresolved workspace questions that should be answered before specialist review relies on path assumptions."
+    }
+  ],
+  "direct_evidence_vs_inference": "Inventory findings are grounded in the repo tree and declared project metadata.",
+  "required_tests_checks": [
+    "Confirm that declared runtime and published-output paths match the actual environment."
+  ],
+  "recommended_actions": [
+    "Resolve missing declared paths before running specialist review lanes.",
+    "Review the workspace-governor dry-run questions before running specialist review lanes."
+  ],
+  "flow": [
+    "review-preflight",
+    "documentation-wizard",
+    "implementation-auditor",
+    "stats-reviewer",
+    "scientific-reviewer",
+    "literature-support-reviewer",
+    "robustness-test-designer",
+    "review-synthesizer"
+  ]
+}

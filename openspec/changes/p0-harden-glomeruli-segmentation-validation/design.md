@@ -1,6 +1,6 @@
 ## Context
 
-The current glomeruli workflow has the right high-level shape but insufficient evidence hygiene. Training uses `src/eq/data_management/datablock_loader.py` for full-image dynamic patching, `src/eq/training/train_glomeruli.py` and `src/eq/training/transfer_learning.py` for transfer/no-base candidate training, and `src/eq/training/compare_glomeruli_candidates.py` plus `src/eq/training/promotion_gates.py` for promotion evidence. The full workflow is controlled by `configs/full_segmentation_retrain.yaml` and writes comparison evidence under `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/latest_run/`. Promotion-facing documentation must not cite that report unless the regenerated artifacts pass the hardened audit gates.
+The current glomeruli workflow has the right high-level shape but insufficient evidence hygiene. Training uses `src/eq/data_management/datablock_loader.py` for full-image dynamic patching, `src/eq/training/train_glomeruli.py` and `src/eq/training/transfer_learning.py` for transfer/no-base candidate training, and `src/eq/training/compare_glomeruli_candidates.py` plus `src/eq/training/promotion_gates.py` for promotion evidence. The full workflow is controlled by `configs/glomeruli_candidate_comparison.yaml` and writes comparison evidence under `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/latest_run/`. Promotion-facing documentation must not cite that report unless the regenerated artifacts pass the hardened audit gates.
 
 The immediate problem is not just one metric. It is the chain from data admission through DataBlock sampling, synchronized crop/augmentation behavior, preprocessing parity, candidate training, deterministic evaluation, promotion gates, and documentation claims.
 
@@ -48,7 +48,7 @@ Audit findings and production decisions are tracked in `audit-results.md`. Chat 
 
 - Do not add a new segmentation architecture.
 - Do not tune model hyperparameters or decide that transfer/no-base should win.
-- Do not implement curated negative-crop supervision; that remains in `p2-add-negative-glomeruli-crop-supervision`.
+- Do not implement curated negative-crop supervision; that remains in `p1-add-negative-glomeruli-crop-supervision`.
 - Do not resurrect static patch datasets or add compatibility shims for legacy FastAI pickle artifacts.
 - Do not claim external validation from internal held-out panels.
 
@@ -167,4 +167,4 @@ Audit findings and production decisions are tracked in `audit-results.md`. Chat 
 
 - [audit_first_then_decide] Whether the current admitted masked cohort supports subject-held-out validation with all required categories. Resolve from `tests/integration/test_glomeruli_segmentation_validation_audit_runtime.py` when run against the current ProjectsRuntime artifacts.
 - [audit_first_then_decide] Whether the mitochondria base should preserve the physical `raw_data/mitochondria_data/testing` split or use all available `training/` plus `testing/` pairs for representation pretraining. Resolve by inspecting whether any current report, README table, or workflow depends on mitochondria held-out performance; if none does, `all_available_pretraining` is allowed with mitochondria inference claims disabled.
-- [defer_ok] Whether future curated negative-crop supervision should become mandatory before scientific promotion. This change records the limitation and remains compatible with `p2-add-negative-glomeruli-crop-supervision`.
+- [defer_ok] Whether future curated negative-crop supervision should become mandatory before scientific promotion. This change records the limitation and remains compatible with `p1-add-negative-glomeruli-crop-supervision`.
