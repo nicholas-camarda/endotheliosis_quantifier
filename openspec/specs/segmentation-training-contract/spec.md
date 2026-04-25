@@ -247,11 +247,12 @@ Promoting a glomeruli segmentation model SHALL require a concrete comparison of 
 
 #### Scenario: Promotion workflow control surface is evaluated
 - **WHEN** glomeruli candidate comparison is defined or documented
-- **THEN** the dedicated training-module CLI is treated as the canonical control surface
-- **AND** stale config-first or patch-era surfaces are updated or retired if they conflict with the supported training contract
+- **THEN** the supported top-level control surface is the dedicated candidate-comparison workflow config `configs/glomeruli_candidate_comparison.yaml` executed through `eq run-config`
+- **AND** stale mixed workflow names such as `segmentation_fixedloader_full_retrain` and `fixedloader_full` are retired if they conflict with the supported training contract
+- **AND** the underlying training-module commands remain recorded in provenance rather than serving as competing orchestration contracts
 
 #### Scenario: Scratch glomeruli candidate requests larger crop context
-- **WHEN** the canonical glomeruli training CLI is run with `--from-scratch`, `--image-size 256`, and `--crop-size 512`
+- **WHEN** the canonical glomeruli training path is run with `--from-scratch`, `--image-size 256`, and `--crop-size 512`
 - **THEN** the scratch training path SHALL preserve the requested `512` crop size through batch-size sizing, dynamic patching, and exported provenance
 - **AND** it SHALL NOT silently replace the requested crop size with `256`
 - **AND** the exported provenance SHALL identify the candidate as the no-mitochondria-base ImageNet-pretrained ResNet34 baseline rather than a literal all-random initialization baseline
@@ -288,4 +289,183 @@ The active segmentation data loader SHALL provide only full-image dynamic-patchi
 #### Scenario: Active dataloader exports are inspected
 - **WHEN** `eq.data_management.datablock_loader` or `eq.data_management` exports are inspected
 - **THEN** they expose dynamic full-image training helpers and validators, not static patch dataloaders
+
+### Requirement: Unmasked large-image crops are not implicit negative supervision
+Segmentation training SHALL NOT silently treat crops from larger unmasked glomeruli source images as supported negative supervision.
+
+#### Scenario: Training pipeline inspects an unlabeled large-image crop source
+- **WHEN** glomeruli training or curation code encounters larger MR/TIFF source images without full masks
+- **THEN** those images are treated as source material only
+- **AND** their unlabeled crops SHALL NOT be treated as true negative glomeruli examples by default
+
+#### Scenario: Curated negative crop supervision is added later
+- **WHEN** glomeruli training uses negative crop supervision from larger unmasked source images
+- **THEN** those negative crops must come from an explicit annotation manifest or equivalent provenance-backed source mapping
+- **AND** the resulting training provenance records that curated negative crop supervision was used
+
+### Requirement: Curated negative crop manifests are additional sampler inputs
+Segmentation training SHALL consume curated negative glomeruli crop manifests only as additional supervised sampler inputs while preserving full-image dynamic patching as the canonical glomeruli training contract.
+
+#### Scenario: Training is configured with curated negative crops
+- **WHEN** glomeruli training receives a supported negative crop manifest
+- **THEN** the primary positive and mask-bearing data source remains the selected full-image root or manifest-backed `raw_data/cohorts` registry
+- **AND** the negative crop manifest contributes reviewed crop boxes to the sampler without creating or requiring active `image_patches/` or `mask_patches/` directories
+
+#### Scenario: Training provenance is written
+- **WHEN** glomeruli training writes model provenance or run metadata
+- **THEN** it records `negative_crop_supervision_status`, `negative_crop_manifest_path`, `negative_crop_manifest_sha256`, `negative_crop_count`, `negative_crop_source_image_count`, `negative_crop_review_protocol_version`, and `negative_crop_sampler_weight`
+- **AND** absence of a curated manifest is recorded as `negative_crop_supervision_status=absent`
+
+### Requirement: Mask-derived background crops are supported negative supervision
+Glomeruli training SHALL support background crop boxes from paired image/mask rows when the corresponding mask crop contains zero foreground pixels.
+
+#### Scenario: Mask-derived background crop is accepted
+- **WHEN** a crop box is generated from an admitted paired glomeruli image/mask row
+- **AND** the mask crop contains zero foreground pixels
+- **THEN** the crop SHALL be eligible for the `mask_derived_background` label
+- **AND** it SHALL be eligible for supervised negative/background training evidence
+- **AND** the source image, source mask, crop box, and zero-foreground validation result are recorded in a manifest or training provenance
+
+#### Scenario: Mask-derived background crop overlaps foreground
+- **WHEN** a proposed mask-derived background crop has any foreground pixels in the paired mask crop
+- **THEN** it SHALL NOT be accepted as negative/background supervision
+- **AND** the audit records the rejection count
+
+### Requirement: Unreviewed MR/TIFF proposals are not trainable
+Glomeruli training SHALL NOT use unmasked MR/TIFF crop proposals as negative supervision unless those rows have reviewed negative annotation status.
+
+#### Scenario: MR/TIFF crop proposal is generated
+- **WHEN** a crop proposal is generated from `raw_data/cohorts/vegfri_mr/images/`
+- **THEN** it is recorded as `proposed_review_only`
+- **AND** it SHALL NOT be consumed by training
+
+#### Scenario: Reviewed MR/TIFF crop is accepted
+- **WHEN** a curated negative manifest row has `label=negative_glomerulus`, `annotation_status=reviewed_negative`, and `negative_scope=crop_only`
+- **THEN** training MAY consume that crop as supervised negative/background evidence
+- **AND** the manifest path and hash are recorded in training provenance
+
+### Requirement: Negative crop manifests are additional sampler inputs
+Negative/background crop manifests SHALL be consumed as additional supervised sampler inputs while preserving full-image dynamic patching as the canonical glomeruli training mode.
+
+#### Scenario: Training uses negative crop manifests
+- **WHEN** glomeruli training is configured with a valid negative crop manifest
+- **THEN** the DataBlock or sampler returns image crops and all-zero masks for those negative crop samples
+- **AND** training still reads source pixels from canonical source image paths
+- **AND** no active static `image_patches/` or `mask_patches/` training root is required
+
+### Requirement: Training provenance records negative supervision state
+Glomeruli training metadata SHALL disclose whether negative/background crop supervision was present.
+
+#### Scenario: Training completes with negative supervision enabled
+- **WHEN** a glomeruli model artifact is exported after using negative/background crop supervision
+- **THEN** metadata records `negative_crop_supervision_status`, `negative_crop_manifest_path`, `negative_crop_manifest_sha256`, `negative_crop_count`, `mask_derived_background_crop_count`, `curated_negative_crop_count`, `negative_crop_source_image_count`, `negative_crop_review_protocol_version`, and `negative_crop_sampler_weight`
+
+#### Scenario: Training completes without negative supervision
+- **WHEN** no validated negative/background manifest is supplied
+- **THEN** metadata records `negative_crop_supervision_status=absent`
+
+### Requirement: Augmentation policy is explicit provenance
+Glomeruli training metadata SHALL record the actual augmentation policy used by the DataBlock.
+
+#### Scenario: Training uses the default FastAI augmentation policy
+- **WHEN** glomeruli training builds DataLoaders with default batch transforms
+- **THEN** metadata records the FastAI augmentation settings and repo constants
+- **AND** it does not claim config-defined gaussian noise or brightness/contrast settings were active unless code actually applied them
+
+### Requirement: Mitochondria transfer base records training-scope provenance
+Mitochondria artifacts used as glomeruli transfer bases SHALL record whether they preserved the physical mitochondria testing split or used all available mitochondria pairs for representation pretraining.
+
+#### Scenario: Mitochondria base artifact is exported
+- **WHEN** `src/eq/training/train_mitochondria.py` exports a mitochondria base artifact
+- **THEN** its sidecar metadata SHALL record `mitochondria_training_scope`, `mitochondria_inference_claim_status`, physical `training/` image count, physical `testing/` image count, actual pretraining image paths, actual pretraining mask paths, split policy, resize/preprocessing policy, training command, code version, and package versions
+- **AND** the artifact SHALL record whether the physical `raw_data/mitochondria_data/testing` root was included in model fitting
+
+#### Scenario: All mitochondria data are used for representation pretraining
+- **WHEN** a mitochondria base uses both physical `training/` and `testing/` roots for model fitting
+- **THEN** it SHALL set `mitochondria_training_scope=all_available_pretraining`
+- **AND** it SHALL set `mitochondria_inference_claim_status=not_applicable_for_inference_claim`
+- **AND** it MAY be used as a glomeruli transfer base only when glomeruli promotion evidence remains held-out and audit-passing
+
+#### Scenario: Mitochondria testing split is preserved
+- **WHEN** a workflow reports mitochondria held-out segmentation performance or uses mitochondria held-out metrics for model selection
+- **THEN** the physical `raw_data/mitochondria_data/testing` root SHALL remain excluded from mitochondria training
+- **AND** the artifact SHALL set `mitochondria_training_scope=heldout_test_preserved`
+- **AND** it SHALL set `mitochondria_inference_claim_status=heldout_evaluable`
+
+#### Scenario: Mitochondria scope is missing for transfer
+- **WHEN** a glomeruli transfer candidate references a mitochondria base artifact with missing or inconsistent mitochondria training-scope provenance
+- **THEN** the transfer candidate MAY remain `runtime_use_status=available_research_use` if it loads and runs
+- **AND** its promotion evidence SHALL be `audit_missing` until transfer-base provenance is resolved
+
+### Requirement: Glomeruli artifacts record split and sampler provenance
+Supported glomeruli segmentation artifacts SHALL record enough split, sampler, crop, augmentation, and preprocessing provenance to audit whether model training and promotion evaluation were statistically separable.
+
+#### Scenario: Glomeruli model artifact is exported
+- **WHEN** `src/eq/training/train_glomeruli.py` or `src/eq/training/transfer_learning.py` exports a glomeruli candidate artifact
+- **THEN** its sidecar metadata SHALL record `data_root`, `training_mode`, `candidate_family`, `seed`, `split_seed`, `splitter_name`, `train_images`, `valid_images`, `source_image_size_summary`, `source_mask_size_summary`, `crop_size`, `image_size`, `output_size`, `crop_to_output_resize_ratio`, `aspect_ratio_policy`, `resize_method`, image interpolation, mask interpolation, mask-binarization-after-resize semantics, prediction resize-back assumptions, threshold/resize ordering assumptions, `positive_focus_p`, `min_pos_pixels`, `pos_crop_attempts`, augmentation settings, learner preprocessing, transfer-base artifact path when applicable, transfer-base `mitochondria_training_scope` when applicable, training command, code version, and package versions
+- **AND** the split sidecar SHALL be machine-readable enough for `segmentation_validation_audit.py` to compare candidate splits against deterministic promotion manifests
+
+#### Scenario: Split sidecar cannot be audited
+- **WHEN** an exported glomeruli artifact lacks train/validation image identifiers or the identifiers cannot be resolved
+- **THEN** the artifact SHALL be classified as `runtime_use_status=available_research_use` if it loads and runs in the supported environment
+- **AND** it SHALL be classified as `promotion_evidence_status=audit_missing`
+- **AND** it SHALL NOT be treated as scientifically promoted or used for README-facing current-performance claims
+
+### Requirement: DataBlock sampling audit is available for supported training roots
+Supported segmentation training roots SHALL be auditable through the same DataBlock construction path used for training.
+
+#### Scenario: DataBlock audit samples a supported glomeruli root
+- **WHEN** `segmentation_validation_audit.py` audits `$EQ_RUNTIME_ROOT/raw_data/cohorts` or `$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>`
+- **THEN** it SHALL build DataLoaders through `build_segmentation_dls_dynamic_patching`
+- **AND** it SHALL report crop foreground distributions for train and validation batches without writing generated training data into the repository
+
+#### Scenario: Static patch root is encountered during audit
+- **WHEN** the audit target is a retired or active static patch root such as `image_patches/` or `mask_patches/`
+- **THEN** the audit SHALL fail closed with the same unsupported-root policy as training
+- **AND** it SHALL NOT convert that root into an active training or validation input
+
+### Requirement: Resize policy is auditable for supported training roots
+Supported segmentation training SHALL expose the crop-to-network resize policy clearly enough to test whether the policy is technically aligned and promotion-supporting.
+
+#### Scenario: Dynamic-patching DataLoaders resize crops
+- **WHEN** `build_segmentation_dls_dynamic_patching` builds glomeruli DataLoaders with a `crop_size` different from `output_size`
+- **THEN** the training provenance SHALL identify source image/mask size summaries, selected crop size, final network input size, crop-to-output resize ratio, aspect-ratio policy, resize method, image interpolation, mask interpolation, mask binarization semantics, and threshold/resize ordering assumptions
+- **AND** the audit SHALL be able to distinguish the current `512 -> 256` downsampling policy from no-downsample or less-downsample sensitivity runs
+
+#### Scenario: Source-resolution distributions are promotion-relevant
+- **WHEN** glomeruli artifacts are compared for promotion
+- **THEN** their provenance SHALL be sufficient to compare train, validation, and deterministic promotion source-resolution distributions
+- **AND** the candidate SHALL NOT be `promotion_eligible` when resolution distribution imbalance is unresolved
+
+#### Scenario: Resize policy benefit is not established
+- **WHEN** a training artifact uses downsampling but lacks held-out resize-sensitivity evidence
+- **THEN** the artifact MAY remain `runtime_use_status=available_research_use`
+- **AND** it SHALL NOT be classified as `promotion_eligible` on resize-dependent performance claims
+
+### Requirement: Dynamic validation split is not promotion evidence by itself
+Training-time validation metrics from stochastic dynamic crops SHALL NOT be sufficient evidence for scientific promotion.
+
+#### Scenario: Training completes with validation metrics
+- **WHEN** glomeruli training completes and records training-time validation Dice or Jaccard
+- **THEN** those metrics SHALL be treated as optimization diagnostics
+- **AND** scientific promotion SHALL still require the held-out deterministic promotion manifest and validation audit gates
+
+#### Scenario: Training and promotion use the same data root
+- **WHEN** candidate training and candidate promotion both reference the admitted cohort registry root
+- **THEN** the promotion workflow SHALL use recorded split provenance to select held-out evaluation images only
+- **AND** it SHALL mark promotion evidence as `not_promotion_eligible` if held-out selection cannot be verified
+
+### Requirement: Training provenance distinguishes runtime support from scientific promotion
+The artifact provenance contract SHALL continue to separate current-namespace runtime support from scientific model promotion.
+
+#### Scenario: Artifact loads successfully
+- **WHEN** a glomeruli artifact loads in the certified environment and can run inference
+- **THEN** the sidecar SHALL allow `artifact_status=supported_runtime`
+- **AND** `runtime_use_status` SHALL allow `available_research_use`
+- **AND** `promotion_evidence_status` SHALL remain `audit_missing`, `insufficient_evidence_for_promotion`, `not_promotion_eligible`, or `promotion_eligible` according to the hardened validation audit rather than loadability alone
+
+#### Scenario: Artifact passes hardened audit
+- **WHEN** a glomeruli artifact clears split integrity, DataBlock audit, deterministic held-out metrics, prediction-shape gates, and documentation-claim gates
+- **THEN** it MAY be marked as scientifically promoted by the promotion report
+- **AND** the sidecar SHALL reference the exact promotion report and validation audit payload that justified the status
 

@@ -237,19 +237,27 @@ The system SHALL distinguish legitimate multiplicity from true duplicates and co
 - **THEN** the latest authoritative export SHALL supply the canonical row while older exports MAY be used only to recover missing fields
 
 ### Requirement: Segmentation transport audit gate
-The system SHALL require a cohort-specific segmentation transport audit before any scored-only cohort is admitted into downstream grading. The audit SHALL identify the segmentation artifact used, stratify reviewed examples by cohort and treatment group, and record whether predictions remain non-degenerate and grading-usable on the audited slice.
+The system SHALL require a dedicated cohort-specific segmentation transport-audit workflow before any scored-only cohort is admitted into downstream grading. The transport-audit workflow SHALL identify the segmentation artifact used, stratify reviewed examples by cohort and treatment group, record whether predictions remain non-degenerate and grading-usable on the audited slice, and keep those audit outputs separate from downstream quantification artifacts.
 
 #### Scenario: Cohort fails transport audit
 - **WHEN** the segmenter produces degenerate, missing, or grading-invalid glomerulus predictions on the audited scored-only cohort slice
-- **THEN** the cohort SHALL be marked excluded for grading use and the system SHALL write an explicit exclusion artifact with the failure reason
+- **THEN** the cohort SHALL be marked excluded for grading use
+- **AND** the system SHALL write an explicit exclusion artifact with the failure reason under `output/segmentation_evaluation/`
 
 #### Scenario: Cohort passes transport audit
 - **WHEN** the segmenter produces non-degenerate, review-approved glomerulus predictions on the audited harmonized scored-only cohort slice
 - **THEN** the cohort SHALL be eligible for predicted-ROI grading artifact generation
+- **AND** the transport-audit record SHALL identify the explicit segmentation artifact and prediction outputs that downstream grading may consume
+
+#### Scenario: Transport audit remains separate from quantification
+- **WHEN** the dedicated transport-audit workflow is executed for an external cohort
+- **THEN** it SHALL NOT train the ordinal model, emit quantification metrics, or write quantification review artifacts under `output/quantification_results/`
+- **AND** downstream grading SHALL require a separate quantification workflow invocation
 
 #### Scenario: MR transport audit tests high-resolution preprocessing
 - **WHEN** the cohort uses giant whole-field source images such as the MR TIFF batches
-- **THEN** the transport audit SHALL explicitly record the preprocessing or tiling strategy used for inference and SHALL fail closed if the cohort cannot be processed reliably under that strategy
+- **THEN** the transport audit SHALL explicitly record the preprocessing or tiling strategy used for inference
+- **AND** it SHALL fail closed if the cohort cannot be processed reliably under that strategy
 
 ### Requirement: Verified Dox masks are first-class manual-mask training labels
 The system SHALL treat verified Dox recovered masks as equivalent-stature manual-mask glomeruli training labels alongside Lauren manual-mask rows.
@@ -304,20 +312,16 @@ The system SHALL treat MR as an external concordance and transport-evaluation co
 - **THEN** it SHALL exclude `cohort_id=vegfri_mr` rows from training admission even if MR harmonization and transport audit succeed
 
 #### Scenario: MR concordance compares human and inferred medians
-- **WHEN** the implementation runs the phase 1 MR evaluation workflow
+- **WHEN** the implementation runs the phase 1 MR concordance workflow
 - **THEN** it SHALL compare the human image-level median derived from the workbook replicates against the inferred image-level median derived from segmented glomerulus predictions on the copied giant TIFF images
 
 #### Scenario: MR inference path is explicit
-- **WHEN** the implementation runs the phase 1 MR evaluation workflow
+- **WHEN** the implementation runs the phase 1 MR concordance workflow
 - **THEN** it SHALL tile the copied giant TIFF images, run segmentation on those tiles, extract accepted inferred glomerulus ROIs, grade the accepted ROIs, and aggregate inferred ROI grades to an image-level median before concordance reporting
-
-#### Scenario: MR concordance metrics are fixed
-- **WHEN** the implementation emits the phase 1 MR concordance report
-- **THEN** it SHALL report at least MAE, Spearman correlation, exact agreement, and within-one-step agreement between human and inferred image-level medians, stratified by batch and treatment group when those strata are available
 
 #### Scenario: MR outputs are evaluation artifacts
 - **WHEN** the implementation completes for the current MR cohort
-- **THEN** the output artifacts for `cohort_id=vegfri_mr` SHALL be transport-audit and concordance-evaluation artifacts rather than training-set expansion artifacts
+- **THEN** the output artifacts for `cohort_id=vegfri_mr` SHALL be transport-audit and concordance-evaluation artifacts rather than training-set expansion or general quantification artifacts
 
 ### Requirement: Predicted-ROI grading artifact contract
 The system SHALL represent admitted scored-only cohorts as predicted-ROI grading artifacts that remain distinct from manual-mask quantification artifacts. These artifacts SHALL record image provenance, predicted ROI provenance, score provenance, and the segmentation artifact identity used to generate the ROI inputs.
