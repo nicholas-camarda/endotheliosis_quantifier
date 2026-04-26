@@ -23,6 +23,8 @@ from eq.training.compare_glomeruli_candidates import (
     _merged_provenance,
     _predict_crop,
     _resize_sensitivity_from_screening,
+    _save_front_facing_validation_panel,
+    _select_front_facing_examples,
     _threshold_policy_from_audit,
     _validation_mask_paths,
     _write_shared_training_split,
@@ -50,6 +52,93 @@ def _make_training_root(root: Path) -> None:
         image[..., 1] = 120
         Image.fromarray(image).save(images / subject / f"{stem}.jpg")
         Image.fromarray((mask * 255).astype(np.uint8)).save(masks / subject / f"{stem}_mask.png")
+
+
+def test_front_facing_validation_panel_uses_category_examples(tmp_path):
+    image = np.zeros((32, 32, 3), dtype=np.uint8)
+    image[..., 0] = 120
+    source_image = np.zeros((64, 64, 3), dtype=np.uint8)
+    source_image[..., 1] = 120
+    truth = np.zeros((32, 32), dtype=np.uint8)
+    truth[8:24, 8:24] = 1
+    pred = truth.copy()
+    examples = [
+        {
+            "row": {
+                "category": "background",
+                "manifest_index": 0,
+                "image_name": "background.jpg",
+                "crop_box": "[0, 0, 32, 32]",
+                "dice": 1.0,
+                "jaccard": 1.0,
+                "precision": 0.0,
+                "recall": 0.0,
+                "pixel_accuracy": 1.0,
+                "truth_foreground_fraction": 0.0,
+                "prediction_foreground_fraction": 0.0,
+            },
+            "source_image": source_image,
+            "image_crop": image,
+            "truth_crop": np.zeros((32, 32), dtype=np.uint8),
+            "pred_crop": np.zeros((32, 32), dtype=np.uint8),
+        },
+        {
+            "row": {
+                "category": "boundary",
+                "manifest_index": 1,
+                "image_name": "boundary.jpg",
+                "crop_box": "[0, 0, 32, 32]",
+                "dice": 0.85,
+                "jaccard": 0.74,
+                "precision": 0.80,
+                "recall": 0.90,
+                "pixel_accuracy": 0.95,
+                "truth_foreground_fraction": float(truth.mean()),
+                "prediction_foreground_fraction": float(pred.mean()),
+            },
+            "source_image": source_image,
+            "image_crop": image,
+            "truth_crop": truth,
+            "pred_crop": pred,
+        },
+        {
+            "row": {
+                "category": "positive",
+                "manifest_index": 2,
+                "image_name": "positive.jpg",
+                "crop_box": "[0, 0, 32, 32]",
+                "dice": 0.92,
+                "jaccard": 0.86,
+                "precision": 0.91,
+                "recall": 0.93,
+                "pixel_accuracy": 0.97,
+                "truth_foreground_fraction": float(truth.mean()),
+                "prediction_foreground_fraction": float(pred.mean()),
+            },
+            "source_image": source_image,
+            "image_crop": image,
+            "truth_crop": truth,
+            "pred_crop": pred,
+        },
+    ]
+
+    selected = _select_front_facing_examples(examples)
+    assert [row["row"]["category"] for row in selected] == ["background", "boundary", "positive"]
+
+    panel_path = tmp_path / "transfer_validation_predictions.png"
+    _save_front_facing_validation_panel(
+        asset_path=panel_path,
+        family="transfer",
+        model_path="/tmp/transfer.pkl",
+        examples=examples,
+        expected_size=256,
+        prediction_threshold=0.75,
+    )
+
+    assert panel_path.exists()
+    rendered = Image.open(panel_path)
+    assert rendered.width > rendered.height // 2
+    assert np.asarray(rendered).std() > 0
 
 
 def test_determine_promotion_decision_marks_tie_as_insufficient_evidence():

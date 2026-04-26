@@ -23,13 +23,13 @@ That segmentation output supports image-level endotheliosis quantification workf
 
 ## Current Training Snapshot
 
-The current checked-in segmentation results come from the canonical April 24, 2026 workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/latest_run/`.
+The current checked-in segmentation results come from the April 25, 2026 P0 workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/production_glomeruli_candidate_p0_contract_20260425_adjudicated/`.
 
 - Current candidate artifacts are identified by the comparison report and model sidecars under the runtime model root.
-- Deterministic glomeruli review panel: `30` crops across `29` images and `25` subjects
+- Deterministic glomeruli review panel: `30` crops across `27` images and `5` subjects
 - Category balance: `10` background, `10` boundary, `10` positive
 
-The current glomeruli candidates are research-use artifacts, not current defaults. The internal deterministic panel is useful for debugging and comparison, but onboarding does not cite it as current model performance until the hardened validation audit passes with held-out split provenance, prediction-shape gates, resize-policy evidence, and documentation-claim gating. The checked-in internal figures live in [TECHNICAL_LAB_NOTEBOOK.md](TECHNICAL_LAB_NOTEBOOK.md#current-segmentation-training-snapshot).
+The current glomeruli candidates are research-use artifacts, not current defaults. The internal deterministic panel is useful for debugging and comparison, but onboarding does not present one model as the default because transfer and scratch remain within the configured practical tie margin. The checked-in internal figures live in [TECHNICAL_LAB_NOTEBOOK.md](TECHNICAL_LAB_NOTEBOOK.md#current-segmentation-training-snapshot).
 
 ## What Data You Need
 

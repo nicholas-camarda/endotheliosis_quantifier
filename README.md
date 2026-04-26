@@ -199,13 +199,13 @@ Site-specific source-location overrides are defined in `src/eq/utils/paths.py` f
 
 ## Current Segmentation Snapshot
 
-The current checked-in segmentation snapshot comes from the canonical April 24, 2026 workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/latest_run/`.
+The current checked-in segmentation snapshot comes from the April 25, 2026 P0 workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/production_glomeruli_candidate_p0_contract_20260425_adjudicated/`.
 
 - Current candidate artifacts are recorded by the comparison report and model sidecars under the runtime model root.
-- Current deterministic glomeruli review panel: `30` crops across `29` images and `25` subjects
+- Current deterministic glomeruli review panel: `30` crops across `27` images and `5` subjects
 - Review-panel category balance: `10` background, `10` boundary, `10` positive
 
-The current glomeruli candidates are available as research-use artifacts, but the repository does not currently make a front-page segmentation performance claim from that internal panel. Promotion-facing metrics require the hardened validation audit to pass with auditable split provenance, prediction-shape gates, resize-policy evidence, transfer-base provenance, and documentation-claim gating. For the checked-in internal evidence and interpretation, see [docs/TECHNICAL_LAB_NOTEBOOK.md](docs/TECHNICAL_LAB_NOTEBOOK.md#current-segmentation-training-snapshot).
+The current glomeruli candidates are available as research-use artifacts, but the repository does not currently select a single default candidate because transfer and scratch remain within the configured practical tie margin. For the checked-in internal evidence and interpretation, see [docs/TECHNICAL_LAB_NOTEBOOK.md](docs/TECHNICAL_LAB_NOTEBOOK.md#current-segmentation-training-snapshot).
 
 ## Typical Run
 

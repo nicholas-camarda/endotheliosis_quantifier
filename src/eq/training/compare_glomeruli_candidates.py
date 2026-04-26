@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Mapping, Sequence
 
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from eq.core.constants import DEFAULT_VAL_RATIO
 from eq.data_management.datablock_loader import (
@@ -101,6 +101,8 @@ VALIDATION_ADJUDICATION_BOOLEAN_COLUMNS = {
 VALIDATION_ADJUDICATION_NONBLOCKING = "applied_nonblocking"
 VALIDATION_ADJUDICATION_BLOCKING = "applied_blocking"
 VALIDATION_ADJUDICATION_NOT_REVIEWED = "not_reviewed"
+FRONT_FACING_PANEL_CATEGORIES = ("background", "boundary", "positive")
+FRONT_FACING_PANEL_TILE_SIZE = 320
 
 logger = get_logger("eq.glomeruli_candidate_comparison")
 
@@ -1461,7 +1463,7 @@ def _crop_array(arr: np.ndarray, crop_box: Sequence[int]) -> np.ndarray:
     return arr[top:bottom, left:right]
 
 
-def _load_crop_pair(item: Dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+def _load_crop_bundle(item: Dict[str, Any]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     image_path = Path(item.get("image_path") or resolve_image_path_for_mask(item["mask_path"]))
     mask_path = Path(item["mask_path"])
     image = np.asarray(Image.open(image_path).convert("RGB"))
@@ -1470,7 +1472,7 @@ def _load_crop_pair(item: Dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
         mask = mask[..., 0]
     truth_crop = (_crop_array(mask, item["crop_box"]) > 0).astype(np.uint8)
     image_crop = _crop_array(image, item["crop_box"])
-    return image_crop, truth_crop
+    return image, image_crop, truth_crop
 
 
 def _predict_crop_with_audit(
@@ -1543,6 +1545,219 @@ def _save_review_panel(
     Image.fromarray(panel).save(asset_path)
 
 
+def _front_facing_panel_font(size: int) -> ImageFont.ImageFont:
+    for font_path in (
+        "/Library/Fonts/Arial.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ):
+        try:
+            return ImageFont.truetype(font_path, size=size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _resize_panel_rgb(arr: np.ndarray, size: int = FRONT_FACING_PANEL_TILE_SIZE) -> Image.Image:
+    return Image.fromarray(arr.astype(np.uint8)).resize((size, size), Image.Resampling.BILINEAR)
+
+
+def _model_input_panel(image_crop: np.ndarray, expected_size: int) -> np.ndarray:
+    return np.asarray(
+        Image.fromarray(image_crop.astype(np.uint8)).resize(
+            (expected_size, expected_size),
+            Image.Resampling.BILINEAR,
+        )
+    )
+
+
+def _raw_context_panel(source_image: np.ndarray, crop_box: Sequence[int], size: int = FRONT_FACING_PANEL_TILE_SIZE) -> Image.Image:
+    image = Image.fromarray(source_image.astype(np.uint8)).convert("RGB")
+    source_width, source_height = image.size
+    scale = min(size / source_width, size / source_height)
+    resized_width = max(1, int(round(source_width * scale)))
+    resized_height = max(1, int(round(source_height * scale)))
+    resized = image.resize((resized_width, resized_height), Image.Resampling.BILINEAR)
+    canvas = Image.new("RGB", (size, size), "white")
+    offset_x = (size - resized_width) // 2
+    offset_y = (size - resized_height) // 2
+    canvas.paste(resized, (offset_x, offset_y))
+    left, top, right, bottom = [int(value) for value in crop_box]
+    box = (
+        offset_x + int(round(left * scale)),
+        offset_y + int(round(top * scale)),
+        offset_x + int(round(right * scale)),
+        offset_y + int(round(bottom * scale)),
+    )
+    draw = ImageDraw.Draw(canvas)
+    draw.rectangle(box, outline=(255, 220, 0), width=max(3, size // 90))
+    return canvas
+
+
+def _error_overlay(image_crop: np.ndarray, truth_crop: np.ndarray, pred_crop: np.ndarray) -> np.ndarray:
+    base = image_crop.astype(np.float32).copy()
+    truth = truth_crop.astype(bool)
+    pred = pred_crop.astype(bool)
+    overlay = np.zeros_like(base)
+    overlay[truth & pred] = (0, 255, 0)
+    overlay[pred & ~truth] = (255, 0, 0)
+    overlay[truth & ~pred] = (0, 0, 255)
+    active = truth | pred
+    base[active] = (0.45 * base[active]) + (0.55 * overlay[active])
+    return np.clip(base, 0, 255).astype(np.uint8)
+
+
+def _prediction_metric_sort_value(example: Dict[str, Any]) -> tuple[float, ...]:
+    row = example["row"]
+    category = str(row.get("category", ""))
+    dice = float(row.get("dice") or 0.0)
+    jaccard = float(row.get("jaccard") or 0.0)
+    pixel_accuracy_value = float(row.get("pixel_accuracy") or 0.0)
+    pred_fg = float(row.get("prediction_foreground_fraction") or 0.0)
+    truth_fg = float(row.get("truth_foreground_fraction") or 0.0)
+    foreground_delta = abs(pred_fg - truth_fg)
+    if category == "background":
+        return (pred_fg, -pixel_accuracy_value, -dice)
+    return (-dice, -jaccard, foreground_delta)
+
+
+def _select_front_facing_examples(examples: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    selected: List[Dict[str, Any]] = []
+    used_manifest_indices: set[int] = set()
+    by_category: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for example in examples:
+        by_category[str(example["row"].get("category"))].append(example)
+
+    for category in FRONT_FACING_PANEL_CATEGORIES:
+        category_examples = sorted(by_category.get(category, []), key=_prediction_metric_sort_value)
+        if category_examples:
+            selected_example = category_examples[0]
+            selected.append(selected_example)
+            used_manifest_indices.add(int(selected_example["row"].get("manifest_index", -1)))
+
+    if len(selected) < len(FRONT_FACING_PANEL_CATEGORIES):
+        for example in sorted(examples, key=_prediction_metric_sort_value):
+            manifest_index = int(example["row"].get("manifest_index", -1))
+            if manifest_index in used_manifest_indices:
+                continue
+            selected.append(example)
+            used_manifest_indices.add(manifest_index)
+            if len(selected) == len(FRONT_FACING_PANEL_CATEGORIES):
+                break
+    return selected
+
+
+def _draw_panel_label(draw: ImageDraw.ImageDraw, xy: tuple[int, int], lines: Sequence[str], font: ImageFont.ImageFont) -> None:
+    x, y = xy
+    for line in lines:
+        draw.text((x, y), line, fill=(20, 20, 20), font=font)
+        bbox = draw.textbbox((x, y), line, font=font)
+        y += (bbox[3] - bbox[1]) + 4
+
+
+def _save_front_facing_validation_panel(
+    *,
+    asset_path: Path,
+    family: str,
+    model_path: str | None,
+    examples: Sequence[Dict[str, Any]],
+    expected_size: int,
+    prediction_threshold: float,
+) -> List[Dict[str, Any]]:
+    selected = _select_front_facing_examples(examples)
+    if not selected:
+        return []
+
+    tile = FRONT_FACING_PANEL_TILE_SIZE
+    gap = 22
+    top = 118
+    label_height = 82
+    columns = ("Raw source", f"Input ({expected_size}px)", "Ground truth", "Prediction", "Overlay")
+    width = (tile * len(columns)) + (gap * (len(columns) + 1))
+    height = top + len(selected) * (tile + label_height + gap) + gap
+    canvas = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(canvas)
+    title_font = _front_facing_panel_font(22)
+    label_font = _front_facing_panel_font(14)
+    small_font = _front_facing_panel_font(12)
+    draw.text(
+        (gap, 18),
+        f"Glomeruli Validation Examples - {family} candidate",
+        fill=(20, 20, 20),
+        font=title_font,
+    )
+    draw.text(
+        (gap, 52),
+        f"Source: deterministic candidate-comparison manifest | threshold={prediction_threshold:.2f} | model_input={expected_size}px",
+        fill=(45, 45, 45),
+        font=label_font,
+    )
+    if model_path:
+        draw.text((gap, 78), f"Model: {Path(model_path).name}", fill=(80, 80, 80), font=small_font)
+
+    for column_index, column in enumerate(columns):
+        x = gap + column_index * (tile + gap)
+        draw.text((x, top - 28), column, fill=(20, 20, 20), font=label_font)
+
+    for row_index, example in enumerate(selected):
+        row = example["row"]
+        source_image = example["source_image"]
+        image_crop = example["image_crop"]
+        truth_crop = example["truth_crop"]
+        pred_crop = example["pred_crop"]
+        crop_box_values = json.loads(str(row.get("crop_box", "[]")))
+        y = top + row_index * (tile + label_height + gap)
+        truth_overlay = _overlay_mask(image_crop, truth_crop, (0, 255, 0))
+        pred_overlay = _overlay_mask(image_crop, pred_crop, (255, 0, 0))
+        error_overlay = _error_overlay(image_crop, truth_crop, pred_crop)
+        tiles = (
+            _raw_context_panel(source_image, crop_box_values, tile),
+            _resize_panel_rgb(_model_input_panel(image_crop, expected_size), tile),
+            _resize_panel_rgb(truth_overlay, tile),
+            _resize_panel_rgb(pred_overlay, tile),
+            _resize_panel_rgb(error_overlay, tile),
+        )
+        for column_index, tile_image in enumerate(tiles):
+            x = gap + column_index * (tile + gap)
+            canvas.paste(tile_image, (x, y))
+
+        category = str(row.get("category", ""))
+        image_name = str(row.get("image_name", ""))
+        crop_box = str(row.get("crop_box", ""))
+        metrics_line = (
+            f"{category} | Dice {float(row.get('dice') or 0.0):.3f} | "
+            f"Jaccard {float(row.get('jaccard') or 0.0):.3f} | "
+            f"Precision {float(row.get('precision') or 0.0):.3f} | Recall {float(row.get('recall') or 0.0):.3f}"
+        )
+        foreground_line = (
+            f"truth_fg {float(row.get('truth_foreground_fraction') or 0.0):.3f} | "
+            f"pred_fg {float(row.get('prediction_foreground_fraction') or 0.0):.3f} | "
+            f"crop {crop_box} | input_resize={expected_size}px"
+        )
+        label_y = y + tile + 10
+        _draw_panel_label(
+            draw,
+            (gap, label_y),
+            (
+                f"{row_index + 1}. {image_name}",
+                metrics_line,
+                foreground_line,
+            ),
+            small_font,
+        )
+
+    legend_y = height - 26
+    draw.text(
+        (gap, legend_y),
+        "Raw source shows the selected crop box. Overlay colors: green=TP, red=FP, blue=FN.",
+        fill=(45, 45, 45),
+        font=small_font,
+    )
+    asset_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(asset_path)
+    return [dict(example["row"]) for example in selected]
+
+
 def _safe_slug(value: str) -> str:
     chars = [ch.lower() if ch.isalnum() else "_" for ch in value]
     slug = "".join(chars).strip("_")
@@ -1600,8 +1815,9 @@ def _evaluate_runtime(
     learn.model.eval()
     truth_masks: List[np.ndarray] = []
     pred_masks: List[np.ndarray] = []
+    front_facing_examples: List[Dict[str, Any]] = []
     for index, item in enumerate(manifest):
-        image_crop, truth_crop = _load_crop_pair(item)
+        source_image, image_crop, truth_crop = _load_crop_bundle(item)
         pred_crop, predict_audit = _predict_crop_with_audit(
             learn,
             image_crop,
@@ -1629,33 +1845,41 @@ def _evaluate_runtime(
             truth_crop=truth_crop,
             pred_crop=pred_crop,
         )
-        prediction_rows.append(
+        prediction_row = {
+            "family": runtime.family,
+            "comparison_role": runtime.role,
+            "seed": provenance.get("seed", runtime.seed),
+            "image_path": item.get("image_path"),
+            "image_name": image_name,
+            "subject_id": subject_id,
+            "mask_path": item.get("mask_path"),
+            "category": category,
+            "cohort_id": item.get("cohort_id"),
+            "lane_assignment": item.get("lane_assignment"),
+            "manifest_index": index,
+            "crop_box": json.dumps(item.get("crop_box")),
+            "truth_foreground_fraction": float(truth_crop.mean()),
+            "prediction_foreground_fraction": float(pred_crop.mean()),
+            "prediction_tensor_shape": predict_audit["raw_output_shape"],
+            "prediction_probability_shape": predict_audit["prediction_probability_shape"],
+            "prediction_resized_shape": predict_audit["prediction_resized_shape"],
+            "threshold": predict_audit["threshold"],
+            "threshold_resize_order": predict_audit["threshold_resize_order"],
+            "dice": metrics["dice"],
+            "jaccard": metrics["jaccard"],
+            "precision": metrics["precision"],
+            "recall": metrics["recall"],
+            "pixel_accuracy": metrics["pixel_accuracy"],
+            "review_panel_path": str(asset_path),
+        }
+        prediction_rows.append(prediction_row)
+        front_facing_examples.append(
             {
-                "family": runtime.family,
-                "comparison_role": runtime.role,
-                "seed": provenance.get("seed", runtime.seed),
-                "image_path": item.get("image_path"),
-                "image_name": image_name,
-                "subject_id": subject_id,
-                "mask_path": item.get("mask_path"),
-                "category": category,
-                "cohort_id": item.get("cohort_id"),
-                "lane_assignment": item.get("lane_assignment"),
-                "manifest_index": index,
-                "crop_box": json.dumps(item.get("crop_box")),
-                "truth_foreground_fraction": float(truth_crop.mean()),
-                "prediction_foreground_fraction": float(pred_crop.mean()),
-                "prediction_tensor_shape": predict_audit["raw_output_shape"],
-                "prediction_probability_shape": predict_audit["prediction_probability_shape"],
-                "prediction_resized_shape": predict_audit["prediction_resized_shape"],
-                "threshold": predict_audit["threshold"],
-                "threshold_resize_order": predict_audit["threshold_resize_order"],
-                "dice": metrics["dice"],
-                "jaccard": metrics["jaccard"],
-                "precision": metrics["precision"],
-                "recall": metrics["recall"],
-                "pixel_accuracy": metrics["pixel_accuracy"],
-                "review_panel_path": str(asset_path),
+                "row": prediction_row,
+                "source_image": source_image,
+                "image_crop": image_crop,
+                "truth_crop": truth_crop,
+                "pred_crop": pred_crop,
             }
         )
 
@@ -1670,6 +1894,23 @@ def _evaluate_runtime(
     summary["metrics"] = _aggregate_metrics(truth_masks, pred_masks)
     summary["baselines"] = baselines
     summary["prediction_rows"] = prediction_rows
+    front_facing_panel_path = asset_dir / f"{runtime.family}_validation_predictions.png"
+    front_facing_panel_rows = _save_front_facing_validation_panel(
+        asset_path=front_facing_panel_path,
+        family=runtime.family,
+        model_path=summary.get("artifact_path"),
+        examples=front_facing_examples,
+        expected_size=expected_size,
+        prediction_threshold=prediction_threshold,
+    )
+    summary["front_facing_validation_panel_path"] = str(front_facing_panel_path)
+    summary["front_facing_validation_panel_selection_rule"] = (
+        "one example per category; background=min_prediction_foreground_fraction; "
+        "boundary_positive=max_dice_then_jaccard_then_foreground_fraction_match"
+    )
+    summary["front_facing_validation_panel_manifest_indices"] = [
+        row.get("manifest_index") for row in front_facing_panel_rows
+    ]
     return summary
 
 
@@ -1876,6 +2117,9 @@ def _write_markdown_report(
                 f"- Promotion evidence status: `{summary.get('promotion_evidence_status')}`",
                 f"- Role: `{summary['comparison_role']}`",
                 f"- Artifact: `{summary['artifact_path']}`",
+                f"- Front-facing validation panel: `{summary.get('front_facing_validation_panel_path')}`",
+                f"- Front-facing validation panel selection: `{summary.get('front_facing_validation_panel_selection_rule')}` "
+                f"`manifest_indices={summary.get('front_facing_validation_panel_manifest_indices')}`",
                 f"- Seed: `{summary.get('seed')}`",
                 f"- Gate blocked: `{summary['gate']['blocked']}`",
                 f"- Gate reasons: `{', '.join(summary['gate'].get('reasons', []))}`",
@@ -1956,6 +2200,20 @@ def _write_html_report(
         threshold_policy = summary.get("threshold_policy", {})
         category_gate_status = summary.get("category_gate_status", {})
         validation_adjudication = summary.get("validation_adjudication", {})
+        front_panel_path = summary.get("front_facing_validation_panel_path")
+        front_panel_html = ""
+        if front_panel_path:
+            front_panel_rule = html.escape(str(summary.get("front_facing_validation_panel_selection_rule")))
+            front_panel_indices = html.escape(str(summary.get("front_facing_validation_panel_manifest_indices")))
+            front_panel_html = (
+                "<figure class='front-panel'>"
+                f"<img src=\"{html.escape(str(Path('review_assets') / Path(str(front_panel_path)).name))}\" "
+                f"alt=\"{html.escape(summary['family'])} validation examples\" />"
+                "<figcaption>Front-facing validation examples selected from the deterministic comparison manifest. "
+                "The rows come from the same scored prediction table used by the promotion gates. "
+                f"Selection rule: {front_panel_rule}. Manifest indices: {front_panel_indices}.</figcaption>"
+                "</figure>"
+            )
         gallery = []
         for row in prediction_rows:
             image_label = html.escape(str(row.get("image_name") or Path(str(row.get("image_path", ""))).name))
@@ -2046,6 +2304,7 @@ def _write_html_report(
             "<strong>Gate reasons</strong>"
             f"<ul>{reason_items}</ul>"
             "</div>"
+            f"{front_panel_html}"
             "<div class='gallery'>"
             + "".join(gallery)
             + "</div>"
@@ -2060,6 +2319,9 @@ def _write_html_report(
         ".summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:12px 0 14px 0;}"
         ".summary-grid div{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px;}"
         ".gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(640px,1fr));gap:16px;}"
+        ".front-panel{margin:0 0 16px 0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px;}"
+        ".front-panel img{width:100%;height:auto;border-radius:8px;border:1px solid #e2e8f0;background:#fff;}"
+        ".front-panel figcaption{font-size:13px;margin-top:10px;color:#334155;}"
         ".panel-card{margin:0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:12px;}"
         ".panel-card img{width:100%;height:auto;border-radius:8px;border:1px solid #e2e8f0;background:#fff;}"
         ".panel-card figcaption{font-size:13px;margin-top:10px;color:#334155;}"
@@ -2369,6 +2631,13 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
                 "comparison_role": summary["comparison_role"],
                 "available": summary["available"],
                 "artifact_path": summary["artifact_path"],
+                "front_facing_validation_panel_path": summary.get("front_facing_validation_panel_path"),
+                "front_facing_validation_panel_selection_rule": summary.get(
+                    "front_facing_validation_panel_selection_rule"
+                ),
+                "front_facing_validation_panel_manifest_indices": "|".join(
+                    str(index) for index in summary.get("front_facing_validation_panel_manifest_indices", [])
+                ),
                 "seed": summary.get("seed"),
                 "runtime_use_status": summary.get("runtime_use_status"),
                 "promotion_evidence_status": summary.get("promotion_evidence_status"),

@@ -17,7 +17,9 @@ import numpy as np
 import torch
 from PIL import Image
 
-from eq.data_management.datablock_loader import validate_supported_segmentation_training_root
+from eq.data_management.datablock_loader import (
+    validate_supported_segmentation_training_root,
+)
 from eq.data_management.model_loading import load_model_safely
 from eq.evaluation.segmentation_metrics import pixel_accuracy
 from eq.inference.prediction_core import create_prediction_core
@@ -25,7 +27,7 @@ from eq.training.compare_glomeruli_candidates import (
     CandidateRuntime,
     _annotate_manifest_with_context,
     _build_deterministic_manifest,
-    _load_crop_pair,
+    _load_crop_bundle,
 )
 from eq.training.promotion_gates import binary_dice_jaccard, binary_precision_recall
 from eq.training.segmentation_validation_audit import resize_policy_record
@@ -497,7 +499,7 @@ def run_overcoverage_audit(args: argparse.Namespace) -> dict[str, Any]:
             )
             continue
         for index, item in enumerate(manifest):
-            image_crop, truth_crop = _load_crop_pair(item)
+            _source_image, image_crop, truth_crop = _load_crop_bundle(item)
             prob, predict_audit = predict_foreground_probability(
                 learn,
                 image_crop,
