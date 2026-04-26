@@ -109,3 +109,10 @@
 - [x] 12.4 Update `validation_adjudication.csv` and `audit-results.md` so the reviewed `59_Image3.jpg` ground-truth omission and `59_Image4.jpg` acceptable borderline boundary cases are durable OpenSpec evidence.
 - [x] 12.5 Add regression coverage for adjudication-aware gate recomputation and run focused tests.
 - [x] 12.6 Rerun the production candidate comparison with the adjudication CSV attached, record artifact paths and verdict in `audit-results.md`, and use that verdict to decide the next quantification-validation step.
+
+## 13. Full-Cohort Quantification Amendment
+
+- [x] 13.1 Add manifest-root quantification support so `raw_data/cohorts/manifest.csv` can drive admitted scored mask-paired ROI extraction across cohorts.
+- [x] 13.2 Update `configs/endotheliosis_quantification.yaml` to run the full admitted scored mask-paired cohort rather than the Lauren-only cohort root.
+- [x] 13.3 Add regression coverage proving Lauren and DOX admitted mask-paired rows are included while MR evaluation-only rows are excluded from the mask-based ROI workflow.
+- [x] 13.4 Run the full-cohort quantification workflow, record row counts, metrics, and stability blockers in `audit-results.md`.

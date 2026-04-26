@@ -12,6 +12,7 @@ from eq.quantification.pipeline import (
     ALLOWED_SCORE_VALUES,
     _prepare_encoder_for_forward,
     build_image_level_scored_example_table,
+    build_manifest_scored_example_table,
     build_scored_example_table,
     evaluate_embedding_table,
     extract_image_level_roi_crops,
@@ -206,6 +207,96 @@ def test_build_image_level_scored_table_and_extract_rois(tmp_path: Path):
     assert roi_table.loc[0, 'roi_bbox_y1'] == 95
     assert 0.4 < roi_table.loc[0, 'roi_largest_component_area_fraction'] < 0.6
     assert Path(str(roi_table.loc[0, 'roi_image_path'])).exists()
+
+
+def test_manifest_scored_examples_use_all_admitted_mask_paired_rows(tmp_path: Path):
+    cohorts = tmp_path / 'raw_data' / 'cohorts'
+    lauren_images = cohorts / 'lauren_preeclampsia' / 'images'
+    lauren_masks = cohorts / 'lauren_preeclampsia' / 'masks'
+    dox_images = cohorts / 'vegfri_dox' / 'images' / 'M1'
+    dox_masks = cohorts / 'vegfri_dox' / 'masks' / 'M1'
+    for path in (lauren_images, lauren_masks, dox_images, dox_masks):
+        path.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(np.zeros((16, 16, 3), dtype=np.uint8)).save(
+        lauren_images / 't19_image0.jpg'
+    )
+    Image.fromarray(np.ones((16, 16), dtype=np.uint8) * 255).save(
+        lauren_masks / 't19_image0_mask.jpg'
+    )
+    Image.fromarray(np.zeros((16, 16, 3), dtype=np.uint8)).save(
+        dox_images / 'M1_Image0.jpg'
+    )
+    Image.fromarray(np.ones((16, 16), dtype=np.uint8) * 255).save(
+        dox_masks / 'M1_Image0_mask.png'
+    )
+    pd.DataFrame(
+        [
+            {
+                'cohort_id': 'lauren_preeclampsia',
+                'image_path': 'raw_data/cohorts/lauren_preeclampsia/images/t19_image0.jpg',
+                'mask_path': 'raw_data/cohorts/lauren_preeclampsia/masks/t19_image0_mask.jpg',
+                'score': 0.5,
+                'source_image_name': 'T19_Image0.jpg',
+                'source_sample_id': 'T19_Image0',
+                'manifest_row_id': 'lauren_preeclampsia__000001',
+                'join_status': 'joined',
+                'admission_status': 'admitted',
+                'lane_assignment': 'manual_mask_core',
+                'score_status': '',
+                'source_score_sheet': 'labelstudio_annotations.json',
+                'score_path': 'raw_data/cohorts/lauren_preeclampsia/scores/labelstudio_scores.csv',
+            },
+            {
+                'cohort_id': 'vegfri_dox',
+                'image_path': 'raw_data/cohorts/vegfri_dox/images/M1/M1_Image0.jpg',
+                'mask_path': 'raw_data/cohorts/vegfri_dox/masks/M1/M1_Image0_mask.png',
+                'score': 1.0,
+                'source_image_name': 'M1_Image0.jpg',
+                'source_sample_id': 'M1',
+                'manifest_row_id': 'vegfri_dox__000001',
+                'join_status': 'joined',
+                'admission_status': 'admitted',
+                'lane_assignment': 'manual_mask_external',
+                'score_status': 'ok',
+                'source_score_sheet': 'labelstudio_scores.csv',
+                'score_path': 'raw_data/cohorts/vegfri_dox/scores/labelstudio_scores.csv',
+            },
+            {
+                'cohort_id': 'vegfri_mr',
+                'image_path': 'raw_data/cohorts/vegfri_mr/images/MR1.tif',
+                'mask_path': '',
+                'score': 2.0,
+                'source_image_name': 'MR1.tif',
+                'source_sample_id': 'MR1',
+                'manifest_row_id': 'vegfri_mr__000001',
+                'join_status': 'joined',
+                'admission_status': 'evaluation_only',
+                'lane_assignment': 'mr_concordance_only',
+                'score_status': 'ok',
+                'source_score_sheet': 'MR workbook',
+                'score_path': 'raw_data/cohorts/vegfri_mr/scores/workbook.xlsx',
+            },
+        ]
+    ).to_csv(cohorts / 'manifest.csv', index=False)
+
+    scored = build_manifest_scored_example_table(cohorts, tmp_path / 'out')
+
+    assert len(scored) == 2
+    assert set(scored['cohort_id']) == {'lauren_preeclampsia', 'vegfri_dox'}
+    assert set(scored['lane_assignment']) == {
+        'manual_mask_core',
+        'manual_mask_external',
+    }
+    assert scored['join_status'].eq('ok').all()
+    assert set(scored['subject_prefix']) == {
+        'lauren_preeclampsia:T19',
+        'vegfri_dox:M1',
+    }
+    summary = json.loads(
+        (tmp_path / 'out' / 'manifest_scored_examples_summary.json').read_text()
+    )
+    assert summary['n_scored_rows'] == 2
+    assert summary['cohort_counts'] == {'lauren_preeclampsia': 1, 'vegfri_dox': 1}
 
 
 def test_canonical_ordinal_classifier_outputs_probability_simplex():

@@ -306,6 +306,220 @@ def build_image_level_scored_example_table(
     return scored_table
 
 
+def _manifest_runtime_root(manifest_root: Path) -> Path:
+    if manifest_root.name == 'cohorts' and manifest_root.parent.name == 'raw_data':
+        return manifest_root.parent.parent
+    return manifest_root
+
+
+def _resolve_manifest_path(manifest_root: Path, raw_path: Any) -> str:
+    text = str(raw_path or '').strip()
+    if not text or text.lower() == 'nan':
+        return ''
+    path = Path(text).expanduser()
+    if path.is_absolute():
+        return str(path)
+    if path.parts and path.parts[0] == 'raw_data':
+        return str(_manifest_runtime_root(manifest_root) / path)
+    return str(manifest_root / path)
+
+
+def _manifest_subject_group(row: pd.Series, image_path: Path) -> str:
+    cohort_id = str(row.get('cohort_id') or 'unknown_cohort')
+    source_sample_id = str(row.get('source_sample_id') or '').strip()
+    if source_sample_id:
+        if '_Image' in source_sample_id:
+            subject = source_sample_id.split('_Image', 1)[0]
+        else:
+            subject = source_sample_id
+    elif image_path.parent.name and image_path.parent.name != 'images':
+        subject = image_path.parent.name
+    else:
+        subject = image_path.stem.split('_', 1)[0]
+    return f'{cohort_id}:{subject}'
+
+
+def build_manifest_scored_example_table(
+    manifest_root: Path,
+    output_dir: Path,
+    *,
+    cohort_ids: Optional[list[str]] = None,
+    lane_assignments: Optional[list[str]] = None,
+) -> pd.DataFrame:
+    """Create scored examples from the runtime cohort manifest."""
+    manifest_root = Path(manifest_root)
+    manifest_path = manifest_root / 'manifest.csv'
+    if not manifest_path.exists():
+        raise FileNotFoundError(f'Cohort manifest not found: {manifest_path}')
+
+    manifest = pd.read_csv(manifest_path)
+    required_columns = {
+        'cohort_id',
+        'image_path',
+        'mask_path',
+        'score',
+        'source_image_name',
+        'source_sample_id',
+        'manifest_row_id',
+        'join_status',
+        'admission_status',
+        'lane_assignment',
+    }
+    missing = sorted(required_columns - set(manifest.columns))
+    if missing:
+        raise ContractPreparationError(
+            f'Cohort manifest is missing required quantification columns: {missing}'
+        )
+
+    selected = manifest[
+        manifest['admission_status'].astype(str).eq('admitted')
+        & manifest['image_path'].notna()
+        & manifest['mask_path'].notna()
+        & manifest['score'].notna()
+    ].copy()
+    selected = selected[selected['image_path'].astype(str).str.strip().ne('')]
+    selected = selected[selected['mask_path'].astype(str).str.strip().ne('')]
+    if cohort_ids:
+        selected = selected[selected['cohort_id'].astype(str).isin(cohort_ids)]
+    if lane_assignments:
+        selected = selected[selected['lane_assignment'].astype(str).isin(lane_assignments)]
+    if selected.empty:
+        raise ContractPreparationError(
+            'Cohort manifest did not contain admitted scored image/mask rows for quantification'
+        )
+
+    rows: list[dict[str, Any]] = []
+    for row in selected.sort_values(['cohort_id', 'source_sample_id', 'source_image_name']).itertuples(index=False):
+        series = pd.Series(row._asdict())
+        raw_image_path = Path(_resolve_manifest_path(manifest_root, series['image_path']))
+        raw_mask_path = Path(_resolve_manifest_path(manifest_root, series['mask_path']))
+        score = float(series['score'])
+        score_status_raw = str(series.get('score_status') or '').strip()
+        score_status = score_status_raw if score_status_raw and score_status_raw != 'nan' else 'ok'
+        join_status = 'ok' if raw_image_path.exists() and raw_mask_path.exists() and score_status == 'ok' else 'join_failed'
+        subject_image_id = str(series.get('manifest_row_id') or '').strip()
+        if not subject_image_id or subject_image_id == 'nan':
+            subject_image_id = f"{series['cohort_id']}__{raw_image_path.stem}"
+        rows.append(
+            {
+                'subject_image_id': subject_image_id,
+                'image_name': str(series.get('source_image_name') or raw_image_path.name),
+                'subject_prefix': _manifest_subject_group(series, raw_image_path),
+                'glomerulus_id': 1,
+                'score': score,
+                'raw_image_path': str(raw_image_path),
+                'raw_mask_path': str(raw_mask_path),
+                'join_status': join_status,
+                'score_status': score_status,
+                'score_resolution': 'manifest_admitted_score',
+                'roi_status': 'pending' if join_status == 'ok' and score_status == 'ok' else 'join_failed',
+                'cohort_id': str(series.get('cohort_id') or ''),
+                'lane_assignment': str(series.get('lane_assignment') or ''),
+                'manifest_row_id': subject_image_id,
+                'source_sample_id': str(series.get('source_sample_id') or ''),
+                'source_score_sheet': str(series.get('source_score_sheet') or ''),
+                'score_path': str(series.get('score_path') or ''),
+            }
+        )
+
+    scored_table = pd.DataFrame(rows).reset_index(drop=True)
+    summary = {
+        'manifest_path': str(manifest_path),
+        'n_manifest_rows': int(len(manifest)),
+        'n_scored_rows': int(len(scored_table)),
+        'cohort_counts': scored_table['cohort_id'].value_counts(dropna=False).to_dict(),
+        'lane_counts': scored_table['lane_assignment'].value_counts(dropna=False).to_dict(),
+        'join_status_counts': scored_table['join_status'].value_counts(dropna=False).to_dict(),
+        'score_status_counts': scored_table['score_status'].value_counts(dropna=False).to_dict(),
+        'score_value_counts': scored_table['score'].value_counts(dropna=False).sort_index().to_dict(),
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    scored_table.to_csv(output_dir / 'scored_examples.csv', index=False)
+    _save_json(summary, output_dir / 'manifest_scored_examples_summary.json')
+    return scored_table
+
+
+def run_manifest_quantification(
+    *,
+    manifest_root: Path,
+    segmentation_model_path: Path,
+    output_dir: Path,
+    stop_after: str = 'model',
+) -> Dict[str, Path]:
+    """Run quantification from the runtime cohort manifest."""
+    manifest_root = Path(manifest_root)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = manifest_root / 'manifest.csv'
+    raw_inventory_path = output_dir / 'raw_inventory.csv'
+    mapping_template_path = output_dir / 'legacy_to_canonical_mapping_template.csv'
+    manifest = pd.read_csv(manifest_path)
+    manifest.to_csv(raw_inventory_path, index=False)
+    pd.DataFrame(
+        columns=[
+            'subject_prefix',
+            'legacy_image_stem',
+            'image_name',
+            'mask_name',
+            'has_mask',
+            'canonical_subject_image_id',
+        ]
+    ).to_csv(mapping_template_path, index=False)
+    scored_table = build_manifest_scored_example_table(
+        manifest_root, output_dir / 'scored_examples'
+    )
+    manifest_summary_path = (
+        output_dir / 'scored_examples' / 'manifest_scored_examples_summary.json'
+    )
+    if stop_after == 'contract':
+        return {
+            'raw_inventory': raw_inventory_path,
+            'mapping_template': mapping_template_path,
+            'manifest': manifest_path,
+            'manifest_scored_summary': manifest_summary_path,
+            'scored_examples': output_dir / 'scored_examples' / 'scored_examples.csv',
+        }
+
+    roi_table = extract_image_level_roi_crops(scored_table, output_dir / 'roi_crops')
+    if stop_after == 'roi':
+        return {
+            'raw_inventory': raw_inventory_path,
+            'mapping_template': mapping_template_path,
+            'manifest': manifest_path,
+            'manifest_scored_summary': manifest_summary_path,
+            'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
+        }
+
+    embedding_table = extract_embedding_table(
+        roi_table=roi_table,
+        segmentation_model_path=Path(segmentation_model_path),
+        output_dir=output_dir / 'embeddings',
+    )
+    if stop_after == 'embeddings':
+        return {
+            'raw_inventory': raw_inventory_path,
+            'mapping_template': mapping_template_path,
+            'manifest': manifest_path,
+            'manifest_scored_summary': manifest_summary_path,
+            'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
+            'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
+        }
+
+    model_artifacts = evaluate_embedding_table(
+        embedding_table, output_dir / 'ordinal_model'
+    )
+    return {
+        'raw_inventory': raw_inventory_path,
+        'mapping_template': mapping_template_path,
+        'manifest': manifest_path,
+        'manifest_scored_summary': manifest_summary_path,
+        'scored_examples': output_dir / 'scored_examples' / 'scored_examples.csv',
+        'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
+        'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
+        **model_artifacts,
+    }
+
+
 def extract_roi_crops(
     scored_table: pd.DataFrame,
     output_dir: Path,
@@ -1121,16 +1335,29 @@ def run_contract_first_quantification(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    if score_source not in {'auto', 'labelstudio', 'spreadsheet'}:
+        raise ValueError(f'Unsupported score_source: {score_source}')
+
+    manifest_path = project_dir / 'manifest.csv'
+    if manifest_path.exists() and score_source == 'auto' and annotation_source is None:
+        return run_manifest_quantification(
+            manifest_root=project_dir,
+            segmentation_model_path=Path(segmentation_model_path),
+            output_dir=output_dir,
+            stop_after=stop_after,
+        )
+
     inventory_path = output_dir / 'raw_inventory.csv'
     inventory_raw_project(project_dir).to_csv(inventory_path, index=False)
     mapping_template_path = generate_mapping_template(
         project_dir, output_dir / 'legacy_to_canonical_mapping_template.csv'
     )
 
-    if score_source not in {'auto', 'labelstudio', 'spreadsheet'}:
-        raise ValueError(f'Unsupported score_source: {score_source}')
-
-    if annotation_source is None and score_source in {'auto', 'labelstudio'}:
+    if (
+        annotation_source is None
+        and score_source in {'auto', 'labelstudio'}
+        and not (score_source == 'auto' and manifest_path.exists())
+    ):
         annotation_source = discover_label_studio_annotation_source(project_dir)
 
     use_labelstudio_scores = score_source == 'labelstudio' or (

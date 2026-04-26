@@ -10,14 +10,15 @@
 workflow: endotheliosis_quantification
 
 run:
-  name: endotheliosis_quantification_transfer_p0_adjudicated
+  name: endotheliosis_quantification_full_cohort_transfer_p0_adjudicated
   runtime_root_env: EQ_RUNTIME_ROOT
   runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
   python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
 
 inputs:
-  # Required scored project/cohort root with images, masks, and scores/metadata.
-  data_dir: raw_data/cohorts/lauren_preeclampsia
+  # Required scored cohort registry root. The workflow consumes admitted scored
+  # image/mask rows from manifest.csv across mask-paired cohorts.
+  data_dir: raw_data/cohorts
 
   # Required explicit upstream segmentation artifact. Missing paths fail closed.
   # Candidate selection evidence:
@@ -35,4 +36,4 @@ options:
   stop_after: model
 
 outputs:
-  quantification_dir: output/quantification_results/endotheliosis_quantification_transfer_p0_adjudicated
+  quantification_dir: output/quantification_results/endotheliosis_quantification_full_cohort_transfer_p0_adjudicated

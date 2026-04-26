@@ -128,6 +128,20 @@ Candidate comparison SHALL support a first-class adjudication contract for revie
 - **THEN** the category gate SHALL remain blocking
 - **AND** reports SHALL still record the adjudication details so the blocker is interpreted as reviewed evidence rather than an unreviewed machine failure
 
+### Requirement: Quantification readiness uses the full admitted scored mask-paired cohort
+Quantification validation SHALL run from the cohort registry manifest when the operator requests the full scored dataset.
+
+#### Scenario: Cohort registry root is supplied to quantification
+- **WHEN** the quantification workflow receives `raw_data/cohorts` and `raw_data/cohorts/manifest.csv` exists
+- **THEN** it SHALL build scored examples from admitted rows with non-missing score, image path, and mask path
+- **AND** it SHALL preserve `cohort_id`, `lane_assignment`, `manifest_row_id`, and source score provenance in `scored_examples.csv`
+- **AND** it SHALL exclude MR evaluation-only rows from this mask-based ROI workflow unless they have admitted mask-paired manifest rows
+
+#### Scenario: Full-cohort quantification completes with stability blockers
+- **WHEN** the full-cohort ordinal baseline emits numerical warnings or lacks target-class support
+- **THEN** the run SHALL still write its artifacts
+- **AND** `ordinal_metrics.json` SHALL record stability blockers instead of certifying the model as scientifically complete
+
 ### Requirement: Candidate comparison treats resize benefit as an evidence gate
 Candidate comparison SHALL require explicit resize evidence before `resize_benefit_unproven` can be cleared or used to justify production retraining.
 

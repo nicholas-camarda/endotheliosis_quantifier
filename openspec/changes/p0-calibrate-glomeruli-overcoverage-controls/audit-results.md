@@ -682,3 +682,59 @@ Quantification result summary:
 - Embedding extraction produced `88` ROI embedding rows with the selected transfer segmentation artifact.
 - Ordinal baseline completed with overall MAE `0.48863636363636365`, accuracy `0.3977272727272727`, within-one-bin accuracy `0.6931818181818182`, and quadratic weighted kappa `-0.0794315632011966`.
 - The quantification run is technically executable end to end. Scientific interpretation should focus next on whether the ROI/embedding/ordinal outputs are meaningful enough for the intended biological claim, not on another segmentation retraining cycle by default.
+
+### Full-cohort quantification run
+
+Reason for amendment:
+
+- The first quantification run used only `raw_data/cohorts/lauren_preeclampsia`.
+- The runtime cohort manifest also contains admitted scored DOX rows with masks, so quantification readiness must be evaluated on the full admitted scored mask-paired cohort.
+
+Implementation:
+
+- `run_contract_first_quantification()` now treats `raw_data/cohorts/manifest.csv` as the canonical full-cohort quantification contract when `data_dir` is the cohort registry root.
+- The manifest branch filters to admitted rows with non-missing score, image path, and mask path.
+- It preserves `cohort_id`, `lane_assignment`, `manifest_row_id`, `source_sample_id`, score-sheet provenance, and score-path provenance in `scored_examples.csv`.
+- MR rows remain excluded from this mask-based ROI workflow because the current MR manifest rows are `mr_concordance_only` / `evaluation_only`, not admitted mask-paired ROI rows.
+
+Command:
+
+```bash
+env PYTORCH_ENABLE_MPS_FALLBACK=1 MPLCONFIGDIR=/tmp/mpl_eq PYTHONPATH=src \
+  /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq run-config \
+  --config configs/endotheliosis_quantification.yaml
+```
+
+Output:
+
+```text
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/quantification_results/endotheliosis_quantification_full_cohort_transfer_p0_adjudicated
+```
+
+Full-cohort row accounting:
+
+- Manifest rows: `1079`.
+- Admitted scored mask-paired rows used: `707`.
+- Lauren preeclampsia rows: `88` from `manual_mask_core`.
+- VEGFRi DOX rows: `619` from `manual_mask_external`.
+- ROI rows with `roi_status=ok`: `707`.
+- Embedding rows: `707`.
+- Prediction rows: `707`.
+- Score counts: `0.0=204`, `0.5=194`, `1.0=113`, `1.5=93`, `2.0=81`, `2.5=0`, `3.0=22`.
+
+Full-cohort ordinal baseline:
+
+- Examples: `707`.
+- Subject groups: `60`.
+- Overall MAE: `0.7333804809052333`.
+- Accuracy: `0.2531824611032532`.
+- Within-one-bin accuracy: `0.6082036775106082`.
+- Quadratic weighted kappa: `0.033564105417810075`.
+
+Stability verdict:
+
+- The full-cohort run is technically executable end to end across Lauren plus DOX.
+- The ordinal baseline is not scientifically complete: `ordinal_metrics.json` records `certification_status=incomplete`.
+- Stability blockers are `numerical_instability` and `missing_target_class_support`.
+- Missing target support is specifically the absent `2.5` score class.
+- The next quantification work should focus on the ordinal/statistical modeling surface and cohort-stratified interpretation, not on rerunning the same narrow Lauren-only workflow.
