@@ -567,9 +567,36 @@ Interpretation:
 - The remaining failure is a production training-signal/generalization problem concentrated in a small number of hard validation crops, especially a true-background crop that both candidates classify as foreground at thresholds that otherwise preserve glomerulus recall.
 - The current model family can get close on aggregate metrics, but it is not robust enough for production quantification gates.
 
+### Post-run visual adjudication
+
+Adjudication artifact:
+
+```text
+openspec/changes/p0-calibrate-glomeruli-overcoverage-controls/validation_adjudication.csv
+```
+
+Reviewer: project owner.
+
+Adjudication decisions:
+
+- The automated background false-positive blocker on `59_Image3.jpg`, crop `[0, 0, 512, 512]`, is reclassified as `ground_truth_omission`.
+- Interpretation: the crop appears to contain a glomerulus-like structure that was not masked. The model prediction is plausibly correct, and this failure should not be treated as a true model false positive until the source mask is corrected or an adjudication-aware validation manifest is generated.
+- This applies to both transfer and scratch candidates.
+- The boundary overcoverage blocker on `59_Image4.jpg`, crop `[0, 768, 512, 1280]`, is reclassified as `borderline_boundary_overcoverage`.
+- Interpretation: the prediction is close to the labeled glomerular region and should remain a tracked borderline overcoverage issue, not a catastrophic segmentation failure.
+- This applies to both transfer and scratch candidates.
+
+Impact on verdict:
+
+- The automated reports remain valid as machine-generated gate reports against the current masks.
+- The scientific interpretation changes: the strongest blocker is now likely validation-label quality and gate calibration, not clear model failure.
+- The production candidates should be treated as close, promising research-use artifacts pending corrected/adjudication-aware validation.
+- Do not mark either candidate as promoted solely from post hoc visual review. Promotion requires a rerun against corrected masks or a first-class adjudication-aware evaluation contract.
+
 Next required solution work:
 
-- Audit the failing `59_Image3` background crop and `59_Image4` boundary crop against source masks to decide whether these are true model errors, annotation/mask omissions, or ambiguous tissue that requires a separate hard-negative review label.
-- Add curated hard-negative supervision if the crop is truly background, rather than only mask-derived background crops.
-- Run a targeted sampler/training-signal ablation before another full production candidate run. The ablation should vary hard-negative sampler weight and/or foreground-overcoverage penalty while preserving the current `512->256` resize policy, seed, deterministic validation manifest, and threshold-audit reporting.
-- Do not move to quantification validation or MR TIFF inference until one candidate clears the category gates under an audit-backed threshold policy.
+- Correct the `59_Image3` source mask if the project-owner adjudication is confirmed on the full source image.
+- Review whether the `59_Image4` boundary mask should be refined or whether the `prediction_to_truth_foreground_ratio<=1.5` gate is too strict for the intended biological quantification use.
+- Rerun candidate comparison against corrected masks or implement an explicit adjudication-aware evaluation contract that records adjudicated label omissions and borderline boundary calls without silently waiving gates.
+- If the corrected/adjudication-aware report clears the remaining gates, select the better candidate for quantification validation before MR TIFF inference.
+- Defer sampler/loss retraining unless corrected/adjudication-aware validation still shows true background false positives or unacceptable boundary overcoverage.
