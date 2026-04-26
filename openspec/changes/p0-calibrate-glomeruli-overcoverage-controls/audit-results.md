@@ -379,3 +379,197 @@ Status:
 - Resize benefit has been screened for the P0 quick artifacts. The current `512->256` policy is cleared in this controlled quick screen; `512->512` is not selected because transfer fails background category gates.
 - The latest non-quick E20/E25 artifacts still lack category-complete shared held-out calibration evidence.
 - No sampler/loss/augmentation training ablation has been run because the evidence cleared threshold, category, and resize gates for the quick artifacts first.
+
+## Production P0 Candidate Run
+
+Date: 2026-04-25.
+
+Production config:
+
+```text
+configs/glomeruli_candidate_comparison.yaml
+```
+
+Run command:
+
+```bash
+PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq run-config --config configs/glomeruli_candidate_comparison.yaml
+```
+
+Run log:
+
+```text
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/logs/run_config/production_glomeruli_candidate_p0_contract_20260425/2026-04-25_172210.log
+```
+
+Trained artifacts:
+
+```text
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/mitochondria/glomeruli_candidate_mito_base-pretrain_e25_b24_lr1e-3_sz256/glomeruli_candidate_mito_base-pretrain_e25_b24_lr1e-3_sz256.pkl
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli/transfer/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256.pkl
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli/scratch/glomeruli_candidate_no_mito_base-scratch_e25_b12_lr1e-3_sz256/glomeruli_candidate_no_mito_base-scratch_e25_b12_lr1e-3_sz256.pkl
+```
+
+Training contract evidence:
+
+- Mitochondria base training used `raw_data/mitochondria_data/training`, preserved the physical `testing` root, and ran on `mps`.
+- Glomeruli transfer and scratch training both ran on `mps`.
+- Both glomeruli candidates used `requested_loss_name=bce_dice` and `resolved_loss_class=BCEDiceLoss`.
+- Both glomeruli candidates used `crop_size=512`, `image_size=256`, `output_size=256`, `split_seed=42`, and `splitter_name=explicit_shared_rng_split`.
+- Both glomeruli candidates recorded `negative_crop_supervision_status=present`.
+- Negative/background manifest:
+
+```text
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/derived_data/glomeruli_negative_crops/manifests/production_glomeruli_candidate_p0_contract_20260425_mask_background.csv
+```
+
+- Negative/background manifest counts: `negative_crop_count=1414`, `mask_derived_background_crop_count=1414`, `curated_negative_crop_count=0`, `negative_crop_sampler_weight=0.5`.
+
+Initial production comparison:
+
+```text
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/segmentation_evaluation/glomeruli_candidate_comparison/production_glomeruli_candidate_p0_contract_20260425
+```
+
+Initial result at unverified legacy threshold `0.01`:
+
+- Transfer: `not_promotion_eligible`; failed `17` of `140` gates.
+- Scratch: `not_promotion_eligible`; failed `20` of `140` gates.
+- Both failures were dominated by background false positives and positive/boundary overcoverage, so the production artifacts required overcoverage-audit attachment before any promotion decision.
+
+### Production overcoverage audit
+
+Default audit command:
+
+```bash
+env PYTORCH_ENABLE_MPS_FALLBACK=1 MPLCONFIGDIR=/tmp/mpl_eq PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq glomeruli-overcoverage-audit \
+  --run-id production_glomeruli_candidate_p0_contract_20260425_overcoverage_audit \
+  --transfer-model-path /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli/transfer/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256.pkl \
+  --scratch-model-path /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli/scratch/glomeruli_candidate_no_mito_base-scratch_e25_b12_lr1e-3_sz256/glomeruli_candidate_no_mito_base-scratch_e25_b12_lr1e-3_sz256.pkl \
+  --data-dir /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/raw_data/cohorts \
+  --image-size 256 \
+  --crop-size 512 \
+  --examples-per-category 10 \
+  --device mps \
+  --negative-crop-manifest /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/derived_data/glomeruli_negative_crops/manifests/production_glomeruli_candidate_p0_contract_20260425_mask_background.csv
+```
+
+Default audit output:
+
+```text
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/segmentation_evaluation/glomeruli_overcoverage_audit/production_glomeruli_candidate_p0_contract_20260425_overcoverage_audit
+```
+
+Default threshold-grid result:
+
+- The audit loaded both current-namespace candidate artifacts successfully.
+- The deterministic manifest had `30` crops: `background=10`, `boundary=10`, `positive=10`, with `27` unique images and `5` unique subjects.
+- The default threshold grid was `0.01`, `0.05`, `0.10`, `0.25`, `0.50`.
+- At threshold `0.50`, scratch mean background false-positive foreground fraction was `0.01658287048339844`, but transfer remained above the mean background cap at `0.022719955444335936`.
+- The first audit-attached comparison failed before report generation because no default-grid threshold kept every candidate family's mean background false-positive foreground fraction `<=0.02`.
+
+Extended audit command:
+
+```bash
+env PYTORCH_ENABLE_MPS_FALLBACK=1 MPLCONFIGDIR=/tmp/mpl_eq PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq glomeruli-overcoverage-audit \
+  --run-id production_glomeruli_candidate_p0_contract_20260425_threshold_extended \
+  --transfer-model-path /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli/transfer/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256.pkl \
+  --scratch-model-path /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli/scratch/glomeruli_candidate_no_mito_base-scratch_e25_b12_lr1e-3_sz256/glomeruli_candidate_no_mito_base-scratch_e25_b12_lr1e-3_sz256.pkl \
+  --data-dir /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/raw_data/cohorts \
+  --thresholds 0.5,0.55,0.6,0.65,0.7,0.75,0.8,0.85,0.9,0.95 \
+  --image-size 256 \
+  --crop-size 512 \
+  --examples-per-category 10 \
+  --device mps \
+  --negative-crop-manifest /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/derived_data/glomeruli_negative_crops/manifests/production_glomeruli_candidate_p0_contract_20260425_mask_background.csv
+```
+
+Extended audit output:
+
+```text
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/segmentation_evaluation/glomeruli_overcoverage_audit/production_glomeruli_candidate_p0_contract_20260425_threshold_extended
+```
+
+Extended audit-attached comparison output:
+
+```text
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/segmentation_evaluation/glomeruli_candidate_comparison/production_glomeruli_candidate_p0_contract_20260425_threshold_extended
+```
+
+Extended threshold result:
+
+- The comparison derived threshold `0.75`.
+- Threshold policy status: `validation_derived_threshold`.
+- Threshold promotion readiness: `True`.
+- Shared mean background false-positive foreground fraction at threshold `0.75`: `0.013329887390136718`.
+- Shared positive/boundary recall at threshold `0.75`: `0.9530572228960468`.
+- Resize sensitivity status: `resize_benefit_cleared_current_policy`.
+- Transfer metrics: `dice=0.8718887747219178`, `jaccard=0.7728748328933569`, `precision=0.7956555883564999`, `recall=0.9642779737089628`.
+- Scratch metrics: `dice=0.8673850567163865`, `jaccard=0.7658251922773618`, `precision=0.7974865871488404`, `recall=0.9507136412894579`.
+
+Formal verdict at threshold `0.75`:
+
+- Transfer remains `not_promotion_eligible`; failed `3` of `140` gates.
+- Scratch remains `not_promotion_eligible`; failed `3` of `140` gates.
+- Both candidates fail on the same single true-background crop:
+
+```text
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/raw_data/cohorts/vegfri_dox/images/59/59_Image3.jpg
+crop_box=[0, 0, 512, 512]
+```
+
+- Transfer background failure at threshold `0.75`: predicted foreground fraction `0.19094085693359375`, pixel accuracy `0.8090591430664062`.
+- Scratch background failure at threshold `0.75`: predicted foreground fraction `0.07565689086914062`, pixel accuracy `0.9243431091308594`.
+- Both candidates also fail one boundary overcoverage gate on:
+
+```text
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/raw_data/cohorts/vegfri_dox/images/59/59_Image4.jpg
+crop_box=[0, 768, 512, 1280]
+```
+
+- Transfer prediction-to-truth foreground ratio: `1.6362364949414814` against the `<=1.5` gate.
+- Scratch prediction-to-truth foreground ratio: `1.5237549992230246` against the `<=1.5` gate.
+
+### High-threshold review
+
+High-threshold audit output:
+
+```text
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/segmentation_evaluation/glomeruli_overcoverage_audit/production_glomeruli_candidate_p0_contract_20260425_threshold_high
+```
+
+High-threshold fixed comparison output:
+
+```text
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/segmentation_evaluation/glomeruli_candidate_comparison/production_glomeruli_candidate_p0_contract_20260425_threshold_0p99_review
+```
+
+High-threshold result:
+
+- A very high fixed threshold `0.99` controls background false positives.
+- At threshold `0.99`, shared background false-positive foreground fraction is `0.0003246307373046875`.
+- At threshold `0.99`, shared positive/boundary recall falls to `0.43363417530380044`.
+- Transfer remains `not_promotion_eligible`; failed `30` of `140` gates.
+- Scratch remains `not_promotion_eligible`; failed `23` of `140` gates.
+- Therefore threshold tuning alone cannot rescue these production candidates. Lower thresholds preserve foreground recall but overpredict the hard background crop; very high thresholds control background but undersegment foreground examples.
+
+### Production verdict
+
+Decision:
+
+- No glomeruli candidate from the 2026-04-25 production P0 run is promoted.
+- Both candidates are current-namespace, MPS-trained, runtime-loadable research-use artifacts.
+- Neither candidate should be used as a promoted glomeruli model for README-facing performance claims, quantification validation, or large MR TIFF inference.
+
+Interpretation:
+
+- P0 did its job: the failure is no longer missing negative supervision, stale artifact provenance, a legacy threshold-only report, or unexamined resize policy.
+- The remaining failure is a production training-signal/generalization problem concentrated in a small number of hard validation crops, especially a true-background crop that both candidates classify as foreground at thresholds that otherwise preserve glomerulus recall.
+- The current model family can get close on aggregate metrics, but it is not robust enough for production quantification gates.
+
+Next required solution work:
+
+- Audit the failing `59_Image3` background crop and `59_Image4` boundary crop against source masks to decide whether these are true model errors, annotation/mask omissions, or ambiguous tissue that requires a separate hard-negative review label.
+- Add curated hard-negative supervision if the crop is truly background, rather than only mask-derived background crops.
+- Run a targeted sampler/training-signal ablation before another full production candidate run. The ablation should vary hard-negative sampler weight and/or foreground-overcoverage penalty while preserving the current `512->256` resize policy, seed, deterministic validation manifest, and threshold-audit reporting.
+- Do not move to quantification validation or MR TIFF inference until one candidate clears the category gates under an audit-backed threshold policy.
