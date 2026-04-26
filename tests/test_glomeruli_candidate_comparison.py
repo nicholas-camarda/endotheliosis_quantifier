@@ -9,16 +9,18 @@ from PIL import Image
 
 from eq.training.compare_glomeruli_candidates import (
     COMPARE_PREDICTION_THRESHOLD,
+    RESIZE_DECISION_CURRENT_CLEARED,
+    RESIZE_DECISION_SELECTED_LESS_DOWNSAMPLED,
     THRESHOLD_POLICY_AUDIT_BACKED_FIXED,
     THRESHOLD_POLICY_FIXED_REVIEW,
     THRESHOLD_POLICY_UNVERIFIED,
     THRESHOLD_POLICY_VALIDATION_DERIVED,
-    RESIZE_DECISION_CURRENT_CLEARED,
-    RESIZE_DECISION_SELECTED_LESS_DOWNSAMPLED,
+    VALIDATION_ADJUDICATION_NONBLOCKING,
     CandidateRuntime,
     _annotate_manifest_with_context,
-    _merged_provenance,
+    _apply_validation_adjudication_to_audit,
     _candidate_command,
+    _merged_provenance,
     _predict_crop,
     _resize_sensitivity_from_screening,
     _threshold_policy_from_audit,
@@ -225,6 +227,86 @@ def test_resize_screening_decision_does_not_select_comparator_that_fails_categor
 
     assert decision["resize_decision_status"] == RESIZE_DECISION_CURRENT_CLEARED
     assert decision["resize_decision_reason"] == "less_downsampled_policy_failed_category_gates"
+
+
+def test_validation_adjudication_clears_reviewed_gate_without_hiding_original_failure():
+    audit = {
+        "category_gate": {
+            "rows": [
+                {
+                    "family": "transfer",
+                    "category": "background",
+                    "manifest_index": 7,
+                    "image_path": "/tmp/59_Image3.jpg",
+                    "crop_box": "[0, 0, 512, 512]",
+                    "gate_name": "background_false_positive_control",
+                    "metric_name": "prediction_foreground_fraction",
+                    "failure_reason": "background_false_positive_foreground_excess",
+                    "gate_passed": False,
+                },
+            ],
+            "family_status": {
+                "transfer": {
+                    "promotion_evidence_status": "not_promotion_eligible",
+                    "reasons": ["background_false_positive_foreground_excess"],
+                    "failed_gate_count": 1,
+                    "gate_count": 1,
+                }
+            },
+            "blocked": True,
+        },
+        "prediction_shape": {
+            "rows": [
+                {
+                    "family": "transfer",
+                    "category": "background",
+                    "manifest_index": 7,
+                    "image_path": "/tmp/59_Image3.jpg",
+                    "crop_box": "[0, 0, 512, 512]",
+                    "shape_gate_failed": True,
+                    "shape_gate_reasons": "background_false_positive_foreground_excess|category_metric_failure",
+                }
+            ],
+            "family_status": {
+                "transfer": {
+                    "promotion_evidence_status": "not_promotion_eligible",
+                    "reasons": ["background_false_positive_foreground_excess", "category_metric_failure"],
+                }
+            },
+            "blocked": True,
+        },
+    }
+    adjudication = {
+        "rows": [
+            {
+                "adjudication_id": "review-1",
+                "candidate_family": "transfer",
+                "category": "background",
+                "manifest_index": "7",
+                "image_path": "/tmp/59_Image3.jpg",
+                "crop_box": "[0, 0, 512, 512]",
+                "original_gate_failure": "background_false_positive_foreground_excess",
+                "adjudication_label": "ground_truth_omission",
+                "adjudication_decision": "model_prediction_plausibly_correct",
+                "requires_mask_correction": True,
+                "counts_as_model_failure_after_review": False,
+                "reviewer_note": "mask omission",
+                "next_action": "correct mask",
+            }
+        ]
+    }
+
+    applied = _apply_validation_adjudication_to_audit(audit, adjudication)
+
+    assert applied[0]["validation_adjudication_status"] == VALIDATION_ADJUDICATION_NONBLOCKING
+    gate_row = audit["category_gate"]["rows"][0]
+    assert gate_row["gate_passed_before_adjudication"] is False
+    assert gate_row["gate_passed_after_adjudication"] is True
+    assert gate_row["gate_passed"] is True
+    assert gate_row["failure_reason_before_adjudication"] == "background_false_positive_foreground_excess"
+    assert gate_row["failure_reason"] == ""
+    assert audit["category_gate"]["family_status"]["transfer"]["promotion_evidence_status"] == "promotion_eligible"
+    assert audit["prediction_shape"]["family_status"]["transfer"]["promotion_evidence_status"] == "promotion_eligible"
 
 
 def test_merged_provenance_loads_adjacent_split_sidecar(tmp_path):

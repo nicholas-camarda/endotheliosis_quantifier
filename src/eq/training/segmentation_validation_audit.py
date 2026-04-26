@@ -279,7 +279,7 @@ def classify_artifact_status(
             reasons.append("missing_transfer_base_mitochondria_scope")
         if not base_metadata.get("mitochondria_inference_claim_status"):
             reasons.append("missing_transfer_base_inference_claim_status")
-    promotion_status = PROMOTION_AUDIT_MISSING if reasons else PROMOTION_INSUFFICIENT
+    promotion_status = PROMOTION_AUDIT_MISSING if reasons else PROMOTION_ELIGIBLE
     return {
         "runtime_use_status": RUNTIME_USE_AVAILABLE,
         "promotion_evidence_status": promotion_status,

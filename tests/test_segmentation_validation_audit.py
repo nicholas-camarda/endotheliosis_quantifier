@@ -13,9 +13,9 @@ from eq.training.segmentation_validation_audit import (
     RUNTIME_USE_AVAILABLE,
     ValidationAuditReport,
     aggregate_metric_by_category,
+    audit_category_gates,
     audit_datablock_sampling,
     audit_dynamic_patching_datablock,
-    audit_category_gates,
     audit_manifest_rows,
     audit_paired_root_contract,
     audit_prediction_shapes,
@@ -31,8 +31,8 @@ from eq.training.segmentation_validation_audit import (
     documentation_claim_audit,
     failure_reproduction_row,
     resize_policy_record,
-    validation_prediction_panel_trace_rows,
     validate_mitochondria_scope_for_claim,
+    validation_prediction_panel_trace_rows,
     write_csv_rows,
     write_documentation_claim_audit,
 )
@@ -161,6 +161,29 @@ def test_incomplete_promotion_contract_fields_are_audit_missing():
     assert "missing_source_image_size_summary" in status["reasons"]
     assert "missing_source_mask_size_summary" in status["reasons"]
     assert "missing_transfer_base_inference_claim_status" in status["reasons"]
+
+
+def test_complete_artifact_status_is_promotion_eligible():
+    status = classify_artifact_status(
+        {
+            "artifact_status": "supported_runtime",
+            "train_images": ["/runtime/raw_data/cohorts/c1/images/a.jpg"],
+            "valid_images": ["/runtime/raw_data/cohorts/c1/images/b.jpg"],
+            "source_image_size_summary": {"count": 2},
+            "source_mask_size_summary": {"count": 2},
+            "transfer_base_artifact_path": "/runtime/models/mito.pkl",
+            "transfer_base_metadata": {
+                "mitochondria_training_scope": "physical_training_only_testing_held_out",
+                "mitochondria_inference_claim_status": "not_applicable_for_inference_claim",
+            },
+        },
+        loadable=True,
+        requires_transfer_base=True,
+    )
+
+    assert status["runtime_use_status"] == RUNTIME_USE_AVAILABLE
+    assert status["promotion_evidence_status"] == PROMOTION_ELIGIBLE
+    assert status["reasons"] == []
 
 
 def test_resize_policy_records_and_detects_mismatch():

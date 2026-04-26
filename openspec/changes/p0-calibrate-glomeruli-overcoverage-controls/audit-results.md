@@ -582,8 +582,8 @@ Adjudication decisions:
 - The automated background false-positive blocker on `59_Image3.jpg`, crop `[0, 0, 512, 512]`, is reclassified as `ground_truth_omission`.
 - Interpretation: the crop appears to contain a glomerulus-like structure that was not masked. The model prediction is plausibly correct, and this failure should not be treated as a true model false positive until the source mask is corrected or an adjudication-aware validation manifest is generated.
 - This applies to both transfer and scratch candidates.
-- The boundary overcoverage blocker on `59_Image4.jpg`, crop `[0, 768, 512, 1280]`, is reclassified as `borderline_boundary_overcoverage`.
-- Interpretation: the prediction is close to the labeled glomerular region and should remain a tracked borderline overcoverage issue, not a catastrophic segmentation failure.
+- The boundary overcoverage blocker on `59_Image4.jpg`, crop `[0, 768, 512, 1280]`, is reclassified as `acceptable_borderline_boundary_overcoverage`.
+- Interpretation: the prediction is close to the labeled glomerular region and should remain a tracked borderline overcoverage issue, not a categorical model failure.
 - This applies to both transfer and scratch candidates.
 
 Impact on verdict:
@@ -600,3 +600,85 @@ Next required solution work:
 - Rerun candidate comparison against corrected masks or implement an explicit adjudication-aware evaluation contract that records adjudicated label omissions and borderline boundary calls without silently waiving gates.
 - If the corrected/adjudication-aware report clears the remaining gates, select the better candidate for quantification validation before MR TIFF inference.
 - Defer sampler/loss retraining unless corrected/adjudication-aware validation still shows true background false positives or unacceptable boundary overcoverage.
+
+### Adjudication-aware evaluation contract
+
+Implementation target:
+
+- Candidate comparison accepts `--validation-adjudication`.
+- The supplied CSV is required to match failing category-gate rows exactly by candidate family, category, manifest index, image path, and crop box.
+- Reports preserve the original machine gate failure in `failure_reason_before_adjudication` and record whether the reviewed gate remains a model failure.
+- Nonblocking adjudications recompute category-gate and prediction-shape promotion status; they are not hidden waivers because `validation_adjudication_applied.csv`, `category_gate_audit.csv`, `candidate_summary.csv`, `promotion_report.json`, `promotion_report.md`, and `promotion_report.html` all expose the adjudication.
+
+Execution:
+
+```bash
+env PYTORCH_ENABLE_MPS_FALLBACK=1 MPLCONFIGDIR=/tmp/mpl_eq PYTHONPATH=src \
+  /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq.training.compare_glomeruli_candidates \
+  --data-dir /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/raw_data/cohorts \
+  --output-dir /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/segmentation_evaluation/glomeruli_candidate_comparison \
+  --model-dir /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli \
+  --run-id production_glomeruli_candidate_p0_contract_20260425_adjudicated \
+  --seed 42 \
+  --transfer-epochs 20 --scratch-epochs 25 \
+  --batch-size 12 \
+  --learning-rate 1e-3 \
+  --image-size 256 \
+  --crop-size 512 \
+  --device mps \
+  --examples-per-category 10 \
+  --transfer-model-name glomeruli_candidate_transfer \
+  --scratch-model-name glomeruli_candidate_no_mito_base \
+  --transfer-model-path /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli/transfer/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256.pkl \
+  --scratch-model-path /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli/scratch/glomeruli_candidate_no_mito_base-scratch_e25_b12_lr1e-3_sz256/glomeruli_candidate_no_mito_base-scratch_e25_b12_lr1e-3_sz256.pkl \
+  --overcoverage-audit-dir /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/segmentation_evaluation/glomeruli_overcoverage_audit/production_glomeruli_candidate_p0_contract_20260425_threshold_extended \
+  --resize-screening-summary /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/segmentation_evaluation/glomeruli_candidate_comparison/p0_resize_screening_summary/resize_policy_screening_summary.csv \
+  --negative-crop-manifest /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/derived_data/glomeruli_negative_crops/manifests/production_glomeruli_candidate_p0_contract_20260425_mask_background.csv \
+  --negative-crop-sampler-weight 0.5 \
+  --augmentation-variant fastai_default \
+  --loss bce_dice \
+  --validation-adjudication openspec/changes/p0-calibrate-glomeruli-overcoverage-controls/validation_adjudication.csv
+```
+
+Output:
+
+```text
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/segmentation_evaluation/glomeruli_candidate_comparison/production_glomeruli_candidate_p0_contract_20260425_adjudicated
+```
+
+Adjudication-aware verdict:
+
+- Both transfer and scratch candidates are `promotion_eligible` at the candidate-gate level.
+- Both have `blocked=False`, no gate reasons, no current root-cause remediation, category-gate status `promotion_eligible`, and `0/140` failed category gates.
+- The adjudication file supplied 4 reviewed rows and produced 6 applied gate-row adjudications because each `59_Image3.jpg` ground-truth omission also clears the paired background pixel-correctness gate. All 6 applied adjudications are nonblocking.
+- The formal decision remains `insufficient_evidence` with reason `transfer_and_scratch_are_within_practical_tie_margin`, not because either model is blocked.
+- Transfer metrics: Dice `0.8718887747219178`, Jaccard `0.7728748328933569`, precision `0.7956555883564999`, recall `0.9642779737089628`.
+- Scratch metrics: Dice `0.8673850567163865`, Jaccard `0.7658251922773618`, precision `0.7974865871488404`, recall `0.9507136412894579`.
+
+Quantification-readiness decision:
+
+- Use the transfer candidate as the default operational research-use segmentation artifact for the next quantification validation run because it has the slightly higher Dice, Jaccard, and recall while scratch remains within the practical tie margin.
+- Keep scratch as a sensitivity comparator rather than retraining immediately.
+- Do not present this as external validation. The adjudication-aware report clears the immediate segmentation blockers for moving into quantification validation, while the comparison policy correctly avoids overclaiming a uniquely promoted winner.
+
+Quantification smoke/validation run:
+
+```bash
+env PYTORCH_ENABLE_MPS_FALLBACK=1 MPLCONFIGDIR=/tmp/mpl_eq PYTHONPATH=src \
+  /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq run-config \
+  --config configs/endotheliosis_quantification.yaml
+```
+
+Quantification output:
+
+```text
+/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/quantification_results/endotheliosis_quantification_transfer_p0_adjudicated
+```
+
+Quantification result summary:
+
+- Label Studio score recovery joined `88/88` unique scored images.
+- ROI extraction produced `88` scored ROI rows.
+- Embedding extraction produced `88` ROI embedding rows with the selected transfer segmentation artifact.
+- Ordinal baseline completed with overall MAE `0.48863636363636365`, accuracy `0.3977272727272727`, within-one-bin accuracy `0.6931818181818182`, and quadratic weighted kappa `-0.0794315632011966`.
+- The quantification run is technically executable end to end. Scientific interpretation should focus next on whether the ROI/embedding/ordinal outputs are meaningful enough for the intended biological claim, not on another segmentation retraining cycle by default.

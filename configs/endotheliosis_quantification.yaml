@@ -10,7 +10,7 @@
 workflow: endotheliosis_quantification
 
 run:
-  name: endotheliosis_quantification
+  name: endotheliosis_quantification_transfer_p0_adjudicated
   runtime_root_env: EQ_RUNTIME_ROOT
   runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
   python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
@@ -20,7 +20,9 @@ inputs:
   data_dir: raw_data/cohorts/lauren_preeclampsia
 
   # Required explicit upstream segmentation artifact. Missing paths fail closed.
-  segmentation_model: models/segmentation/glomeruli/EXPLICIT_ACCEPTED_MODEL.pkl
+  # Candidate selection evidence:
+  # output/segmentation_evaluation/glomeruli_candidate_comparison/production_glomeruli_candidate_p0_contract_20260425_adjudicated/promotion_report.json
+  segmentation_model: models/segmentation/glomeruli/transfer/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256.pkl
 
   # Optional score contract inputs.
   score_source: auto
@@ -33,5 +35,4 @@ options:
   stop_after: model
 
 outputs:
-  quantification_dir: output/quantification_results/endotheliosis_quantification
-
+  quantification_dir: output/quantification_results/endotheliosis_quantification_transfer_p0_adjudicated

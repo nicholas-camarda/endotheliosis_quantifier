@@ -14,7 +14,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -81,6 +81,26 @@ RESIZE_DECISION_CURRENT_CLEARED = "current_policy_cleared"
 RESIZE_DECISION_SELECTED_LESS_DOWNSAMPLED = "selected_less_downsampled_policy"
 RESIZE_DECISION_INFEASIBLE = "resize_screen_infeasible"
 RESIZE_DECISION_UNRESOLVED = "resize_screen_unresolved"
+VALIDATION_ADJUDICATION_REQUIRED_COLUMNS = {
+    "adjudication_id",
+    "candidate_family",
+    "category",
+    "manifest_index",
+    "image_path",
+    "crop_box",
+    "original_gate_failure",
+    "adjudication_label",
+    "adjudication_decision",
+    "requires_mask_correction",
+    "counts_as_model_failure_after_review",
+}
+VALIDATION_ADJUDICATION_BOOLEAN_COLUMNS = {
+    "requires_mask_correction",
+    "counts_as_model_failure_after_review",
+}
+VALIDATION_ADJUDICATION_NONBLOCKING = "applied_nonblocking"
+VALIDATION_ADJUDICATION_BLOCKING = "applied_blocking"
+VALIDATION_ADJUDICATION_NOT_REVIEWED = "not_reviewed"
 
 logger = get_logger("eq.glomeruli_candidate_comparison")
 
@@ -123,6 +143,333 @@ def _read_overcoverage_audit(audit_dir: str | Path | None) -> Dict[str, Any]:
     payload["audit_dir"] = str(audit_path)
     payload["audit_summary_path"] = str(summary_path)
     return payload
+
+
+def _parse_bool_field(value: Any, *, column: str, adjudication_id: str) -> bool:
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes", "y"}:
+        return True
+    if text in {"false", "0", "no", "n"}:
+        return False
+    raise ValueError(
+        f"Invalid boolean value for {column} in validation adjudication {adjudication_id}: {value!r}"
+    )
+
+
+def _normalize_crop_box(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return json.dumps([int(item) for item in value])
+    text = str(value).strip()
+    if not text:
+        return ""
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if isinstance(parsed, list):
+        return json.dumps([int(item) for item in parsed])
+    return text
+
+
+def _adjudication_match_key(row: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
+    return (
+        str(row.get("candidate_family") or row.get("family") or "").strip(),
+        str(row.get("category") or "").strip(),
+        str(row.get("manifest_index") or "").strip(),
+        str(row.get("image_path") or "").strip(),
+        _normalize_crop_box(row.get("crop_box")),
+    )
+
+
+def _read_validation_adjudications(path: str | Path | None) -> Dict[str, Any]:
+    if not path:
+        return {
+            "status": "not_supplied",
+            "path": None,
+            "rows": [],
+            "row_count": 0,
+            "applied_count": 0,
+            "nonblocking_count": 0,
+            "blocking_count": 0,
+            "unused_count": 0,
+        }
+    adjudication_path = Path(path).expanduser()
+    if not adjudication_path.exists():
+        raise FileNotFoundError(f"Validation adjudication file not found: {adjudication_path}")
+    with adjudication_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        missing = sorted(VALIDATION_ADJUDICATION_REQUIRED_COLUMNS - set(reader.fieldnames or []))
+        if missing:
+            raise ValueError(
+                f"Validation adjudication file {adjudication_path} is missing required columns: "
+                f"{', '.join(missing)}"
+            )
+        rows = []
+        for raw_row in reader:
+            row = dict(raw_row)
+            adjudication_id = str(row.get("adjudication_id") or "").strip()
+            if not adjudication_id:
+                raise ValueError(f"Validation adjudication file {adjudication_path} has a row without adjudication_id")
+            for column in VALIDATION_ADJUDICATION_BOOLEAN_COLUMNS:
+                row[column] = _parse_bool_field(row.get(column), column=column, adjudication_id=adjudication_id)
+            row["candidate_family"] = str(row.get("candidate_family") or "").strip()
+            row["category"] = str(row.get("category") or "").strip()
+            row["manifest_index"] = str(row.get("manifest_index") or "").strip()
+            row["image_path"] = str(row.get("image_path") or "").strip()
+            row["crop_box"] = _normalize_crop_box(row.get("crop_box"))
+            row["original_gate_failure"] = str(row.get("original_gate_failure") or "").strip()
+            if not row["candidate_family"] or not row["category"] or not row["manifest_index"]:
+                raise ValueError(
+                    f"Validation adjudication {adjudication_id} must include candidate_family, category, and manifest_index"
+                )
+            rows.append(row)
+    return {
+        "status": "supplied",
+        "path": str(adjudication_path),
+        "rows": rows,
+        "row_count": len(rows),
+        "applied_count": 0,
+        "nonblocking_count": 0,
+        "blocking_count": 0,
+        "unused_count": len(rows),
+    }
+
+
+def _adjudication_applies_to_gate(adjudication: Mapping[str, Any], gate_row: Mapping[str, Any]) -> bool:
+    if _adjudication_match_key(adjudication) != _adjudication_match_key(gate_row):
+        return False
+    original_failure = str(adjudication.get("original_gate_failure") or "").strip()
+    gate_failure = str(gate_row.get("failure_reason") or "").strip()
+    if original_failure == gate_failure:
+        return True
+    return (
+        str(adjudication.get("adjudication_label") or "") == "ground_truth_omission"
+        and str(gate_row.get("category") or "") == "background"
+        and bool(gate_failure)
+    )
+
+
+def _recompute_category_gate_status(category_gate_rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    reasons_by_family: Dict[str, set[str]] = defaultdict(set)
+    categories_by_family: Dict[str, set[str]] = defaultdict(set)
+    families = sorted({str(row.get("family", "unknown")) for row in category_gate_rows})
+    for row in category_gate_rows:
+        family = str(row.get("family", "unknown"))
+        categories_by_family[family].add(str(row.get("category", "unknown")))
+        if row.get("gate_passed") is False or str(row.get("gate_passed")) == "False":
+            reason = str(row.get("failure_reason") or "").strip()
+            if reason:
+                reasons_by_family[family].add(reason)
+    return {
+        family: {
+            "promotion_evidence_status": PROMOTION_NOT_ELIGIBLE if reasons_by_family.get(family) else PROMOTION_ELIGIBLE,
+            "reasons": sorted(reasons_by_family.get(family, set())),
+            "categories_evaluated": sorted(categories_by_family.get(family, set())),
+            "failed_gate_count": sum(
+                1
+                for row in category_gate_rows
+                if str(row.get("family", "unknown")) == family
+                and (row.get("gate_passed") is False or str(row.get("gate_passed")) == "False")
+            ),
+            "gate_count": sum(1 for row in category_gate_rows if str(row.get("family", "unknown")) == family),
+        }
+        for family in families
+    }
+
+
+def _recompute_prediction_shape_from_category_gate(
+    prediction_shape: Mapping[str, Any],
+    category_gate: Mapping[str, Any],
+) -> Dict[str, Any]:
+    failed_reasons_by_key: Dict[tuple[str, str, str], set[str]] = defaultdict(set)
+    for gate_row in category_gate.get("rows", []):
+        if gate_row.get("gate_passed") is False or str(gate_row.get("gate_passed")) == "False":
+            key = (
+                str(gate_row.get("family", "unknown")),
+                str(gate_row.get("category", "unknown")),
+                str(gate_row.get("manifest_index") or ""),
+            )
+            reason = str(gate_row.get("failure_reason") or gate_row.get("gate_name") or "").strip()
+            if reason:
+                failed_reasons_by_key[key].add(reason)
+
+    shape_rows = []
+    reasons_by_family: Dict[str, set[str]] = defaultdict(set)
+    for row in prediction_shape.get("rows", []):
+        key = (
+            str(row.get("family", "unknown")),
+            str(row.get("category", "unknown")),
+            str(row.get("manifest_index") or ""),
+        )
+        reasons = sorted(failed_reasons_by_key.get(key, set()))
+        if reasons:
+            reasons.append("category_metric_failure")
+        for reason in reasons:
+            reasons_by_family[key[0]].add(reason)
+        shape_rows.append(
+            {
+                **dict(row),
+                "shape_gate_failed": bool(reasons),
+                "shape_gate_reasons": "|".join(reasons),
+            }
+        )
+    families = sorted({str(row.get("family", "unknown")) for row in shape_rows} | set(reasons_by_family))
+    family_status = {
+        family: {
+            "promotion_evidence_status": PROMOTION_NOT_ELIGIBLE if reasons_by_family.get(family) else PROMOTION_ELIGIBLE,
+            "reasons": sorted(reasons_by_family.get(family, set())),
+        }
+        for family in families
+    }
+    return {
+        **dict(prediction_shape),
+        "rows": shape_rows,
+        "family_status": family_status,
+        "blocked": any(status["reasons"] for status in family_status.values()),
+        "category_gate": category_gate,
+    }
+
+
+def _apply_validation_adjudication_to_audit(
+    audit: Dict[str, Any],
+    adjudication_payload: Dict[str, Any],
+) -> list[dict[str, Any]]:
+    category_gate = audit.get("category_gate", {})
+    original_rows = list(category_gate.get("rows", []))
+    if not original_rows:
+        return []
+    audit_families = {str(row.get("family", "unknown")) for row in original_rows}
+    adjudications = [
+        row
+        for row in list(adjudication_payload.get("rows") or [])
+        if str(row.get("candidate_family") or "") in audit_families
+    ]
+    applied: list[dict[str, Any]] = []
+    used_adjudication_ids: set[str] = set()
+    updated_rows: list[dict[str, Any]] = []
+    for gate_row in original_rows:
+        updated = dict(gate_row)
+        gate_passed_before = not (
+            gate_row.get("gate_passed") is False or str(gate_row.get("gate_passed")) == "False"
+        )
+        updated["gate_passed_before_adjudication"] = gate_passed_before
+        updated["failure_reason_before_adjudication"] = gate_row.get("failure_reason")
+        updated["validation_adjudication_status"] = VALIDATION_ADJUDICATION_NOT_REVIEWED
+        updated["validation_adjudication_id"] = ""
+        updated["validation_adjudication_label"] = ""
+        updated["validation_adjudication_decision"] = ""
+        updated["validation_adjudication_requires_mask_correction"] = ""
+        updated["validation_adjudication_counts_as_model_failure"] = ""
+        updated["validation_adjudication_reviewer_note"] = ""
+        updated["validation_adjudication_next_action"] = ""
+        updated["gate_passed_after_adjudication"] = gate_passed_before
+        if not gate_passed_before:
+            matching = [row for row in adjudications if _adjudication_applies_to_gate(row, gate_row)]
+            if len(matching) > 1:
+                ids = ", ".join(str(row.get("adjudication_id")) for row in matching)
+                raise ValueError(
+                    "Multiple validation adjudications match one category gate row: "
+                    f"family={gate_row.get('family')} manifest_index={gate_row.get('manifest_index')} ids={ids}"
+                )
+            if matching:
+                adjudication = matching[0]
+                used_adjudication_ids.add(str(adjudication.get("adjudication_id")))
+                counts_as_failure = bool(adjudication["counts_as_model_failure_after_review"])
+                status = VALIDATION_ADJUDICATION_BLOCKING if counts_as_failure else VALIDATION_ADJUDICATION_NONBLOCKING
+                updated["validation_adjudication_status"] = status
+                updated["validation_adjudication_id"] = adjudication.get("adjudication_id")
+                updated["validation_adjudication_label"] = adjudication.get("adjudication_label")
+                updated["validation_adjudication_decision"] = adjudication.get("adjudication_decision")
+                updated["validation_adjudication_requires_mask_correction"] = adjudication.get("requires_mask_correction")
+                updated["validation_adjudication_counts_as_model_failure"] = counts_as_failure
+                updated["validation_adjudication_reviewer_note"] = adjudication.get("reviewer_note", "")
+                updated["validation_adjudication_next_action"] = adjudication.get("next_action", "")
+                updated["gate_passed_after_adjudication"] = not counts_as_failure
+                if not counts_as_failure:
+                    updated["gate_passed"] = True
+                    updated["failure_reason"] = ""
+                applied.append(
+                    {
+                        **dict(adjudication),
+                        "family": gate_row.get("family"),
+                        "gate_name": gate_row.get("gate_name"),
+                        "metric_name": gate_row.get("metric_name"),
+                        "failure_reason_before_adjudication": gate_row.get("failure_reason"),
+                        "gate_passed_before_adjudication": gate_passed_before,
+                        "gate_passed_after_adjudication": updated["gate_passed_after_adjudication"],
+                        "validation_adjudication_status": status,
+                    }
+                )
+        updated_rows.append(updated)
+    unused = [
+        str(row.get("adjudication_id"))
+        for row in adjudications
+        if str(row.get("adjudication_id")) not in used_adjudication_ids
+    ]
+    if adjudications and unused:
+        raise ValueError(
+            "Validation adjudication row(s) did not match any failing category gate: "
+            + ", ".join(sorted(unused))
+        )
+    family_status = _recompute_category_gate_status(updated_rows)
+    updated_category_gate = {
+        **dict(category_gate),
+        "rows": updated_rows,
+        "family_status": family_status,
+        "blocked": any(status["reasons"] for status in family_status.values()),
+    }
+    audit["category_gate"] = updated_category_gate
+    audit["prediction_shape"] = _recompute_prediction_shape_from_category_gate(
+        audit.get("prediction_shape", {}),
+        updated_category_gate,
+    )
+    adjudication_payload["applied_count"] = len(applied)
+    adjudication_payload["nonblocking_count"] = sum(
+        1 for row in applied if row.get("validation_adjudication_status") == VALIDATION_ADJUDICATION_NONBLOCKING
+    )
+    adjudication_payload["blocking_count"] = sum(
+        1 for row in applied if row.get("validation_adjudication_status") == VALIDATION_ADJUDICATION_BLOCKING
+    )
+    adjudication_payload["unused_count"] = 0 if adjudications else 0
+    return applied
+
+
+def _refresh_root_cause_after_adjudication(audit: Dict[str, Any], summary: Mapping[str, Any]) -> None:
+    family = str(summary.get("family") or "")
+    shape_status = audit.get("prediction_shape", {}).get("family_status", {}).get(family, {})
+    shape_reasons = list(shape_status.get("reasons") or [])
+    has_background_false_positive = any("background_false_positive" in reason for reason in shape_reasons)
+    has_negative_background_supervision = (
+        str(summary.get("provenance", {}).get("negative_crop_supervision_status") or "").strip().lower() == "present"
+    )
+    requires_transfer_base = _candidate_requires_transfer_base(
+        CandidateRuntime(
+            family=family,
+            role=str(summary.get("comparison_role") or "candidate"),
+            model_path=Path(str(summary["artifact_path"])) if summary.get("artifact_path") else None,
+            seed=summary.get("seed"),
+            command=summary.get("command"),
+            status=str(summary.get("status") or "available"),
+        ),
+        dict(summary.get("provenance") or {}),
+    )
+    audit["root_cause"] = classify_root_causes(
+        {
+            "split_or_panel_bias": audit["split_integrity"]["promotion_evidence_status"] != PROMOTION_ELIGIBLE,
+            "resize_policy_artifact": audit["resize_policy_parity"]["promotion_evidence_status"] != PROMOTION_ELIGIBLE
+            or audit["resize_sensitivity"]["promotion_evidence_status"] != PROMOTION_ELIGIBLE,
+            "class_channel_or_threshold_error": not audit["preprocessing_parity"]["ok"],
+            "negative_background_supervision_missing": has_background_false_positive
+            and not has_negative_background_supervision,
+            "training_signal_insufficient": bool(summary.get("gate", {}).get("blocked")) or bool(shape_reasons),
+            "mitochondria_base_defect": (
+                requires_transfer_base
+                and audit["artifact_status"]["promotion_evidence_status"] == PROMOTION_AUDIT_MISSING
+            ),
+        }
+    )
 
 
 def _threshold_sweep_rows(audit: Dict[str, Any]) -> list[dict[str, Any]]:
@@ -1520,6 +1867,7 @@ def _write_markdown_report(
         transfer_base_report = summary.get("transfer_base_report", {})
         threshold_policy = summary.get("threshold_policy", {})
         category_gate_status = summary.get("category_gate_status", {})
+        validation_adjudication = summary.get("validation_adjudication", {})
         lines.extend(
             [
                 f"### {summary['family']}",
@@ -1566,6 +1914,11 @@ def _write_markdown_report(
                 f"- Category gate status: `{category_gate_status.get('promotion_evidence_status')}`",
                 f"- Category gate reasons: `{', '.join(category_gate_status.get('reasons', []))}`",
                 f"- Category gates failed: `{category_gate_status.get('failed_gate_count')}` of `{category_gate_status.get('gate_count')}`",
+                f"- Validation adjudication status: `{validation_adjudication.get('status')}`",
+                f"- Validation adjudication path: `{validation_adjudication.get('path')}`",
+                f"- Validation adjudication applied gates: `{validation_adjudication.get('applied_count')}` "
+                f"`nonblocking={validation_adjudication.get('nonblocking_count')}` "
+                f"`blocking={validation_adjudication.get('blocking_count')}`",
                 f"- Root causes: `{', '.join(root_cause.get('root_causes', []))}`",
                 f"- Remediation path: `{root_cause.get('remediation_path')}`",
                 (
@@ -1602,6 +1955,7 @@ def _write_html_report(
         prediction_rows = summary.get("prediction_rows", [])
         threshold_policy = summary.get("threshold_policy", {})
         category_gate_status = summary.get("category_gate_status", {})
+        validation_adjudication = summary.get("validation_adjudication", {})
         gallery = []
         for row in prediction_rows:
             image_label = html.escape(str(row.get("image_name") or Path(str(row.get("image_path", ""))).name))
@@ -1683,6 +2037,11 @@ def _write_html_report(
             f"failed={html.escape(str(category_gate_status.get('failed_gate_count')))} "
             f"of={html.escape(str(category_gate_status.get('gate_count')))} "
             f"reasons={html.escape(', '.join(category_gate_status.get('reasons', [])))}</p>"
+            f"<p class='artifact'><strong>Validation adjudication:</strong> {html.escape(str(validation_adjudication.get('status')))} "
+            f"path={html.escape(str(validation_adjudication.get('path')))} "
+            f"applied={html.escape(str(validation_adjudication.get('applied_count')))} "
+            f"nonblocking={html.escape(str(validation_adjudication.get('nonblocking_count')))} "
+            f"blocking={html.escape(str(validation_adjudication.get('blocking_count')))}</p>"
             "<div class='gate-box'>"
             "<strong>Gate reasons</strong>"
             f"<ul>{reason_items}</ul>"
@@ -1755,6 +2114,7 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
     overcoverage_audit = _read_overcoverage_audit(getattr(args, "overcoverage_audit_dir", None))
     resize_screening_summary_path = getattr(args, "resize_screening_summary", None)
     resize_screening_rows = _read_resize_screening_summary(resize_screening_summary_path)
+    validation_adjudication = _read_validation_adjudications(getattr(args, "validation_adjudication", None))
     explicit_threshold = getattr(args, "prediction_threshold", None) is not None
     requested_threshold = float(args.prediction_threshold) if explicit_threshold else None
     threshold_policy = _threshold_policy_from_audit(
@@ -1872,6 +2232,7 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
         ),
     ]
     candidate_audits: Dict[str, Dict[str, Any]] = {}
+    validation_adjudication_rows: list[dict[str, Any]] = []
     for summary in candidate_summaries:
         audit = _candidate_audit_rows(
             summary=summary,
@@ -1882,8 +2243,32 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
             resize_screening_rows=resize_screening_rows,
             resize_screening_summary_path=resize_screening_summary_path,
         )
+        applied_adjudications = _apply_validation_adjudication_to_audit(audit, validation_adjudication)
+        _refresh_root_cause_after_adjudication(audit, summary)
+        validation_adjudication_rows.extend(applied_adjudications)
         candidate_audits[summary["family"]] = audit
         summary["runtime_use_status"] = audit["artifact_status"]["runtime_use_status"]
+        family_adjudication_count = sum(1 for row in applied_adjudications if row.get("family") == summary["family"])
+        family_nonblocking_count = sum(
+            1
+            for row in applied_adjudications
+            if row.get("family") == summary["family"]
+            and row.get("validation_adjudication_status") == VALIDATION_ADJUDICATION_NONBLOCKING
+        )
+        family_blocking_count = sum(
+            1
+            for row in applied_adjudications
+            if row.get("family") == summary["family"]
+            and row.get("validation_adjudication_status") == VALIDATION_ADJUDICATION_BLOCKING
+        )
+        summary["validation_adjudication"] = {
+            "status": validation_adjudication.get("status"),
+            "path": validation_adjudication.get("path"),
+            "row_count": validation_adjudication.get("row_count"),
+            "applied_count": family_adjudication_count,
+            "nonblocking_count": family_nonblocking_count,
+            "blocking_count": family_blocking_count,
+        }
         audit_statuses = [
             audit["artifact_status"]["promotion_evidence_status"],
             audit["split_integrity"]["promotion_evidence_status"],
@@ -1933,6 +2318,22 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
             summary["gate"]["blocked"] = True
             if not threshold_policy.get("threshold_is_promotion_ready"):
                 summary["promotion_evidence_status"] = PROMOTION_INSUFFICIENT
+    validation_adjudication["applied_count"] = len(validation_adjudication_rows)
+    validation_adjudication["nonblocking_count"] = sum(
+        1
+        for row in validation_adjudication_rows
+        if row.get("validation_adjudication_status") == VALIDATION_ADJUDICATION_NONBLOCKING
+    )
+    validation_adjudication["blocking_count"] = sum(
+        1
+        for row in validation_adjudication_rows
+        if row.get("validation_adjudication_status") == VALIDATION_ADJUDICATION_BLOCKING
+    )
+    validation_adjudication["unused_count"] = max(
+        int(validation_adjudication.get("row_count") or 0)
+        - len({str(row.get("adjudication_id")) for row in validation_adjudication_rows}),
+        0,
+    )
 
     compatibility_summary = None
     if args.compat_model_path:
@@ -1997,6 +2398,11 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
                 "category_gate_reasons": "|".join(summary.get("category_gate_status", {}).get("reasons", [])),
                 "category_gate_failed_count": summary.get("category_gate_status", {}).get("failed_gate_count"),
                 "category_gate_count": summary.get("category_gate_status", {}).get("gate_count"),
+                "validation_adjudication_status": summary.get("validation_adjudication", {}).get("status"),
+                "validation_adjudication_path": summary.get("validation_adjudication", {}).get("path"),
+                "validation_adjudication_applied_count": summary.get("validation_adjudication", {}).get("applied_count"),
+                "validation_adjudication_nonblocking_count": summary.get("validation_adjudication", {}).get("nonblocking_count"),
+                "validation_adjudication_blocking_count": summary.get("validation_adjudication", {}).get("blocking_count"),
                 "resize_sensitivity_status": summary.get("resize_sensitivity", {}).get("status"),
                 "resize_screening_summary_path": summary.get("resize_sensitivity", {}).get("resize_screening_summary_path"),
                 "resize_decision_status": summary.get("resize_sensitivity", {}).get("resize_decision_status"),
@@ -2049,6 +2455,9 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
         "candidate_audits": candidate_audits,
         "threshold_policy": threshold_policy,
         "overcoverage_audit": overcoverage_audit,
+        "validation_adjudication": validation_adjudication,
+        "validation_adjudication_applied_path": str(output_root / "validation_adjudication_applied.csv"),
+        "validation_adjudication_applied_rows": validation_adjudication_rows,
         "resize_screening_summary_path": str(Path(resize_screening_summary_path).expanduser()) if resize_screening_summary_path else None,
         "resize_screening_summary_rows": resize_screening_rows,
         "metric_by_category_path": str(output_root / "metric_by_category.csv"),
@@ -2067,6 +2476,7 @@ def compare_glomeruli_candidates(args: argparse.Namespace) -> Dict[str, Any]:
     write_csv_rows(metric_by_category_rows, output_root / "metric_by_category.csv")
     write_csv_rows(prediction_shape_rows, output_root / "prediction_shape_audit.csv")
     write_csv_rows(category_gate_rows, output_root / "category_gate_audit.csv")
+    write_csv_rows(validation_adjudication_rows, output_root / "validation_adjudication_applied.csv")
     write_csv_rows(resize_policy_rows, output_root / "resize_policy_audit.csv")
     write_csv_rows(failure_reproduction_rows, output_root / "failure_reproduction_audit.csv")
     docs_to_audit: Dict[str, str] = {}
@@ -2140,6 +2550,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--augmentation-variant", default="fastai_default", choices=["fastai_default", "spatial_only", "no_aug"], help="Recorded augmentation policy variant for candidate provenance")
     parser.add_argument("--overcoverage-audit-dir", help="Optional glomeruli-overcoverage-audit output directory containing audit_summary.json and threshold_sweep.csv")
     parser.add_argument("--resize-screening-summary", help="Optional resize_policy_screening_summary.csv used to clear, select, or retain resize_benefit_unproven")
+    parser.add_argument(
+        "--validation-adjudication",
+        help=(
+            "Optional explicit CSV of reviewed validation gate failures. "
+            "Matched rows are recorded in category_gate_audit.csv and "
+            "validation_adjudication_applied.csv; unmatched rows are hard errors."
+        ),
+    )
     parser.add_argument(
         "--prediction-threshold",
         type=float,

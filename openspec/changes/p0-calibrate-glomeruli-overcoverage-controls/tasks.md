@@ -100,3 +100,12 @@
 - [x] 11.6 Update candidate comparison to consume attached resize-screening evidence and clear, select, or retain `resize_benefit_unproven` explicitly.
 - [x] 11.7 Add regression tests for resize-screening config validation, summary schema, failure recording, and resize evidence gate clearing.
 - [x] 11.8 Run focused tests, full pytest, `openspec validate --strict`, explicitness check, and OpenSpec status after the resize-screening amendment is applied.
+
+## 12. Adjudication-Aware Quantification Readiness Amendment
+
+- [x] 12.1 Add an explicit `--validation-adjudication` candidate-comparison input that reads the reviewed gate-failure CSV and fails if required columns, booleans, or row matches are invalid.
+- [x] 12.2 Apply matched adjudications to `category_gate_audit.csv` without deleting the original machine failure fields, and recompute prediction-shape/category-gate promotion status from the reviewed gate status.
+- [x] 12.3 Write `validation_adjudication_applied.csv` and summarize adjudication path, applied counts, nonblocking counts, and blocking counts in `candidate_summary.csv`, `promotion_report.json`, `promotion_report.md`, and `promotion_report.html`.
+- [x] 12.4 Update `validation_adjudication.csv` and `audit-results.md` so the reviewed `59_Image3.jpg` ground-truth omission and `59_Image4.jpg` acceptable borderline boundary cases are durable OpenSpec evidence.
+- [x] 12.5 Add regression coverage for adjudication-aware gate recomputation and run focused tests.
+- [x] 12.6 Rerun the production candidate comparison with the adjudication CSV attached, record artifact paths and verdict in `audit-results.md`, and use that verdict to decide the next quantification-validation step.

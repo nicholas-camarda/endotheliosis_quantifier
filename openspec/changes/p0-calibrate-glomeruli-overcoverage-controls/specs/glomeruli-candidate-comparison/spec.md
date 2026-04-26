@@ -108,6 +108,26 @@ Candidate comparison SHALL explain `category_metric_failure` with category-speci
 - **THEN** the report SHALL keep `category_metric_failure`
 - **AND** it SHALL identify the next likely lever as threshold, resize, training signal, augmentation, or insufficient evidence
 
+### Requirement: Candidate comparison supports explicit validation adjudication
+Candidate comparison SHALL support a first-class adjudication contract for reviewed validation gate failures before using reviewed results to make quantification-readiness decisions.
+
+#### Scenario: Reviewed gate failures are supplied
+- **WHEN** candidate comparison receives `--validation-adjudication <csv>`
+- **THEN** it SHALL validate that the CSV has the required adjudication, candidate, category, manifest, crop, original-failure, decision, and boolean fields
+- **AND** it SHALL fail if any supplied adjudication row does not match a failing category-gate row for that candidate family
+- **AND** it SHALL write `validation_adjudication_applied.csv`
+
+#### Scenario: Reviewed failure is not a model failure
+- **WHEN** a matched adjudication has `counts_as_model_failure_after_review=false`
+- **THEN** the category gate SHALL preserve `gate_passed_before_adjudication` and `failure_reason_before_adjudication`
+- **AND** the reviewed gate SHALL be nonblocking for category-gate and prediction-shape promotion status
+- **AND** reports SHALL record adjudication id, label, decision, reviewer note, and next action
+
+#### Scenario: Reviewed failure remains a model failure
+- **WHEN** a matched adjudication has `counts_as_model_failure_after_review=true`
+- **THEN** the category gate SHALL remain blocking
+- **AND** reports SHALL still record the adjudication details so the blocker is interpreted as reviewed evidence rather than an unreviewed machine failure
+
 ### Requirement: Candidate comparison treats resize benefit as an evidence gate
 Candidate comparison SHALL require explicit resize evidence before `resize_benefit_unproven` can be cleared or used to justify production retraining.
 
