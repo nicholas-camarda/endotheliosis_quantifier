@@ -458,6 +458,17 @@ def test_evaluate_embedding_table_runs_with_grouped_subject_splits(tmp_path: Pat
         'signal_comparator_metrics',
         'subject_level_candidate_predictions',
         'precision_candidate_summary',
+        'morphology_features',
+        'morphology_feature_metadata',
+        'subject_morphology_features',
+        'morphology_feature_diagnostics',
+        'morphology_feature_review_html',
+        'morphology_feature_review_cases',
+        'morphology_operator_adjudication_template',
+        'morphology_operator_adjudication_agreement',
+        'morphology_candidate_metrics',
+        'subject_morphology_candidate_predictions',
+        'morphology_candidate_summary',
         'burden_model',
         'quantification_review_html',
         'quantification_review_examples',
@@ -494,10 +505,14 @@ def test_evaluate_embedding_table_runs_with_grouped_subject_splits(tmp_path: Pat
     assert 'Endotheliosis burden index (0-100)' in review_html
     assert 'Comparator Summaries' in review_html
     assert 'Precision Candidate Screen' in review_html
+    assert 'Morphology Feature Screen' in review_html
     assert 'Direct stage-index regression' in review_html
     assert 'held_out_grouped_fold_prediction' in review_html
-    assert 'burden_model/burden_predictions.csv' in review_html
-    assert 'burden_model/final_model_predictions.csv' in review_html
+    assert 'burden_model/primary_model/burden_predictions.csv' in review_html
+    assert 'burden_model/primary_model/final_model_predictions.csv' in review_html
+    assert 'burden_model/feature_sets/morphology_features.csv' in review_html
+    assert artifacts['morphology_candidate_metrics'].parent.name == 'candidates'
+    assert artifacts['burden_model'].parent.name == 'primary_model'
 
     review_examples = pd.read_csv(artifacts['quantification_review_examples'])
     assert '_set_size' not in review_examples.columns

@@ -604,9 +604,16 @@ def run_manifest_quantification(
     stop_after: str = 'model',
 ) -> Dict[str, Path]:
     """Run quantification from the runtime cohort manifest."""
+    logger = get_logger('eq.quantification.pipeline')
     manifest_root = Path(manifest_root)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        'Starting manifest quantification: manifest_root=%s, output_dir=%s, stop_after=%s',
+        manifest_root,
+        output_dir,
+        stop_after,
+    )
     manifest_path = manifest_root / 'manifest.csv'
     raw_inventory_path = output_dir / 'raw_inventory.csv'
     mapping_template_path = output_dir / 'legacy_to_canonical_mapping_template.csv'
@@ -625,6 +632,11 @@ def run_manifest_quantification(
     scored_table = build_manifest_scored_example_table(
         manifest_root, output_dir / 'scored_examples'
     )
+    logger.info(
+        'Scored examples ready: rows=%d -> %s',
+        len(scored_table),
+        output_dir / 'scored_examples' / 'scored_examples.csv',
+    )
     manifest_summary_path = (
         output_dir / 'scored_examples' / 'manifest_scored_examples_summary.json'
     )
@@ -638,6 +650,13 @@ def run_manifest_quantification(
         }
 
     roi_table = extract_image_level_roi_crops(scored_table, output_dir / 'roi_crops')
+    ok_rois = int(roi_table['roi_status'].astype(str).eq('ok').sum())
+    logger.info(
+        'ROI crops ready: rows=%d, ok=%d -> %s',
+        len(roi_table),
+        ok_rois,
+        output_dir / 'roi_crops' / 'roi_scored_examples.csv',
+    )
     if stop_after == 'roi':
         return {
             'raw_inventory': raw_inventory_path,
@@ -652,6 +671,12 @@ def run_manifest_quantification(
         segmentation_model_path=Path(segmentation_model_path),
         output_dir=output_dir / 'embeddings',
     )
+    logger.info(
+        'Embedding table ready: rows=%d, columns=%d -> %s',
+        len(embedding_table),
+        len(embedding_table.columns),
+        output_dir / 'embeddings' / 'roi_embeddings.csv',
+    )
     if stop_after == 'embeddings':
         return {
             'raw_inventory': raw_inventory_path,
@@ -664,6 +689,11 @@ def run_manifest_quantification(
 
     model_artifacts = evaluate_embedding_table(
         embedding_table, output_dir / 'ordinal_model'
+    )
+    logger.info(
+        'Quantification model artifacts complete: %d artifacts under %s',
+        len(model_artifacts),
+        output_dir,
     )
     return {
         'raw_inventory': raw_inventory_path,
@@ -1409,6 +1439,23 @@ def generate_combined_quantification_review(
         if burden_artifacts.get('precision_candidate_summary')
         else {}
     )
+    morphology_candidate_summary = (
+        _read_json_if_exists(burden_artifacts['morphology_candidate_summary'])
+        if burden_artifacts.get('morphology_candidate_summary')
+        else {}
+    )
+    morphology_diagnostics = (
+        _read_json_if_exists(burden_artifacts['morphology_feature_diagnostics'])
+        if burden_artifacts.get('morphology_feature_diagnostics')
+        else {}
+    )
+    morphology_candidates = (
+        pd.read_csv(burden_artifacts['morphology_candidate_metrics'])
+        if burden_artifacts.get('morphology_candidate_metrics')
+        and burden_artifacts['morphology_candidate_metrics'].exists()
+        and burden_artifacts['morphology_candidate_metrics'].stat().st_size > 0
+        else pd.DataFrame()
+    )
 
     support_status = str(burden_metrics.get('support_gate_status', 'unknown'))
     numerical_status = str(burden_metrics.get('numerical_stability_status', 'unknown'))
@@ -1440,6 +1487,12 @@ def generate_combined_quantification_review(
         precision_candidate_summary.get('best_subject_level_candidate', {}) or {}
     )
     precision_recommendation = precision_candidate_summary.get('recommendation', '')
+    morphology_best_image = (
+        morphology_candidate_summary.get('best_image_level_candidate', {}) or {}
+    )
+    morphology_best_subject = (
+        morphology_candidate_summary.get('best_subject_level_candidate', {}) or {}
+    )
 
     cohort_table_rows = []
     for _, row in cohort_metrics_for_results.iterrows():
@@ -1472,6 +1525,23 @@ def generate_combined_quantification_review(
     if not signal_rows:
         signal_rows.append(
             '<tr><td colspan="6">No precision candidate screen available.</td></tr>'
+        )
+
+    morphology_rows = []
+    for _, row in morphology_candidates.iterrows():
+        morphology_rows.append(
+            '<tr>'
+            f'<td>{escape(str(row.get("candidate_id", "")))}</td>'
+            f'<td>{escape(str(row.get("target_level", "")))}</td>'
+            f'<td>{escape(str(row.get("feature_set", "")))}</td>'
+            f'<td>{escape(str(row.get("validation_grouping", "")))}</td>'
+            f'<td>{_format_optional_float(row.get("stage_index_mae"))}</td>'
+            f'<td>{escape(str(row.get("candidate_status", "")))}</td>'
+            '</tr>'
+        )
+    if not morphology_rows:
+        morphology_rows.append(
+            '<tr><td colspan="6">No morphology candidate screen available.</td></tr>'
         )
 
     support_rows = []
@@ -1680,6 +1750,20 @@ def generate_combined_quantification_review(
                 f'Stage-index MAE {_format_optional_float(best_subject_candidate.get("stage_index_mae"))}'
             ),
         },
+        {
+            'metric': 'best_image_morphology_candidate',
+            'value': morphology_best_image.get('candidate_id', ''),
+            'interpretation': (
+                f'Stage-index MAE {_format_optional_float(morphology_best_image.get("stage_index_mae"))}'
+            ),
+        },
+        {
+            'metric': 'best_subject_morphology_candidate',
+            'value': morphology_best_subject.get('candidate_id', ''),
+            'interpretation': (
+                f'Stage-index MAE {_format_optional_float(morphology_best_subject.get("stage_index_mae"))}'
+            ),
+        },
     ]
     pd.DataFrame(summary_rows).to_csv(results_summary_csv, index=False)
 
@@ -1719,6 +1803,14 @@ def generate_combined_quantification_review(
 - Best image-level candidate: `{best_image_candidate.get('candidate_id', '')}` with stage-index MAE `{_format_optional_float(best_image_candidate.get('stage_index_mae'))}`.
 - Best subject-level candidate: `{best_subject_candidate.get('candidate_id', '')}` with stage-index MAE `{_format_optional_float(best_subject_candidate.get('stage_index_mae'))}`.
 - Recommendation: {precision_recommendation or 'No precision candidate recommendation was generated.'}
+
+## Morphology Feature Screen
+
+- Feature rows: `{morphology_diagnostics.get('row_count', '')}`
+- Feature count: `{morphology_diagnostics.get('feature_count', '')}`
+- Best image-level morphology candidate: `{morphology_best_image.get('candidate_id', '')}` with stage-index MAE `{_format_optional_float(morphology_best_image.get('stage_index_mae'))}`.
+- Best subject-level morphology candidate: `{morphology_best_subject.get('candidate_id', '')}` with stage-index MAE `{_format_optional_float(morphology_best_subject.get('stage_index_mae'))}`.
+- Feature review: `../burden_model/evidence/morphology_feature_review/feature_review.html`
 
 ## Documentation Recommendation
 
@@ -1794,8 +1886,12 @@ The current full-cohort quantification run reports an endotheliosis burden index
       <h2>Precision Candidate Screen</h2>
       <p>{escape(str(precision_recommendation))}</p>
       <table><thead><tr><th>Candidate</th><th>Target level</th><th>Feature set</th><th>Validation</th><th>Stage-index MAE</th><th>Status</th></tr></thead><tbody>{''.join(signal_rows)}</tbody></table>
+      <h2>Morphology Feature Screen</h2>
+      <p>The morphology screen is exploratory until the operator review confirms the feature detections. Feature rows: {escape(str(morphology_diagnostics.get('row_count', '')))}; feature count: {escape(str(morphology_diagnostics.get('feature_count', '')))}.</p>
+      <p><a href="../burden_model/evidence/morphology_feature_review/feature_review.html">Open morphology feature review</a></p>
+      <table><thead><tr><th>Candidate</th><th>Target level</th><th>Feature set</th><th>Validation</th><th>Stage-index MAE</th><th>Status</th></tr></thead><tbody>{''.join(morphology_rows)}</tbody></table>
       <h2>Artifact Links</h2>
-      <p>Primary artifacts: <code>burden_model/burden_predictions.csv</code> for held-out grouped validation, <code>burden_model/final_model_predictions.csv</code> for the final full-cohort fitted model, <code>burden_model/burden_metrics.json</code>, <code>burden_model/uncertainty_calibration.json</code>, <code>burden_model/nearest_examples.csv</code>, <code>ordinal_model/ordinal_metrics.json</code>, and <code>ordinal_model/ordinal_predictions.csv</code>.</p>
+      <p>Primary artifacts: <code>burden_model/primary_model/burden_predictions.csv</code> for held-out grouped validation, <code>burden_model/primary_model/final_model_predictions.csv</code> for the final full-cohort fitted model, <code>burden_model/primary_model/burden_metrics.json</code>, <code>burden_model/calibration/uncertainty_calibration.json</code>, <code>burden_model/evidence/nearest_examples.csv</code>, <code>burden_model/candidates/precision_candidate_summary.json</code>, <code>burden_model/candidates/morphology_candidate_summary.json</code>, <code>burden_model/feature_sets/morphology_features.csv</code>, <code>ordinal_model/ordinal_metrics.json</code>, and <code>ordinal_model/ordinal_predictions.csv</code>.</p>
       <h2>Final Full-Cohort Summaries</h2>
       <table><thead><tr><th>Cohort</th><th>Rows</th><th>Subjects</th><th>Subject-weighted burden</th><th>Stage-index MAE</th></tr></thead><tbody>{''.join(cohort_table_rows)}</tbody></table>
       <h2>Threshold Support</h2>
@@ -2091,20 +2187,51 @@ def evaluate_embedding_table(
     embedding_df: pd.DataFrame, output_dir: Path, n_splits: int = 3
 ) -> Dict[str, Path]:
     """Train burden-index model and retained ordinal comparator."""
+    logger = get_logger('eq.quantification.pipeline')
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     parent_output = output_dir.parent
+    logger.info(
+        'Starting quantification model evaluation: rows=%d, ordinal_dir=%s, burden_dir=%s',
+        len(embedding_df),
+        output_dir,
+        parent_output / 'burden_model',
+    )
+    logger.info('Evaluating ordinal comparator -> %s', output_dir)
     ordinal_artifacts = _evaluate_ordinal_embedding_table(
         embedding_df, output_dir, n_splits=n_splits
     )
+    logger.info(
+        'Ordinal comparator complete: predictions=%s, metrics=%s',
+        ordinal_artifacts['predictions'],
+        ordinal_artifacts['metrics'],
+    )
+    logger.info(
+        'Evaluating burden-index and morphology candidates -> %s',
+        parent_output / 'burden_model',
+    )
     burden_artifacts = evaluate_burden_index_table(
         embedding_df, parent_output / 'burden_model', n_splits=n_splits
+    )
+    logger.info(
+        'Burden evaluation complete: predictions=%s, metrics=%s',
+        burden_artifacts['burden_predictions'],
+        burden_artifacts['burden_metrics'],
+    )
+    logger.info(
+        'Generating combined quantification review -> %s',
+        parent_output / 'quantification_review' / 'quantification_review.html',
     )
     review_artifacts = generate_combined_quantification_review(
         ordinal_predictions_path=ordinal_artifacts['predictions'],
         ordinal_metrics_path=ordinal_artifacts['metrics'],
         burden_artifacts=burden_artifacts,
         output_dir=parent_output / 'quantification_review',
+    )
+    logger.info(
+        'Combined quantification review complete: html=%s, summary=%s',
+        review_artifacts['quantification_review_html'],
+        review_artifacts['quantification_results_summary_md'],
     )
     merged_artifacts: Dict[str, Path] = dict(ordinal_artifacts)
     merged_artifacts.update(burden_artifacts)

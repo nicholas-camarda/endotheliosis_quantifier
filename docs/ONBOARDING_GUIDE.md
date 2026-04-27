@@ -304,14 +304,17 @@ This writes:
 - recovered Label Studio score tables and duplicate-resolution audit outputs
 - union-ROI image and mask crops
 - frozen segmentation encoder embeddings
-- `burden_model/` artifacts with `endotheliosis_burden_0_100`, threshold probabilities, prediction sets, uncertainty intervals, support gates, grouping audit, nearest scored examples, cohort metrics, and animal-level summary intervals
-- `burden_model/` candidate-screen artifacts such as `signal_comparator_metrics.csv`, `subject_level_candidate_predictions.csv`, and `precision_candidate_summary.json`; these are review artifacts, not deployed models
+- `burden_model/primary_model/` artifacts with `endotheliosis_burden_0_100`, threshold probabilities, prediction sets, uncertainty intervals, and the serialized exploratory burden model
+- `burden_model/validation/`, `burden_model/calibration/`, `burden_model/summaries/`, and `burden_model/evidence/` artifacts with support gates, grouping audit, calibration, nearest scored examples, cohort metrics, summary intervals, and prediction explanations
+- `burden_model/feature_sets/` and `burden_model/diagnostics/` morphology feature artifacts for open lumina, collapsed/slit-like structures, RBC-like patent-lumen confounding, and ROI quality
+- `burden_model/candidates/` candidate-screen artifacts such as `signal_comparator_metrics.csv`, `subject_level_candidate_predictions.csv`, `precision_candidate_summary.json`, `morphology_candidate_metrics.csv`, and `morphology_candidate_summary.json`; these are review artifacts, not deployed models
+- `burden_model/evidence/morphology_feature_review/` with the visual feature review page, selected cases, overlay assets, and operator adjudication template
 - `ordinal_model/` artifacts with ordinal comparator predictions, probabilities, metrics, confusion matrix, and the comparator-specific HTML review
 - `quantification_review/` artifacts with the combined burden/comparator HTML review, reviewer examples, concrete results summaries, and a README/docs snippet generated from the current run
 
 The burden score is a predictive ordinal stage-burden index from image-level grades. It is not a pixel-level tissue-area percent and should be interpreted with the generated support, calibration, and uncertainty artifacts.
 
-The current full-cohort burden result is exploratory rather than a deployed model claim. The generated `quantification_review/readme_results_snippet.md` is not automatically shareable; reuse it only when the review report marks the selected track as README/docs-ready. Current candidate screens show that subject-level ROI aggregation is promising for cohort summaries, while individual image-level prediction still needs narrower calibrated prediction sets and morphology-aware feature work.
+The current full-cohort burden result is exploratory rather than a deployed model claim. The generated `quantification_review/readme_results_snippet.md` is not automatically shareable; reuse it only when the review report marks the selected track as README/docs-ready. Current candidate screens keep subject/cohort burden, per-image burden, and morphology-aware feature evidence separate so feature QA can be reviewed before any public claim.
 
 ## A Good Mental Model For The Repo
 

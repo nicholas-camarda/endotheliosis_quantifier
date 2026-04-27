@@ -82,8 +82,34 @@ def test_evaluate_burden_index_table_writes_expected_artifacts(tmp_path):
         'signal_comparator_metrics',
         'subject_level_candidate_predictions',
         'precision_candidate_summary',
+        'morphology_features',
+        'morphology_feature_metadata',
+        'subject_morphology_features',
+        'morphology_feature_diagnostics',
+        'morphology_feature_review_html',
+        'morphology_feature_review_cases',
+        'morphology_operator_adjudication_template',
+        'morphology_operator_adjudication_agreement',
+        'morphology_candidate_metrics',
+        'subject_morphology_candidate_predictions',
+        'morphology_candidate_summary',
     ]:
         assert artifacts[key].exists()
+
+    assert artifacts['burden_predictions'].parent.name == 'primary_model'
+    assert artifacts['burden_metrics'].parent.name == 'primary_model'
+    assert artifacts['threshold_metrics'].parent.name == 'validation'
+    assert artifacts['uncertainty_calibration'].parent.name == 'calibration'
+    assert artifacts['group_summary_intervals'].parent.name == 'summaries'
+    assert artifacts['nearest_examples'].parent.name == 'evidence'
+    assert artifacts['signal_comparator_metrics'].parent.name == 'candidates'
+    assert artifacts['morphology_features'].parent.name == 'feature_sets'
+    assert artifacts['morphology_feature_diagnostics'].parent.name == 'diagnostics'
+    assert artifacts['morphology_feature_review_html'].parent.name == (
+        'morphology_feature_review'
+    )
+    assert not (tmp_path / 'burden' / 'burden_predictions.csv').exists()
+    assert not (tmp_path / 'burden' / 'burden_model.joblib').exists()
 
     predictions = pd.read_csv(artifacts['burden_predictions'])
     assert 'animal_id' not in predictions.columns
@@ -138,6 +164,7 @@ def test_evaluate_burden_index_table_writes_expected_artifacts(tmp_path):
     assert metrics['fold_group_conformity_quantiles']
     assert metrics['fold_group_residual_quantiles']
     assert 'signal_comparator_screen' in metrics
+    assert 'morphology_candidate_screen' in metrics
 
     signal = pd.read_csv(artifacts['signal_comparator_metrics'])
     assert {
@@ -177,6 +204,35 @@ def test_evaluate_burden_index_table_writes_expected_artifacts(tmp_path):
     assert precision_summary['candidate_count'] == len(signal)
     assert precision_summary['current_primary_burden_model']['target_level'] == 'image'
     assert precision_summary['best_subject_level_candidate']
+
+    morphology_features = pd.read_csv(artifacts['morphology_features'])
+    assert 'morph_rbc_like_color_burden' in morphology_features.columns
+    assert 'morph_slit_like_area_fraction' in morphology_features.columns
+    assert 'morph_border_false_slit_area_fraction' in morphology_features.columns
+    assert 'morph_slit_boundary_overlap_fraction' in morphology_features.columns
+    numeric_morphology = morphology_features.filter(regex='^morph_')
+    assert np.isfinite(numeric_morphology.to_numpy(dtype=float)).all()
+
+    morphology_summary = json.loads(
+        artifacts['morphology_candidate_summary'].read_text(encoding='utf-8')
+    )
+    assert morphology_summary['best_image_level_candidate']
+    assert 'feature_readiness' in morphology_summary
+    assert morphology_summary['selection_status'] in {
+        'blocked_by_visual_feature_readiness',
+        'exploratory_until_operator_feature_review_and_calibration_gates_pass',
+    }
+    morphology_candidates = pd.read_csv(artifacts['morphology_candidate_metrics'])
+    assert {'image_morphology_only_ridge', 'subject_morphology_only_ridge'}.issubset(
+        set(morphology_candidates['candidate_id'])
+    )
+
+    agreement = json.loads(
+        artifacts['morphology_operator_adjudication_agreement'].read_text(
+            encoding='utf-8'
+        )
+    )
+    assert agreement['adjudication_status'] in {'not_started', 'completed'}
 
     uncertainty = json.loads(
         artifacts['uncertainty_calibration'].read_text(encoding='utf-8')

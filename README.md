@@ -262,7 +262,7 @@ The current maintained quantification path uses image-level grades joined to eac
 
 The current burden-index model is not README/docs-ready as an operational model claim. It is useful for review and method development, but the latest full-cohort run still has broad per-image prediction sets, slight undercoverage against the nominal prediction-set target, and finite-output backend matrix warnings. Subject-level ROI aggregation is the strongest current follow-up direction for cohort summaries, while per-image prediction remains a separate calibration and feature-modeling problem.
 
-Endotheliosis is graded by assessing the relative amount of open versus collapsed capillary or arteriole lumina within the glomerulus. The maintained quantification path does not yet explicitly model open-lumen, collapsed-line, or erythrocyte-filled patent-lumen morphology. Candidate screens should not be confused with deployed models, and subject/cohort burden summaries should not be presented as proof that individual image scores are precise.
+Endotheliosis is graded by assessing the relative amount of open versus collapsed capillary or arteriole lumina within the glomerulus. The maintained quantification path writes deterministic morphology features for open/pale lumina, collapsed or slit-like structures, ridge/line signals, erythrocyte-like patent-lumen confounding, and ROI quality. These morphology features are candidate evidence, not a deployed mechanistic model; the generated feature-review HTML and operator adjudication template must be inspected before using them for a shareable claim.
 
 Current quantification implementation surfaces:
 
@@ -277,7 +277,7 @@ Current quantification implementation surfaces:
 - `labelstudio_scores/` with recovered per-image grades and duplicate-resolution audit tables
 - `roi_crops/` with union-ROI crops over the full multi-component mask
 - `embeddings/` with frozen segmentation-encoder embeddings
-- `burden_model/` with exploratory burden predictions, threshold metrics, uncertainty calibration, grouping audit, support gates, nearest examples, cohort metrics, subject-level candidate screens, and summary intervals
+- `burden_model/` with grouped `primary_model/`, `validation/`, `calibration/`, `summaries/`, `evidence/`, `candidates/`, `diagnostics/`, and `feature_sets/` subfolders for exploratory burden predictions, support gates, uncertainty calibration, cohort summaries, nearest examples, candidate screens, morphology features, and review diagnostics
 - `ordinal_model/` with comparator predictions, probabilities, metrics, confusion matrix, and `review_report/ordinal_review.html`
 - `quantification_review/` with combined HTML review, reviewer examples, concrete result summaries, and a README/docs snippet from the current run; reuse the snippet only when the reported readiness flag and uncertainty checks pass
 

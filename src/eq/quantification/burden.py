@@ -18,7 +18,13 @@ from sklearn.model_selection import GroupKFold, KFold
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 
+from eq.quantification.feature_review import write_morphology_feature_review
+from eq.quantification.morphology_features import (
+    MORPHOLOGY_FEATURE_COLUMNS,
+    write_morphology_feature_tables,
+)
 from eq.quantification.ordinal import NUMERICAL_INSTABILITY_PATTERNS
+from eq.utils.logger import get_logger
 
 ALLOWED_SCORE_VALUES = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 3.0], dtype=np.float64)
 CUMULATIVE_THRESHOLDS = np.array([0.0, 0.5, 1.0, 1.5, 2.0], dtype=np.float64)
@@ -32,6 +38,58 @@ THRESHOLD_PROBABILITY_COLUMNS = [
 BURDEN_COLUMN = 'endotheliosis_burden_0_100'
 STAGE_INDEX_TARGETS = {0.0: 0.0, 0.5: 20.0, 1.0: 40.0, 1.5: 60.0, 2.0: 80.0, 3.0: 100.0}
 PREDICTION_SET_COVERAGE = 0.90
+BURDEN_OUTPUT_GROUPS = {
+    'primary_model': 'primary_model',
+    'validation': 'validation',
+    'calibration': 'calibration',
+    'summaries': 'summaries',
+    'evidence': 'evidence',
+    'candidates': 'candidates',
+    'diagnostics': 'diagnostics',
+    'feature_sets': 'feature_sets',
+}
+LEGACY_FLAT_BURDEN_FILES = [
+    'grouping_audit.json',
+    'threshold_support.csv',
+    'burden_predictions.csv',
+    'threshold_metrics.csv',
+    'calibration_bins.csv',
+    'uncertainty_calibration.json',
+    'cohort_metrics.csv',
+    'group_summary_intervals.csv',
+    'validation_design.json',
+    'prediction_explanations.csv',
+    'nearest_examples.csv',
+    'signal_comparator_metrics.csv',
+    'subject_level_candidate_predictions.csv',
+    'precision_candidate_summary.json',
+    'burden_metrics.json',
+    'final_model_predictions.csv',
+    'final_model_cohort_metrics.csv',
+    'final_model_group_summary_intervals.csv',
+    'cohort_stability.csv',
+    'burden_model.joblib',
+]
+
+
+def burden_output_paths(output_dir: Path) -> dict[str, Path]:
+    """Return the canonical grouped burden artifact directories."""
+    root = Path(output_dir)
+    paths = {key: root / dirname for key, dirname in BURDEN_OUTPUT_GROUPS.items()}
+    paths['morphology_review'] = paths['evidence'] / 'morphology_feature_review'
+    return paths
+
+
+def _prepare_burden_output_contract(output_dir: Path) -> dict[str, Path]:
+    """Create grouped output directories and remove stale flat artifacts."""
+    paths = burden_output_paths(output_dir)
+    for directory in paths.values():
+        directory.mkdir(parents=True, exist_ok=True)
+    for filename in LEGACY_FLAT_BURDEN_FILES:
+        stale_path = Path(output_dir) / filename
+        if stale_path.is_file():
+            stale_path.unlink()
+    return paths
 
 
 class BurdenModelError(ValueError):
@@ -600,6 +658,8 @@ def _candidate_row(
     intended_use: str,
 ) -> dict[str, Any]:
     finite_status = _finite_matrix_status(predictions)
+    observed_scores = np.interp(stage_targets, [0.0, 100.0], [0.0, 3.0])
+    predicted_scores = np.interp(predictions, [0.0, 100.0], [0.0, 3.0])
     return {
         'candidate_id': candidate_id,
         'target_level': target_level,
@@ -611,6 +671,13 @@ def _candidate_row(
         'n_subjects': int(n_subjects),
         'feature_count': int(feature_count),
         'stage_index_mae': float(mean_absolute_error(stage_targets, predictions)),
+        'grade_scale_mae': float(
+            mean_absolute_error(observed_scores, predicted_scores)
+        ),
+        'prediction_set_coverage': '',
+        'average_prediction_set_size': '',
+        'prediction_set_status': 'not_applicable_direct_regression_screen',
+        'cohort_metric_status': 'global_candidate_screen; inspect cohort summaries for primary burden artifacts',
         'prediction_output_finite': bool(finite_status['finite']),
         'nan_count': int(finite_status['nan_count']),
         'posinf_count': int(finite_status['posinf_count']),
@@ -875,8 +942,8 @@ def _write_precision_candidate_summary(
             recommendation = 'Image-level precision remains the strongest follow-up direction; retain subject-heldout validation and improve calibrated uncertainty before promotion.'
     payload = {
         'artifact_contract': {
-            'canonical_signal_screen': 'signal_comparator_metrics.csv',
-            'subject_level_predictions': 'subject_level_candidate_predictions.csv',
+            'canonical_signal_screen': 'candidates/signal_comparator_metrics.csv',
+            'subject_level_predictions': 'candidates/subject_level_candidate_predictions.csv',
         },
         'candidate_count': int(len(metrics)),
         'subject_prediction_rows': int(len(subject_predictions)),
@@ -892,6 +959,224 @@ def _write_precision_candidate_summary(
     }
     output_path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
     return output_path
+
+
+def _morphology_feature_readiness(work_df: pd.DataFrame) -> dict[str, Any]:
+    """Summarize whether deterministic morphology features are biologically reviewable."""
+    blockers: list[str] = []
+    slit = pd.to_numeric(
+        work_df.get('morph_slit_like_area_fraction', pd.Series(dtype=float)),
+        errors='coerce',
+    ).fillna(0.0)
+    border = pd.to_numeric(
+        work_df.get('morph_border_false_slit_area_fraction', pd.Series(dtype=float)),
+        errors='coerce',
+    ).fillna(0.0)
+    boundary_overlap = pd.to_numeric(
+        work_df.get('morph_slit_boundary_overlap_fraction', pd.Series(dtype=float)),
+        errors='coerce',
+    ).fillna(0.0)
+    nuclear = pd.to_numeric(
+        work_df.get(
+            'morph_nuclear_mesangial_confounder_area_fraction', pd.Series(dtype=float)
+        ),
+        errors='coerce',
+    ).fillna(0.0)
+    score = pd.to_numeric(work_df.get('score', pd.Series(dtype=float)), errors='coerce')
+    zero_score = score.eq(0.0)
+    zero_score_slit_positive_fraction = (
+        float(slit[zero_score].gt(0).mean()) if zero_score.any() else None
+    )
+    overall_slit_positive_fraction = float(slit.gt(0).mean()) if len(slit) else 0.0
+    mean_boundary_overlap = (
+        float(boundary_overlap.mean()) if len(boundary_overlap) else 0.0
+    )
+    mean_border_false_slit_area_fraction = float(border.mean()) if len(border) else 0.0
+    mean_nuclear_confounder_area_fraction = (
+        float(nuclear.mean()) if len(nuclear) else 0.0
+    )
+    if (
+        zero_score_slit_positive_fraction is not None
+        and zero_score_slit_positive_fraction > 0.50
+    ):
+        blockers.append('accepted_slit_signal_is_common_in_score_0_images')
+    if overall_slit_positive_fraction > 0.95:
+        blockers.append('accepted_slit_signal_is_nearly_ubiquitous')
+    if mean_boundary_overlap > 0.20:
+        blockers.append('slit_signal_has_high_boundary_overlap')
+    if mean_nuclear_confounder_area_fraction > 0.10:
+        blockers.append('nuclear_mesangial_confounder_burden_is_high')
+    return {
+        'status': 'failed_visual_feature_readiness' if blockers else 'passed',
+        'blockers': blockers,
+        'metrics': {
+            'overall_slit_positive_fraction': overall_slit_positive_fraction,
+            'zero_score_slit_positive_fraction': zero_score_slit_positive_fraction,
+            'mean_slit_boundary_overlap_fraction': mean_boundary_overlap,
+            'mean_border_false_slit_area_fraction': mean_border_false_slit_area_fraction,
+            'mean_nuclear_mesangial_confounder_area_fraction': mean_nuclear_confounder_area_fraction,
+        },
+        'decision': (
+            'do_not_promote_morphology_candidates_or_use_slit_features_for_biology_claims'
+            if blockers
+            else 'morphology_features_are_reviewable_for_candidate_modeling'
+        ),
+    }
+
+
+def _write_morphology_candidate_screen(
+    *,
+    work_df: pd.DataFrame,
+    embedding_columns: Sequence[str],
+    morphology_columns: Sequence[str],
+    stage_targets: np.ndarray,
+    groups: np.ndarray,
+    split_count: int,
+    output_path: Path,
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    prediction_rows: list[pd.DataFrame] = []
+    image_feature_sets = [
+        (
+            'image_morphology_only_ridge',
+            'morphology_features',
+            list(morphology_columns),
+        ),
+        (
+            'image_embedding_plus_morphology_ridge',
+            'frozen_embedding_plus_morphology_features',
+            list(embedding_columns) + list(morphology_columns),
+        ),
+    ]
+    for candidate_id, feature_set, columns in image_feature_sets:
+        features = _feature_matrix(work_df, columns)
+        predictions, warning_messages, folds = _grouped_ridge_predictions(
+            features, stage_targets, groups, split_count
+        )
+        rows.append(
+            _candidate_row(
+                candidate_id=candidate_id,
+                target_level='image',
+                target_definition='image_stage_index_0_100',
+                model_family='ridge_regression',
+                feature_set=feature_set,
+                validation_grouping='subject_id_groupkfold',
+                n_rows=len(work_df),
+                n_subjects=len(np.unique(groups)),
+                feature_count=features.shape[1],
+                stage_targets=stage_targets,
+                predictions=predictions,
+                warning_messages=warning_messages,
+                intended_use='morphology_precision_screen_not_primary_model',
+            )
+        )
+        image_predictions = work_df[
+            [
+                column
+                for column in [
+                    'subject_image_id',
+                    'subject_id',
+                    'sample_id',
+                    'image_id',
+                    'cohort_id',
+                    'score',
+                ]
+                if column in work_df.columns
+            ]
+        ].copy()
+        image_predictions['candidate_id'] = candidate_id
+        image_predictions['fold'] = folds
+        image_predictions['observed_stage_index'] = stage_targets
+        image_predictions['predicted_burden_0_100'] = predictions
+        image_predictions['stage_index_absolute_error'] = np.abs(
+            stage_targets - predictions
+        )
+        image_predictions['prediction_source'] = 'held_out_subject_morphology_screen'
+        prediction_rows.append(image_predictions)
+
+    subject_df = work_df.copy()
+    if 'cohort_id' not in subject_df.columns:
+        subject_df['cohort_id'] = ''
+    subject_df['observed_stage_index'] = stage_targets
+    subject_feature_sets = [
+        (
+            'subject_morphology_only_ridge',
+            'mean_morphology_features',
+            list(morphology_columns),
+        ),
+        (
+            'subject_embedding_plus_morphology_ridge',
+            'mean_frozen_embedding_plus_mean_morphology_features',
+            list(embedding_columns) + list(morphology_columns),
+        ),
+    ]
+    aggregation: dict[str, Any] = {'cohort_id': 'first', 'observed_stage_index': 'mean'}
+    for column in set(list(embedding_columns) + list(morphology_columns)):
+        aggregation[column] = 'mean'
+    grouped = subject_df.groupby('subject_id', as_index=False).agg(aggregation)
+    grouped = grouped.rename(
+        columns={'observed_stage_index': 'observed_subject_stage_index_mean'}
+    )
+    target = grouped['observed_subject_stage_index_mean'].to_numpy(dtype=np.float64)
+    subject_split_count = min(max(2, split_count), len(grouped))
+    for candidate_id, feature_set, columns in subject_feature_sets:
+        features = _feature_matrix(grouped, columns)
+        predictions, warning_messages, folds = _kfold_ridge_predictions(
+            features, target, subject_split_count
+        )
+        prediction_rows.append(
+            _subject_candidate_prediction_rows(
+                grouped,
+                candidate_id=candidate_id,
+                model_family='ridge_regression',
+                feature_set=feature_set,
+                predictions=predictions,
+                folds=folds,
+            )
+        )
+        rows.append(
+            _candidate_row(
+                candidate_id=candidate_id,
+                target_level='subject',
+                target_definition='mean_subject_stage_index_0_100',
+                model_family='ridge_regression',
+                feature_set=feature_set,
+                validation_grouping='subject_kfold',
+                n_rows=len(grouped),
+                n_subjects=len(grouped),
+                feature_count=features.shape[1],
+                stage_targets=target,
+                predictions=predictions,
+                warning_messages=warning_messages,
+                intended_use='morphology_subject_or_cohort_burden_screen',
+            )
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics = pd.DataFrame(rows)
+    metrics.to_csv(output_path, index=False)
+    predictions_path = output_path.with_name(
+        'subject_morphology_candidate_predictions.csv'
+    )
+    pd.concat(prediction_rows, ignore_index=True).to_csv(predictions_path, index=False)
+    summary_path = output_path.with_name('morphology_candidate_summary.json')
+    feature_readiness = _morphology_feature_readiness(work_df)
+    summary = {
+        'artifact_contract': {
+            'metrics': 'candidates/morphology_candidate_metrics.csv',
+            'predictions': 'candidates/subject_morphology_candidate_predictions.csv',
+        },
+        'candidate_count': int(len(metrics)),
+        'feature_columns': list(morphology_columns),
+        'best_image_level_candidate': _best_candidate(metrics, 'image'),
+        'best_subject_level_candidate': _best_candidate(metrics, 'subject'),
+        'feature_readiness': feature_readiness,
+        'selection_status': 'blocked_by_visual_feature_readiness'
+        if feature_readiness['status'] != 'passed'
+        else 'exploratory_until_operator_feature_review_and_calibration_gates_pass',
+    }
+    summary_path.write_text(json.dumps(summary, indent=2), encoding='utf-8')
+    return metrics
 
 
 def _write_cohort_stability(
@@ -940,8 +1225,28 @@ def evaluate_burden_index_table(
     embedding_df: pd.DataFrame, output_dir: Path, n_splits: int = 3
 ) -> dict[str, Path]:
     """Fit grouped cumulative-threshold burden models and write artifacts."""
+    logger = get_logger('eq.quantification.burden')
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        'Starting burden-index evaluation for %d rows -> %s',
+        len(embedding_df),
+        output_dir,
+    )
+    output_paths = _prepare_burden_output_contract(output_dir)
+    logger.info(
+        'Prepared grouped burden output directories: %s',
+        ', '.join(f'{key}={path.name}' for key, path in output_paths.items()),
+    )
+    primary_model_dir = output_paths['primary_model']
+    validation_dir = output_paths['validation']
+    calibration_dir = output_paths['calibration']
+    summaries_dir = output_paths['summaries']
+    evidence_dir = output_paths['evidence']
+    candidates_dir = output_paths['candidates']
+    diagnostics_dir = output_paths['diagnostics']
+    feature_sets_dir = output_paths['feature_sets']
+    morphology_review_dir = output_paths['morphology_review']
     if 'score' not in embedding_df.columns:
         raise BurdenModelError('Embedding table must contain score')
     validate_score_values(embedding_df['score'])
@@ -954,6 +1259,40 @@ def evaluate_burden_index_table(
     group_column, groups, grouping_audit = derive_biological_grouping(embedding_df)
     work_df = embedding_df.copy().reset_index(drop=True)
     work_df[group_column] = groups.reset_index(drop=True)
+    logger.info(
+        'Using %s grouped validation with %d subjects and %d samples',
+        group_column,
+        int(groups.nunique()),
+        int(work_df['sample_id'].nunique()) if 'sample_id' in work_df.columns else 0,
+    )
+    logger.info(
+        'Extracting morphology features for %d ROI rows -> %s',
+        len(work_df),
+        feature_sets_dir / 'morphology_features.csv',
+    )
+    morphology_df, morphology_artifacts = write_morphology_feature_tables(
+        work_df, feature_sets_dir, diagnostics_dir
+    )
+    logger.info(
+        'Morphology features written: rows=%d, features=%d, diagnostics=%s',
+        len(morphology_df),
+        len(MORPHOLOGY_FEATURE_COLUMNS),
+        morphology_artifacts['morphology_feature_diagnostics'],
+    )
+    for column in ['morphology_feature_status', *MORPHOLOGY_FEATURE_COLUMNS]:
+        work_df[column] = morphology_df[column].to_numpy()
+    logger.info(
+        'Generating morphology feature review -> %s',
+        morphology_review_dir / 'feature_review.html',
+    )
+    morphology_review_artifacts = write_morphology_feature_review(
+        morphology_df, morphology_review_dir
+    )
+    logger.info(
+        'Morphology review written: html=%s, adjudication=%s',
+        morphology_review_artifacts['morphology_feature_review_html'],
+        morphology_review_artifacts['morphology_operator_adjudication_agreement'],
+    )
     scores = work_df['score'].astype(float).to_numpy()
     stage_targets = score_to_stage_index(scores)
     target_matrix = threshold_targets(scores)
@@ -964,14 +1303,19 @@ def evaluate_burden_index_table(
         raise BurdenModelError(
             'Need at least two biological groups for grouped burden evaluation'
         )
+    logger.info(
+        'Fitting grouped cumulative-threshold burden model: folds=%d, thresholds=%s',
+        split_count,
+        ', '.join(f'>{threshold:g}' for threshold in CUMULATIVE_THRESHOLDS),
+    )
 
     grouping_audit['n_splits'] = int(split_count)
-    grouping_audit_path = output_dir / 'grouping_audit.json'
+    grouping_audit_path = validation_dir / 'grouping_audit.json'
     grouping_audit_path.write_text(
         json.dumps(grouping_audit, indent=2), encoding='utf-8'
     )
     threshold_support = _write_threshold_support(
-        work_df, groups, output_dir / 'threshold_support.csv'
+        work_df, groups, validation_dir / 'threshold_support.csv'
     )
 
     raw_threshold_probabilities = np.zeros(
@@ -987,6 +1331,15 @@ def evaluate_burden_index_table(
     for fold_index, (train_idx, test_idx) in enumerate(
         splitter.split(x, scores, groups=groups), start=1
     ):
+        logger.info(
+            'Burden fold %d/%d: train_rows=%d, test_rows=%d, train_subjects=%d, test_subjects=%d',
+            fold_index,
+            split_count,
+            len(train_idx),
+            len(test_idx),
+            len(np.unique(groups.iloc[train_idx].astype(str))),
+            len(np.unique(groups.iloc[test_idx].astype(str))),
+        )
         fold_train_indices[fold_index] = train_idx
         scaler = StandardScaler()
         x_train = scaler.fit_transform(x[train_idx])
@@ -1085,8 +1438,9 @@ def evaluate_burden_index_table(
     predictions['prediction_set_method'] = 'grouped_fold_row_aps_conformal_quantile'
     predictions['prediction_source'] = 'held_out_grouped_fold_prediction'
 
-    predictions_path = output_dir / 'burden_predictions.csv'
+    predictions_path = primary_model_dir / 'burden_predictions.csv'
     predictions.to_csv(predictions_path, index=False)
+    logger.info('Held-out burden predictions written -> %s', predictions_path)
 
     threshold_rows: list[dict[str, Any]] = []
     for index, threshold in enumerate(CUMULATIVE_THRESHOLDS):
@@ -1104,10 +1458,10 @@ def evaluate_burden_index_table(
         else:
             row['roc_auc'] = ''
         threshold_rows.append(row)
-    threshold_metrics_path = output_dir / 'threshold_metrics.csv'
+    threshold_metrics_path = validation_dir / 'threshold_metrics.csv'
     pd.DataFrame(threshold_rows).to_csv(threshold_metrics_path, index=False)
 
-    calibration_bins_path = output_dir / 'calibration_bins.csv'
+    calibration_bins_path = calibration_dir / 'calibration_bins.csv'
     calibration_df = predictions.copy()
     calibration_df['burden_bin'] = pd.cut(
         calibration_df[BURDEN_COLUMN], bins=np.linspace(0, 100, 6), include_lowest=True
@@ -1125,13 +1479,13 @@ def evaluate_burden_index_table(
     calibration_summary.to_csv(calibration_bins_path, index=False)
 
     uncertainty_path = _write_uncertainty_calibration(
-        predictions, output_dir / 'uncertainty_calibration.json', group_column
+        predictions, calibration_dir / 'uncertainty_calibration.json', group_column
     )
-    cohort_metrics_path = output_dir / 'cohort_metrics.csv'
+    cohort_metrics_path = summaries_dir / 'cohort_metrics.csv'
     _write_cohort_metrics(predictions, group_column, cohort_metrics_path)
-    group_summary_path = output_dir / 'group_summary_intervals.csv'
+    group_summary_path = summaries_dir / 'group_summary_intervals.csv'
     _write_group_summary_intervals(predictions, group_column, group_summary_path)
-    validation_design_path = output_dir / 'validation_design.json'
+    validation_design_path = validation_dir / 'validation_design.json'
     validation_design_path.write_text(
         json.dumps(
             {
@@ -1151,7 +1505,7 @@ def evaluate_burden_index_table(
         encoding='utf-8',
     )
 
-    prediction_explanations_path = output_dir / 'prediction_explanations.csv'
+    prediction_explanations_path = evidence_dir / 'prediction_explanations.csv'
     explanation_columns = [
         column
         for column in [
@@ -1230,17 +1584,19 @@ def evaluate_burden_index_table(
                 added += 1
                 if added >= 3:
                     break
-    nearest_examples_path = output_dir / 'nearest_examples.csv'
+    nearest_examples_path = evidence_dir / 'nearest_examples.csv'
     pd.DataFrame(nearest_rows).to_csv(nearest_examples_path, index=False)
 
     direct_regression = _fit_direct_regression_comparator(
         x, stage_targets, groups.astype(str).to_numpy(), split_count
     )
-    signal_comparator_path = output_dir / 'signal_comparator_metrics.csv'
+    signal_comparator_path = candidates_dir / 'signal_comparator_metrics.csv'
     subject_level_candidate_path = (
-        output_dir / 'subject_level_candidate_predictions.csv'
+        candidates_dir / 'subject_level_candidate_predictions.csv'
     )
-    precision_candidate_summary_path = output_dir / 'precision_candidate_summary.json'
+    precision_candidate_summary_path = (
+        candidates_dir / 'precision_candidate_summary.json'
+    )
     signal_comparator = _write_signal_comparator_screen(
         work_df,
         embedding_columns,
@@ -1249,6 +1605,24 @@ def evaluate_burden_index_table(
         split_count,
         signal_comparator_path,
     )
+    logger.info('Precision candidate screen written -> %s', signal_comparator_path)
+    morphology_candidate_path = candidates_dir / 'morphology_candidate_metrics.csv'
+    subject_morphology_candidate_path = (
+        candidates_dir / 'subject_morphology_candidate_predictions.csv'
+    )
+    morphology_candidate_summary_path = (
+        candidates_dir / 'morphology_candidate_summary.json'
+    )
+    morphology_candidate_metrics = _write_morphology_candidate_screen(
+        work_df=work_df,
+        embedding_columns=embedding_columns,
+        morphology_columns=MORPHOLOGY_FEATURE_COLUMNS,
+        stage_targets=stage_targets,
+        groups=groups.astype(str).to_numpy(),
+        split_count=split_count,
+        output_path=morphology_candidate_path,
+    )
+    logger.info('Morphology candidate screen written -> %s', morphology_candidate_path)
     support_blockers = sorted(
         set(
             threshold_support.loc[
@@ -1361,6 +1735,18 @@ def evaluate_burden_index_table(
         'cohort_composition_strata': stratum_support_blockers,
         'direct_regression_comparator': direct_regression,
         'signal_comparator_screen': signal_comparator.to_dict(orient='records'),
+        'morphology_candidate_screen': morphology_candidate_metrics.to_dict(
+            orient='records'
+        ),
+        'morphology_feature_artifacts': {
+            key: str(value.relative_to(output_dir))
+            for key, value in morphology_artifacts.items()
+        },
+        'morphology_feature_review_artifacts': {
+            key: str(value.relative_to(output_dir))
+            for key, value in morphology_review_artifacts.items()
+            if value.is_file()
+        },
     }
     if precision_candidate_summary_path.exists():
         precision_summary = json.loads(
@@ -1381,8 +1767,15 @@ def evaluate_burden_index_table(
         precision_candidate_summary_path.write_text(
             json.dumps(precision_summary, indent=2), encoding='utf-8'
         )
-    metrics_path = output_dir / 'burden_metrics.json'
+    metrics_path = primary_model_dir / 'burden_metrics.json'
     metrics_path.write_text(json.dumps(metrics, indent=2), encoding='utf-8')
+    logger.info(
+        'Burden metrics written -> %s (support=%s, numerical=%s, coverage=%.3f)',
+        metrics_path,
+        support_gate_status,
+        numerical_stability_status,
+        float(overall['prediction_set_coverage']),
+    )
 
     final_scaler = StandardScaler().fit(x)
     final_models: dict[str, Any] = {}
@@ -1454,21 +1847,24 @@ def evaluate_burden_index_table(
         'validation_aps_quantile_applied_to_final_full_cohort_fit'
     )
     final_predictions['prediction_source'] = 'final_model_full_cohort_fit'
-    final_predictions_path = output_dir / 'final_model_predictions.csv'
+    final_predictions_path = primary_model_dir / 'final_model_predictions.csv'
     final_predictions.to_csv(final_predictions_path, index=False)
-    final_cohort_metrics_path = output_dir / 'final_model_cohort_metrics.csv'
+    logger.info(
+        'Final full-cohort burden predictions written -> %s', final_predictions_path
+    )
+    final_cohort_metrics_path = summaries_dir / 'final_model_cohort_metrics.csv'
     _write_cohort_metrics(final_predictions, group_column, final_cohort_metrics_path)
-    final_group_summary_path = output_dir / 'final_model_group_summary_intervals.csv'
+    final_group_summary_path = summaries_dir / 'final_model_group_summary_intervals.csv'
     _write_group_summary_intervals(
         final_predictions, group_column, final_group_summary_path
     )
-    cohort_stability_path = output_dir / 'cohort_stability.csv'
+    cohort_stability_path = validation_dir / 'cohort_stability.csv'
     _write_cohort_stability(
         _read_csv_if_nonempty(cohort_metrics_path),
         _read_csv_if_nonempty(final_cohort_metrics_path),
         cohort_stability_path,
     )
-    model_path = output_dir / 'burden_model.joblib'
+    model_path = primary_model_dir / 'burden_model.joblib'
     with model_path.open('wb') as handle:
         pickle.dump(
             {
@@ -1479,20 +1875,21 @@ def evaluate_burden_index_table(
                 'threshold_models': final_models,
                 'model_metadata': metrics,
                 'prediction_contract': {
-                    'validation_predictions': 'burden_predictions.csv',
-                    'final_full_cohort_predictions': 'final_model_predictions.csv',
+                    'validation_predictions': 'primary_model/burden_predictions.csv',
+                    'final_full_cohort_predictions': 'primary_model/final_model_predictions.csv',
                     'final_prediction_source': 'final_model_full_cohort_fit',
                     'validation_prediction_source': 'held_out_grouped_fold_prediction',
                 },
             },
             handle,
         )
+    logger.info('Serialized burden model written -> %s', model_path)
 
     return {
         'burden_predictions': predictions_path,
         'burden_metrics': metrics_path,
         'threshold_metrics': threshold_metrics_path,
-        'threshold_support': output_dir / 'threshold_support.csv',
+        'threshold_support': validation_dir / 'threshold_support.csv',
         'calibration_bins': calibration_bins_path,
         'uncertainty_calibration': uncertainty_path,
         'grouping_audit': grouping_audit_path,
@@ -1504,6 +1901,31 @@ def evaluate_burden_index_table(
         'signal_comparator_metrics': signal_comparator_path,
         'subject_level_candidate_predictions': subject_level_candidate_path,
         'precision_candidate_summary': precision_candidate_summary_path,
+        'morphology_features': morphology_artifacts['morphology_features'],
+        'morphology_feature_metadata': morphology_artifacts[
+            'morphology_feature_metadata'
+        ],
+        'subject_morphology_features': morphology_artifacts[
+            'subject_morphology_features'
+        ],
+        'morphology_feature_diagnostics': morphology_artifacts[
+            'morphology_feature_diagnostics'
+        ],
+        'morphology_feature_review_html': morphology_review_artifacts[
+            'morphology_feature_review_html'
+        ],
+        'morphology_feature_review_cases': morphology_review_artifacts[
+            'morphology_feature_review_cases'
+        ],
+        'morphology_operator_adjudication_template': morphology_review_artifacts[
+            'morphology_operator_adjudication_template'
+        ],
+        'morphology_operator_adjudication_agreement': morphology_review_artifacts[
+            'morphology_operator_adjudication_agreement'
+        ],
+        'morphology_candidate_metrics': morphology_candidate_path,
+        'subject_morphology_candidate_predictions': subject_morphology_candidate_path,
+        'morphology_candidate_summary': morphology_candidate_summary_path,
         'final_model_predictions': final_predictions_path,
         'final_model_cohort_metrics': final_cohort_metrics_path,
         'final_model_group_summary_intervals': final_group_summary_path,

@@ -555,6 +555,7 @@ What exists today:
 - prediction exports with threshold probabilities, burden index, prediction sets, uncertainty intervals, nearest scored examples, and comparator probabilities
 - a combined HTML review artifact with selected example cases, cohort summaries, threshold support, and claim-boundary text
 - candidate-screen artifacts including `signal_comparator_metrics.csv`, `subject_level_candidate_predictions.csv`, and `precision_candidate_summary.json`; these are not deployed models
+- morphology-aware feature artifacts for open/pale lumina, collapsed or slit-like structures, ridge/line responses, erythrocyte-like patent-lumen confounding, ROI quality, visual feature review, and operator adjudication
 - the older openness heuristic in [`src/eq/evaluation/quantification_metrics.py`](../src/eq/evaluation/quantification_metrics.py), best treated as an audit feature rather than the primary learned model
 
 ### What Does Not Yet Exist As A Matured Workflow
@@ -563,7 +564,6 @@ The current `master` branch still does **not** provide:
 
 - per-glomerulus labels inside multi-glomerulus images
 - validated subject-level endotheliosis burden prediction as the primary shareable target
-- morphology-aware features that explicitly distinguish open lumina, collapsed/slit-like structures, and confounded patent lumina
 - a fully production-hardened deployment path from predicted masks to final score
 - faithful attribution methods for the embedding model
 
@@ -610,7 +610,7 @@ Use the dedicated training modules for heavy model training.
 
 As of April 26, 2026 on `master`, the main known gaps are:
 
-- the maintained learned quantification path is still image-level predictive modeling rather than a morphology-aware subject/cohort burden model
+- the maintained learned quantification path includes morphology-aware candidate features, but those features still require operator review and refreshed readiness evidence before becoming a shareable subject/cohort burden claim
 - uncertainty outputs must be interpreted through the generated calibration and prediction-set artifacts; the current full-cohort run undercovers the nominal 0.90 prediction-set target and has broad average prediction sets
 - backend matrix-operation warnings remain recorded for several candidate screens, although outputs are finite
 - candidate screens are review artifacts, not deployed models
@@ -622,6 +622,6 @@ As of April 26, 2026 on `master`, the main known gaps are:
 
 The current `master` branch should be described as:
 
-**A maintained segmentation repository with useful data-preparation utilities, an exploratory image-level learned quantification workflow across scored cohorts, partial inference code, and remaining scientific or production gaps around morphology-aware features, calibration, deployment, and per-glomerulus labeling.**
+**A maintained segmentation repository with useful data-preparation utilities, an exploratory image-level learned quantification workflow across scored cohorts, deterministic morphology-aware feature screens, partial inference code, and remaining scientific or production gaps around calibration, deployment, validated morphology interpretation, and per-glomerulus labeling.**
 
 This baseline is useful for predictive audit work, but it is not a finished clinically trustworthy scoring system.
