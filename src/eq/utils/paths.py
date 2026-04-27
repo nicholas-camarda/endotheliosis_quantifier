@@ -15,6 +15,8 @@ DEFAULT_RUNTIME_ROOT_ENV = "EQ_RUNTIME_ROOT"
 DEFAULT_RUNTIME_OUTPUT_ENV = "EQ_RUNTIME_OUTPUT_PATH"
 DEFAULT_RUNTIME_MODELS_ENV = "EQ_RUNTIME_MODEL_PATH"
 DEFAULT_DOX_LABEL_STUDIO_EXPORT_ENV = "EQ_DOX_LABEL_STUDIO_EXPORT"
+DEFAULT_DOX_ASSIGNMENT_WORKBOOK_ENV = "EQ_DOX_ASSIGNMENT_WORKBOOK"
+DEFAULT_DOX_SCORE_WORKBOOK_ENV = "EQ_DOX_SCORE_WORKBOOK"
 DEFAULT_MR_SCORE_WORKBOOK_ENV = "EQ_MR_SCORE_WORKBOOK"
 DEFAULT_MR_IMAGE_ROOT_ENV = "EQ_MR_IMAGE_ROOT"
 
@@ -193,6 +195,28 @@ def get_dox_label_studio_export_path() -> Path:
     return (
         Path.home()
         / "Library/CloudStorage/OneDrive-Personal/phd/projects/VEGFRi and Dox/in-vivo mouse projects/kidney/2023-11-16_all-labeled-glom-data.json"
+    )
+
+
+def get_dox_assignment_workbook_path() -> Path:
+    """Return the Dox randomization/assignment workbook used for identity."""
+    override = os.getenv(DEFAULT_DOX_ASSIGNMENT_WORKBOOK_ENV)
+    if override:
+        return _resolve_repo_path(override)
+    return (
+        Path.home()
+        / "Library/CloudStorage/OneDrive-Personal/phd/projects/VEGFRi and Dox/in-vivo mouse projects/kidney/Rand_Assign.xlsx"
+    )
+
+
+def get_dox_score_workbook_path() -> Path:
+    """Return the Dox image-level score workbook used for score-integrity audits."""
+    override = os.getenv(DEFAULT_DOX_SCORE_WORKBOOK_ENV)
+    if override:
+        return _resolve_repo_path(override)
+    return (
+        Path.home()
+        / "Library/CloudStorage/OneDrive-Personal/phd/projects/VEGFRi and Dox/in-vivo mouse projects/kidney/results/2023-11-16_all-labeled-glom-data_score-table-filtered.xlsx"
     )
 
 

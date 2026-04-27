@@ -39,7 +39,7 @@ The burden-index workflow SHALL provide calibrated uncertainty for each image-le
 - **THEN** `burden_model/burden_predictions.csv` SHALL contain `prediction_set_scores`
 - **AND** each prediction set SHALL contain only supported rubric values from `[0.0, 0.5, 1.0, 1.5, 2.0, 3.0]`
 - **AND** the prediction set construction method SHALL be recorded in `burden_model/uncertainty_calibration.json`
-- **AND** prediction sets SHALL be calibrated with grouped subject-level conformal calibration or another grouped out-of-fold method that does not use same-animal rows as independent calibration examples
+- **AND** prediction sets SHALL be calibrated with grouped subject-level conformal calibration or another grouped out-of-fold method that does not use same-biological-unit rows as independent calibration examples
 
 #### Scenario: Uncertainty calibration is auditable
 - **WHEN** burden evaluation completes
@@ -81,17 +81,52 @@ The burden-index model SHALL predict ordered threshold probabilities for the exp
 ### Requirement: Burden validation is grouped and cohort-stratified
 The burden-index model SHALL be evaluated with grouped subject-level cross-validation and SHALL report overall and cohort-stratified performance on the current full scored cohort.
 
+#### Scenario: Manifest identity uses subject, sample, and image IDs
+- **WHEN** the manifest scored-example table is prepared
+- **THEN** every admitted scored mask-paired row SHALL include `subject_id`, `sample_id`, and `image_id`
+- **AND** `subject_id` SHALL identify the source animal/subject without stripping experiment-date information that distinguishes different subjects
+- **AND** `sample_id` SHALL identify the scored image replicate under that subject
+- **AND** `image_id` SHALL identify the exact scored image/file row
+- **AND** the active quantification artifacts SHALL NOT expose `animal_id`, `biological_unit_id`, `biological_subject_id`, or `unified_image_id` as supported identity columns
+
+#### Scenario: VEGFRi/Dox identity uses the assignment workbook
+- **WHEN** VEGFRi/Dox rows are imported into the manifest
+- **THEN** `Rand_Assign.xlsx` SHALL provide `source_date`, `source_alt_sample_id`, `source_assignment_group`, `source_identity_workbook`, and `source_identity_sheet`
+- **AND** `subject_id` SHALL be namespaced as `vegfri_dox__<experiment_date>__<source_sample_id>`
+- **AND** rows such as `M1` and `M1--2023-06-12` SHALL remain different `subject_id` values
+- **AND** treatment group SHALL come from the assignment workbook, not from sample-prefix inference
+
+#### Scenario: Dox score workbook agreement is audited
+- **WHEN** the Dox manifest is regenerated
+- **THEN** the run SHALL write `raw_data/cohorts/vegfri_dox/metadata/score_workbook_agreement.csv`
+- **AND** the run SHALL write `raw_data/cohorts/vegfri_dox/metadata/score_workbook_agreement_summary.json`
+- **AND** present score mismatches against `2023-11-16_all-labeled-glom-data_score-table-filtered.xlsx` SHALL fail the manifest build
+- **AND** the audit SHALL record the source workbook path so future automatic grading/inference work can trace scores to the dated long score table
+
+#### Scenario: Subject-heldout validation is primary
+- **WHEN** the scored cohort contains multiple image replicates per subject
+- **THEN** burden validation SHALL group by `subject_id`
+- **AND** all image replicates from the same subject SHALL stay in the same train or validation partition
+- **AND** the run SHALL write `burden_model/validation_design.json`
+
+#### Scenario: Cohort-level burden stability is assessed
+- **WHEN** cohort-level burden summaries are considered for README/docs or downstream analysis
+- **THEN** the run SHALL compare subject-heldout cohort mean burden estimates with final full-cohort fitted cohort mean burden estimates
+- **AND** the run SHALL write `burden_model/cohort_stability.csv`
+- **AND** cohort mean estimates SHOULD differ by no more than 5 burden-index points unless the cohort summary is explicitly marked exploratory
+- **AND** final full-cohort fitted predictions SHALL be reported separately from held-out validation predictions
+
 #### Scenario: Biological grouping key is audited before validation
 - **WHEN** burden modeling begins
 - **THEN** the run SHALL write `burden_model/grouping_audit.json`
 - **AND** the artifact SHALL identify the grouping key used for cross-validation, conformal calibration, nearest-neighbor exclusion, and grouped resampling
-- **AND** the artifact SHALL state whether `subject_prefix` is certified as the biological animal identifier or whether a stronger `animal_id` grouping field is used
-- **AND** if the biological grouping key cannot be certified, the report SHALL mark the burden model as exploratory rather than operationally ready
+- **AND** the artifact SHALL state whether `subject_id` is present and used as the certified grouped-validation key
+- **AND** if `subject_id` cannot be certified, the report SHALL mark the burden model as exploratory rather than operationally ready
 
 #### Scenario: Grouped burden evaluation runs
 - **WHEN** burden modeling evaluates the full scored cohort
-- **THEN** cross-validation SHALL group rows by the certified biological animal grouping key
-- **AND** no biological animal group SHALL appear in both train and validation partitions for a fold
+- **THEN** cross-validation SHALL group rows by the certified biological unit grouping key
+- **AND** no `subject_id` group SHALL appear in both train and validation partitions for a fold
 - **AND** the number of folds SHALL be recorded in `burden_model/burden_metrics.json`
 
 #### Scenario: Overall burden metrics are written
@@ -108,7 +143,7 @@ The burden-index model SHALL be evaluated with grouped subject-level cross-valid
 #### Scenario: Cohort-stratified burden metrics are written
 - **WHEN** burden evaluation completes and `cohort_id` is available
 - **THEN** `burden_model/cohort_metrics.csv` SHALL include separate rows for `lauren_preeclampsia` and `vegfri_dox` when those cohorts are present
-- **AND** each row SHALL report at least the row count, biological-group count, stage-index MAE, grade-scale MAE, image-row mean predicted burden, and animal-weighted mean predicted burden
+- **AND** each row SHALL report at least the row count, biological-group count, stage-index MAE, grade-scale MAE, image-row mean predicted burden, and biological-unit-weighted mean predicted burden
 
 #### Scenario: Group summary confidence intervals are written
 - **WHEN** burden evaluation completes and groupable strata are available
@@ -116,7 +151,7 @@ The burden-index model SHALL be evaluated with grouped subject-level cross-valid
 - **AND** interval calculations SHALL use grouped resampling or another method that does not treat repeated image rows from the same subject as independent biological units
 - **AND** the artifact SHALL label the interval type as an aggregate confidence interval, distinct from per-image prediction intervals
 - **AND** the artifact SHALL record the estimand, resampling unit, weighting rule, number of clusters, and non-estimable or unstable flags
-- **AND** the primary biological summary SHALL be the mean of animal-level mean burdens rather than the unweighted mean over image rows
+- **AND** the primary biological summary SHALL be the mean of biological-unit-level mean burdens rather than the unweighted mean over image rows
 
 #### Scenario: Calibration artifacts are written
 - **WHEN** burden evaluation completes
@@ -137,6 +172,75 @@ The quantification workflow SHALL compare the cumulative threshold burden model 
 - **AND** the verdict SHALL distinguish numerical stability, discrimination or ranking, calibration, absolute error, and cohort-stratified behavior
 - **AND** the report SHALL NOT promote a model solely because the pipeline completed
 
+#### Scenario: Precision candidate screen is expanded
+- **WHEN** burden evaluation completes
+- **THEN** `burden_model/signal_comparator_metrics.csv` SHALL include image-level frozen-embedding, ROI scalar, and embedding-plus-ROI ridge candidates validated with subject-heldout folds
+- **AND** it SHALL include subject-level global-mean baseline, ROI scalar, frozen-embedding, and embedding-plus-ROI candidates validated across held-out subjects
+- **AND** every candidate row SHALL identify the target level, target definition, model family, feature set, validation grouping, row count, subject count, feature count, stage-index MAE, finite-output status, backend warning count, candidate status, and intended use
+- **AND** image-level candidates SHALL NOT split a `subject_id` across train and validation folds
+- **AND** subject-level candidates SHALL use one aggregated row per `subject_id`
+
+#### Scenario: Subject-level precision predictions are written
+- **WHEN** subject-level precision candidates are evaluated
+- **THEN** `burden_model/subject_level_candidate_predictions.csv` SHALL contain one row per held-out subject per subject-level candidate
+- **AND** each row SHALL include `subject_id`, `cohort_id`, observed subject mean stage-index target, predicted subject burden, absolute error, fold, candidate identifier, feature set, model family, and prediction source
+
+#### Scenario: Precision candidate recommendation is recorded
+- **WHEN** the precision candidate screen is written
+- **THEN** `burden_model/precision_candidate_summary.json` SHALL identify the current primary burden model metrics, best image-level candidate, best subject-level candidate, numerical-warning status, and recommendation
+- **AND** the recommendation SHALL distinguish candidates suitable for per-image operational prediction from candidates suitable only for subject/cohort-level burden summaries
+- **AND** the recommendation SHALL NOT select a candidate with nonfinite outputs
+
+### Requirement: Subject and image burden tracks are distinct
+The quantification workflow SHALL distinguish the subject/cohort burden-summary target from the per-image prediction target. A model that improves subject-level burden summaries SHALL NOT be described as solving per-image prediction uncertainty unless it is evaluated on the per-image target.
+
+#### Scenario: Subject burden track is explicitly defined
+- **WHEN** the workflow evaluates subject-level candidates
+- **THEN** the target SHALL be the mean observed stage-index target per `subject_id`
+- **AND** validation SHALL hold out subjects rather than image rows
+- **AND** output artifacts SHALL label the prediction level as `subject`
+- **AND** cohort or treatment summaries SHALL be based on subject-level values, not raw pooled image rows
+
+#### Scenario: Per-image burden track is explicitly defined
+- **WHEN** the workflow evaluates per-image candidates
+- **THEN** the target SHALL remain the individual image or ROI row's stage-index target
+- **AND** validation SHALL use subject-heldout folds
+- **AND** the candidate SHALL report prediction-set coverage, average prediction-set size, stage-index MAE, grade-scale MAE, numerical-stability status, and cohort-stratified behavior
+- **AND** the candidate SHALL NOT be called operational unless prediction sets are materially narrower than the current baseline while meeting or exceeding nominal coverage
+
+#### Scenario: Effective sample size is reported honestly
+- **WHEN** a report discusses model readiness
+- **THEN** it SHALL state row count and independent subject count separately
+- **AND** it SHALL explain that repeated images from the same subject increase within-subject information but do not create independent validation subjects
+- **AND** it SHALL avoid claiming that the model has 707 independent examples when subject-heldout validation has 60 independent subject groups
+
+### Requirement: Next readiness pass addresses current blockers
+The next quantification readiness pass SHALL address broad per-image uncertainty, slight undercoverage, numerical warnings, and README/docs readiness as separate measurable blockers.
+
+#### Scenario: Broad per-image uncertainty is tested directly
+- **WHEN** a new per-image candidate is evaluated
+- **THEN** it SHALL report average prediction-set size against the current baseline value `5.308 / 6`
+- **AND** it SHALL report whether the set size narrowed without dropping empirical coverage below nominal
+- **AND** candidate families SHALL include ROI-feature cumulative-threshold modeling, embedding-plus-ROI modeling after feature diagnostics, and calibrated direct stage-index modeling with conformal residual intervals unless a recorded audit explains why a family is invalid
+
+#### Scenario: Prediction-set coverage is calibrated
+- **WHEN** prediction-set coverage is below nominal
+- **THEN** the workflow SHALL evaluate conformal calibration choices, including global subject-heldout residual calibration, fold-specific subject-heldout calibration, score-stratified calibration where support permits, and conservative finite-sample quantiles
+- **AND** the report SHALL identify which calibration choice was selected and why
+- **AND** the report SHALL include overall, cohort-level, and observed-score-stratum coverage where estimable
+
+#### Scenario: Backend matrix warnings are diagnosed
+- **WHEN** a candidate emits backend matrix-operation warnings
+- **THEN** the workflow SHALL write feature diagnostics that include nonfinite feature counts, zero-variance feature counts, near-zero-variance feature counts, feature count, row count, subject count, and rank or singular-value diagnostics where feasible
+- **AND** the workflow SHALL record whether warnings are associated with high-dimensional embeddings, ROI scalar features, or both
+- **AND** a candidate with repeated numerical warnings SHALL remain exploratory unless a documented preprocessing or model-family fix removes or explains the warnings
+
+#### Scenario: README/docs readiness is track-specific
+- **WHEN** `quantification_review/readme_results_snippet.md` is generated
+- **THEN** it SHALL state whether the shareable result, if any, is a subject/cohort burden-summary result or a per-image prediction result
+- **AND** it SHALL NOT present subject-level summary performance as evidence that individual image scores are operationally precise
+- **AND** it SHALL NOT mark results README/docs-ready unless the selected track passes its own coverage, stability, numerical, and claim-boundary gates
+
 ### Requirement: Quantification report supports reviewer inspection and result sharing
 The quantification workflow SHALL write a combined reviewer-facing report that makes burden, ordinal comparator, direct-regression comparator, cohort summaries, and example-level evidence inspectable from one place. The existing ordinal review report may remain as a comparator artifact, but it SHALL NOT be the only human-readable report after this change.
 
@@ -156,8 +260,9 @@ The quantification workflow SHALL write a combined reviewer-facing report that m
 #### Scenario: Report includes summary tables for readers
 - **WHEN** the combined report is generated
 - **THEN** it SHALL include overall row count, biological-group count, score distribution, threshold-support status, stage-index MAE, grade-scale MAE, prediction-set empirical coverage, average prediction-set size, and numerical-stability status
-- **AND** it SHALL include cohort and animal-level burden summaries using animal-weighted means and uncertainty intervals where estimable
+- **AND** it SHALL include cohort and biological-unit-level burden summaries using biological-unit-weighted means and uncertainty intervals where estimable
 - **AND** it SHALL include comparator summaries for burden, direct stage-index regression, and ordinal/multiclass outputs
+- **AND** it SHALL include the expanded precision candidate screen with image-level and subject-level candidate metrics
 
 #### Scenario: Report includes reviewer example gallery
 - **WHEN** review examples are selected
@@ -187,7 +292,7 @@ The burden-index workflow SHALL produce evidence artifacts that help reviewers u
 - **THEN** the run SHALL write `burden_model/nearest_examples.csv`
 - **AND** each evaluated row SHALL include at least the nearest scored example identifiers, nearest example scores, distances in the frozen embedding space, cohort or source identifiers when available, and path provenance needed to inspect the examples
 - **AND** nearest-neighbor search SHALL be computed within the same frozen-embedding feature space used by the burden model
-- **AND** nearest examples for out-of-fold predictions SHALL come only from the corresponding training fold and SHALL exclude the same biological animal
+- **AND** nearest examples for out-of-fold predictions SHALL come only from the corresponding training fold and SHALL exclude the same biological unit
 - **AND** nearest-example rows SHALL include `cohort_id` and `lane_assignment` when available
 
 #### Scenario: Threshold-level calibration is reported

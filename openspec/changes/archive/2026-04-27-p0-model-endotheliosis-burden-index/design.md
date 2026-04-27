@@ -11,7 +11,7 @@ The current user-facing quantification output is also too class-centric. A singl
 - Make the six-bin score rubric `[0.0, 0.5, 1.0, 1.5, 2.0, 3.0]` the canonical quantification target contract.
 - Add a cumulative threshold model in `src/eq/quantification/burden.py` that predicts ordered exceedance probabilities for `score > 0`, `score > 0.5`, `score > 1`, `score > 1.5`, and `score > 2`.
 - Write `endotheliosis_burden_0_100` into a new `burden_model/burden_predictions.csv` artifact using `100 * mean(cumulative threshold probabilities)`.
-- Define the statistical estimands explicitly: per-image expected ordinal stage burden, animal-level mean burden, and group contrasts of animal-level means.
+- Define the statistical estimands explicitly: per-image expected ordinal stage burden, biological-unit-level mean burden, and group contrasts of biological-unit-level means.
 - Write calibrated per-image uncertainty bounds and score prediction sets beside each burden estimate.
 - Write grouped aggregate confidence intervals for animal, cohort, and other summary strata where the required grouping columns are available.
 - Write model-evidence artifacts that make the prediction inspectable with threshold probability profiles, nearest scored examples, and optional ROI attribution diagnostics.
@@ -78,7 +78,7 @@ Alternative considered: use only model probability entropy or maximum class prob
 
 ### Decision: Add grouped confidence intervals for aggregate burden summaries
 
-`burden_model/group_summary_intervals.csv` SHALL summarize burden estimates by available strata such as `cohort_id`, certified `animal_id`, treatment group, or other validated grouping columns. The primary biological summary SHALL be the mean of animal-level mean burdens, not the mean over image rows. Group comparisons, if reported, SHALL be contrasts between animal-level means.
+`burden_model/group_summary_intervals.csv` SHALL summarize burden estimates by available strata such as `cohort_id`, certified `biological_unit_id`, treatment group, or other validated grouping columns. The primary biological summary SHALL be the mean of biological-unit-level mean burdens, not the mean over image rows. Group comparisons, if reported, SHALL be contrasts between biological-unit-level means.
 
 Confidence intervals SHALL use grouped bootstrap or another grouped resampling method that resamples biological units rather than treating all image rows as independent. The artifact SHALL record the estimand, resampling unit, weighting rule, number of clusters, and non-estimable or unstable flags. Small-cluster strata SHALL be explicitly labeled; the report SHALL NOT present narrow pooled-looking intervals for strata with too few biological groups.
 
@@ -100,7 +100,7 @@ The burden report SHALL include model-evidence artifacts:
 
 The report SHALL describe these outputs as evidence supporting the prediction, not as proof that the model causally identified a specific histologic mechanism. For the initial implementation, nearest-neighbor evidence and threshold probability profiles are required; visual attribution can be included only if it is implemented through the same frozen-embedding/ROI path and labeled as heuristic.
 
-For out-of-fold predictions, nearest examples SHALL be selected only from the corresponding training fold and SHALL exclude the same biological animal. Neighbor artifacts SHALL carry cohort identifiers, `lane_assignment` when available, source provenance, and distance metrics. Calibration SHALL be reported per threshold, not only through pooled burden bins, so cohort-confounded failures cannot be hidden by pooled averages.
+For out-of-fold predictions, nearest examples SHALL be selected only from the corresponding training fold and SHALL exclude the same biological unit. Neighbor artifacts SHALL carry cohort identifiers, `lane_assignment` when available, source provenance, and distance metrics. Calibration SHALL be reported per threshold, not only through pooled burden bins, so cohort-confounded failures cannot be hidden by pooled averages.
 
 Alternative considered: Grad-CAM-first explanation. That can be visually useful, but it risks overclaiming faithfulness and may not align cleanly with the frozen embedding plus shallow model decision surface. It is optional until the implementation can validate it against the actual ROI/embedding path.
 
@@ -132,7 +132,7 @@ The review report SHALL include at least:
 
 - an executive verdict section stating selected operational model status, blocker status, and whether the results are README/docs-ready;
 - an overall metrics panel with row count, biological-group count, score support, stage-index MAE, grade-scale MAE, prediction-set coverage, average prediction-set size, and threshold-support warnings;
-- cohort and animal-level summary tables using animal-weighted means and uncertainty intervals;
+- cohort and biological-unit-level summary tables using biological-unit-weighted means and uncertainty intervals;
 - comparator panels for burden, direct stage-index regression, and ordinal/multiclass outputs;
 - a reviewer example gallery using fold-held-out rows, with raw image plus ROI box, mask overlay, ROI crop, observed score, burden estimate with uncertainty, prediction set, ordinal prediction, nearest scored examples, and threshold probability profile;
 - downloadable CSV/JSON artifact links and provenance back to source image, mask, ROI, fold, cohort, and biological group.
@@ -153,7 +153,7 @@ This change SHALL NOT rename these commands or add compatibility aliases. `quant
 
 ### Decision: Audit and certify the biological grouping key before model selection
 
-The workflow SHALL write `burden_model/grouping_audit.json` before fitting or selecting an operational model. The audit SHALL certify that the grouping column used for cross-validation, conformal calibration, nearest-neighbor exclusion, and grouped bootstrap corresponds to biological animals. If `subject_prefix` is not sufficient because repeat acquisitions or date-suffixed identifiers split the same animal, the workflow SHALL derive or require a stronger `animal_id` field and use that field consistently.
+The workflow SHALL write `burden_model/grouping_audit.json` before fitting or selecting an operational model. The audit SHALL certify that the grouping column used for cross-validation, conformal calibration, nearest-neighbor exclusion, and grouped bootstrap corresponds to biological biological units. If `subject_prefix` is not sufficient because repeat acquisitions or date-suffixed identifiers split the same biological unit, the workflow SHALL derive or require a stronger `biological_unit_id` field and use that field consistently.
 
 The report SHALL state the selected grouping key and any unresolved ambiguity. If the grouping key cannot be certified, burden artifacts may be generated for exploration, but the model SHALL NOT be reported as operationally ready for downstream quantification.
 
@@ -171,11 +171,57 @@ The implementation SHALL write `quantification_review/results_summary.md`, `quan
 - cohort and animal counts;
 - score distribution and threshold-support status;
 - primary burden stage-index MAE and uncertainty calibration behavior;
-- animal-weighted burden summaries by cohort or treatment group where available;
+- biological-unit-weighted burden summaries by cohort or treatment group where available;
 - comparator results for direct stage-index regression and ordinal/multiclass output;
 - a short interpretation block suitable for README/docs only if the run clears the report's own readiness gates.
 
 README/docs SHOULD display the quantification results as a compact current-results table plus one or two representative review-panel thumbnails, with the burden index labeled as an ordinal stage-burden index. Docs SHALL avoid presenting the output as a clinical percent, causal treatment effect, or externally validated endpoint.
+
+### Decision: Expand precision testing before selecting an operational quantification model
+
+The current primary burden model remains exploratory because per-image prediction sets are too broad. The next implementation step SHALL test stronger or simpler quantification signals before deciding whether the current cumulative-threshold model is the right operational path.
+
+The canonical precision screen SHALL remain `burden_model/signal_comparator_metrics.csv`; the implementation SHALL expand that artifact rather than introducing a parallel compatibility report. The screen SHALL include:
+
+- image-level frozen-embedding ridge regression validated with subject-heldout folds;
+- image-level ROI scalar ridge regression validated with subject-heldout folds;
+- image-level embedding-plus-ROI ridge regression validated with subject-heldout folds;
+- subject-level global-mean baseline validated across held-out subjects;
+- subject-level ROI scalar ridge regression using subject-aggregated ROI features;
+- subject-level frozen-embedding ridge regression using subject-aggregated embeddings;
+- subject-level embedding-plus-ROI ridge regression using subject-aggregated features.
+
+The subject-level target SHALL be the mean observed stage-index target per `subject_id`, where the stage-index target maps the allowed rubric to `0, 20, 40, 60, 80, 100`. Subject-level candidate evaluation SHALL split subjects, not image rows, and SHALL write `burden_model/subject_level_candidate_predictions.csv`.
+
+The implementation SHALL also write `burden_model/precision_candidate_summary.json` with the best image-level candidate, best subject-level candidate, current primary burden metrics, numerical-warning status, and explicit recommendation. A candidate may be recommended for follow-up only when it improves absolute error without breaking finite-output gates or weakening the subject-heldout validation contract. A subject-level candidate may support cohort/subject burden summaries, but it does not automatically replace per-image prediction sets because it answers a different target.
+
+The combined review report and Markdown/CSV summaries SHALL surface these candidate results directly so that the operator can see what worked and what failed without manually opening every CSV.
+
+### Decision: Separate the subject/cohort burden path from the per-image readiness path
+
+The current evidence shows two different modeling problems that SHALL NOT be collapsed into one verdict.
+
+The image-level problem asks: for one scored image or ROI row, predict the image's ordinal stage burden and uncertainty. This is the correct target when the output will be used to score individual glomeruli or individual image crops. It is also the harder target because each row carries label noise, local histologic heterogeneity, segmentation/ROI variation, and annotator discretization into only six possible score labels. The current image-level model remains exploratory because its average prediction set is `5.308 / 6`, coverage is `0.898` against a nominal `0.900` target, and numerical warnings remain recorded.
+
+The subject-level problem asks: after all image/ROI rows for a `subject_id` are available, estimate that subject's mean stage burden and then summarize cohorts or treatment groups from subject-level values. This is closer to the biological unit for most downstream quantification and treatment-comparison summaries. It is easier statistically because repeated image-level noise can average out within subject. The current subject-level ROI aggregation screen is therefore not "better per-image prediction"; it is evidence that a different target, subject/cohort burden, is more stable and should become a first-class reporting path.
+
+The implementation SHALL therefore maintain two explicit tracks:
+
+1. `subject_burden` track: primary near-term path for cohort, treatment, and README/docs-style quantitative summaries. This track aggregates image/ROI information by `subject_id`, validates by holding out subjects, reports subject-level MAE, cohort stability, grouped bootstrap confidence intervals, and treatment/cohort summaries. It may be called a first-class cohort-summary model only after it writes its own runtime artifacts and gates.
+2. `per_image_burden` track: exploratory row-level prediction path for individual image/ROI grading. This track must keep calibrated score prediction sets, burden intervals, subject-heldout validation, and finite-output gates. It cannot be called operational until prediction sets narrow materially while maintaining or exceeding nominal coverage.
+
+This is partly a model/feature specification issue, but not only that. The cohort has many scored image rows (`707`), but the effective validation sample for generalization is the number of independent subjects (`60`), not the number of images. The score labels are also coarse ordinal labels, not continuous measurements, and images from the same subject are correlated. More rows help estimate subject means and train screens, but they do not automatically provide 707 independent examples for per-image model generalization. The spec SHALL explicitly treat this as a target-definition, feature-signal, calibration, and effective-sample-size problem.
+
+### Decision: Plan the next readiness pass around four named blockers
+
+The next readiness pass SHALL address the following blockers as separate, inspectable artifacts:
+
+1. Broad per-image uncertainty: average prediction-set size is `5.308 / 6`. The next pass SHALL test calibrated per-image model families or calibration methods that aim to reduce set size while preserving coverage. Candidate families SHALL include at minimum cumulative-threshold logistic with ROI features, ordinal/threshold models with embedding-plus-ROI features after variance filtering, and a calibrated direct stage-index model with conformal residual intervals. Any candidate SHALL report prediction-set coverage, average set size, stage-index MAE, grade-scale MAE, and cohort-stratified behavior.
+2. Slight undercoverage: empirical prediction-set coverage is `0.898` versus target `0.900`. The next pass SHALL treat this as a calibration failure until proven negligible. It SHALL evaluate whether conformal calibration should use global subject-heldout residuals, fold-specific subject-heldout residuals, score-stratified calibration, or conservative finite-sample quantiles. A narrower set is acceptable only if coverage remains at or above nominal overall and does not create obvious cohort/score-stratum failures.
+3. Backend matrix warnings: outputs are finite, but warnings remain a model-stability blocker. The next pass SHALL write feature diagnostics before candidate fitting, including nonfinite counts, zero-variance feature counts, near-zero-variance feature counts, feature rank or singular-value diagnostics where feasible, and whether high-dimensional embeddings are numerically unstable relative to ROI scalar features. A candidate with finite outputs but repeated matrix warnings may be reported as exploratory but SHALL NOT be promoted without a recorded explanation or feature-processing fix.
+4. README/docs readiness: no output SHALL be called README/docs-ready until the report distinguishes the subject/cohort burden path from per-image predictions, states which path is selected for sharing, passes its own readiness gates, and records the claim boundary. The near-term README-safe claim, if supported by the next run, should be about subject/cohort burden summaries, not individual image score certainty.
+
+The next pass SHALL write a results section that says exactly what improved, what did not improve, and which track should move forward.
 
 ### Decision: End implementation with independent review lanes
 
@@ -213,6 +259,9 @@ Rollback is not a compatibility branch. If the burden implementation is unstable
 ## Explicit Decisions
 
 - New implementation module: `src/eq/quantification/burden.py`.
+- Manifest identity is owned by `src/eq/quantification/cohorts.py`; quantification must consume manifest `subject_id`, `sample_id`, and `image_id` rather than re-deriving incompatible grouping keys.
+- VEGFRi/Dox subject identity and treatment group are owned by `Rand_Assign.xlsx`. The dated and undated `M*` labels are different source subjects unless that workbook says otherwise.
+- `2023-11-16_all-labeled-glom-data_score-table-filtered.xlsx` is the Dox score-reference workbook for current automatic grading/inference work. It is generated from `2023-11-16_all-labeled-glom-data.json` by `/Users/ncamarda/Library/CloudStorage/OneDrive-Personal/phd/projects/VEGFRi and Dox/in-vivo mouse projects/kidney/scripts/organize_kidney_data.py`; the wide and Prism-ready dated workbooks are downstream summaries from `scripts/glom_scores_organization_for_prism.R`.
 - Primary entry function: `evaluate_burden_index_table(embedding_df: pd.DataFrame, output_dir: Path, n_splits: int = 3) -> dict[str, Path]`.
 - Existing integration function to update: `src/eq/quantification/pipeline.py::evaluate_embedding_table()`.
 - Shared allowed scores: `[0.0, 0.5, 1.0, 1.5, 2.0, 3.0]`.
@@ -225,9 +274,15 @@ Rollback is not a compatibility branch. If the burden implementation is unstable
 - Required combined review report directory: `quantification_review/`.
 - Required review report artifacts: `quantification_review/quantification_review.html`, `quantification_review/review_examples.csv`, `quantification_review/results_summary.md`, `quantification_review/results_summary.csv`, and `quantification_review/readme_results_snippet.md`.
 - Required grouping audit artifact: `burden_model/grouping_audit.json`.
+- Required validation design artifact: `burden_model/validation_design.json`.
+- Required cohort stability artifact: `burden_model/cohort_stability.csv`.
+- Required signal-screen artifact: `burden_model/signal_comparator_metrics.csv`.
+- Required subject-level precision artifact: `burden_model/subject_level_candidate_predictions.csv`.
+- Required precision summary artifact: `burden_model/precision_candidate_summary.json`.
 - Required threshold support artifact: `burden_model/threshold_support.csv`.
 - Primary error metric: stage-index MAE against the `0, 20, 40, 60, 80, 100` target.
-- Primary biological summary: mean of animal-level mean burdens.
+- Primary grouped validation unit: `subject_id`.
+- Primary aggregate summary: mean of subject-level mean burdens.
 - Required burden output directory: `burden_model/` under the quantification run output root.
 - Existing ordinal output directory remains `ordinal_model/`.
 - Full-cohort command remains `PYTORCH_ENABLE_MPS_FALLBACK=1 MPLCONFIGDIR=/tmp/mpl_eq PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq run-config --config configs/endotheliosis_quantification.yaml`.

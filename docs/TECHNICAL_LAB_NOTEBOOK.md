@@ -22,12 +22,12 @@ The current `master` branch is best described as a **segmentation-first FastAI/P
 
 1. mitochondria pretraining on EM-style data
 2. glomeruli segmentation in histology images
-3. image-level endotheliosis quantification from scored cohorts, with union-ROI crops, frozen segmentation-backbone embeddings, and an ordinal baseline
+3. image-level endotheliosis quantification from scored cohorts, with union-ROI crops, frozen segmentation-backbone embeddings, and a burden-index model with comparator outputs
 4. supporting utilities for data preparation, metadata processing, mask auditing, visualization, and environment detection
 
-The strongest maintained paths in this branch are the segmentation workflow and the contract-first quantification baseline. The quantification baseline treats image-level grades as supervised targets for image or mask pairs, extracts full multi-component union ROIs, builds frozen segmentation-backbone embeddings, and fits the canonical penalized multiclass ordinal estimator in `src/eq/quantification/ordinal.py`.
+The strongest maintained paths in this branch are the segmentation workflow and the contract-first quantification workflow. Quantification treats image-level grades as supervised targets for image or mask pairs, extracts full multi-component union ROIs, builds frozen segmentation-backbone embeddings, and fits the burden-index estimator in `src/eq/quantification/burden.py` with direct regression and ordinal/multiclass comparator outputs.
 
-The current quantification output is a predictive audit baseline with explicit cohort-shape metadata. It is not a clinically validated scoring system, and its current local audit cohort does not yet provide full seven-bin target support.
+The current quantification output is a predictive ordinal stage-burden index with explicit cohort-shape, support, calibration, and uncertainty metadata. It is not a clinically validated scoring system and is not a pixel-level percent endotheliosis measurement.
 
 ## Current Baseline
 
@@ -89,13 +89,13 @@ What the current branch supports directly:
 - metadata standardization for glomeruli scoring spreadsheets
 - Label Studio score recovery joined to image/mask pairs
 - union-ROI crop extraction from full multi-component masks
-- frozen segmentation-backbone embeddings and ordinal image-level predictions
+- frozen segmentation-backbone embeddings, burden-index predictions, and comparator outputs
 - mask-pair auditing and visualization
 
 What it does **not** currently support as a completed, production-ready workflow:
 
 - a clinically validated endotheliosis scoring system
-- full seven-bin target-support validation in the current local audit cohort
+- a clinically or externally validated burden model
 - per-glomerulus supervision beyond the available image-level grades
 - promoted segmentation artifacts without training-data audit, validation metrics, and non-degenerate prediction review evidence
 
@@ -539,7 +539,7 @@ eq metadata-process \
 
 ### What Exists
 
-The current `master` branch contains a maintained baseline quantification path under [`src/eq/quantification/pipeline.py`](../src/eq/quantification/pipeline.py) plus supporting contract and score-recovery utilities.
+The current `master` branch contains a maintained quantification path under [`src/eq/quantification/pipeline.py`](../src/eq/quantification/pipeline.py) plus supporting contract and score-recovery utilities.
 
 What exists today:
 
@@ -548,16 +548,16 @@ What exists today:
 - image-level scored-example tables joined to raw image/mask pairs
 - union-ROI extraction over the full multi-component mask
 - frozen segmentation-encoder embedding extraction
-- grouped ordinal image-level endotheliosis prediction
-- prediction exports with class probabilities, expected score, top-two margin, and entropy
-- an HTML review artifact with selected example cases
+- grouped cumulative-threshold burden-index prediction
+- direct stage-index regression and ordinal/multiclass comparator outputs
+- prediction exports with threshold probabilities, burden index, prediction sets, uncertainty intervals, nearest scored examples, and comparator probabilities
+- a combined HTML review artifact with selected example cases, cohort summaries, threshold support, and claim-boundary text
 - the older openness heuristic in [`src/eq/evaluation/quantification_metrics.py`](../src/eq/evaluation/quantification_metrics.py), best treated as an audit feature rather than the primary learned model
 
 ### What Does Not Yet Exist As A Matured Workflow
 
 The current `master` branch still does **not** provide:
 
-- calibrated uncertainty estimates
 - per-glomerulus labels inside multi-glomerulus images
 - validated subject-level endotheliosis prediction as the primary target
 - a fully production-hardened deployment path from predicted masks to final score
@@ -596,7 +596,7 @@ For the current branch, the safest supported workflow is:
 3. export Label Studio PNG masks plus annotation JSON when image-level quantification labels are needed
 4. process metadata with `eq metadata-process` if spreadsheets are present for audit context
 5. run `eq prepare-quant-contract` to recover score-linked image/mask pairs
-6. run `eq quant-endo` for the current embedding-first image-level baseline
+6. run `eq quant-endo` for the current embedding-first burden-index model and comparator outputs
 7. train mitochondria via `python -m eq.training.train_mitochondria`
 8. train glomeruli via `python -m eq.training.train_glomeruli`
 
@@ -604,11 +604,11 @@ Use the dedicated training modules for heavy model training.
 
 ## Current Known Gaps
 
-As of April 2, 2026 on `master`, the main known gaps are:
+As of April 26, 2026 on `master`, the main known gaps are:
 
-- the maintained learned quantification path is still an image-level baseline rather than a biologically explicit per-glomerulus model
-- uncertainty outputs are confidence proxies, not calibrated probabilities
-- interpretation in the HTML review report is descriptive rather than attribution-faithful
+- the maintained learned quantification path is still image-level predictive modeling rather than a biologically explicit per-glomerulus causal model
+- uncertainty outputs must be interpreted through the generated calibration and prediction-set artifacts; the current full-cohort run undercovers the nominal 0.90 prediction-set target, especially for score `3`
+- interpretation in the HTML review report is predictive support evidence rather than attribution-faithful mechanism
 - inference exists but is not uniformly current
 - some configs, README examples, and code defaults still disagree on exact training hyperparameters
 
@@ -616,6 +616,6 @@ As of April 2, 2026 on `master`, the main known gaps are:
 
 The current `master` branch should be described as:
 
-**A maintained segmentation repository with useful data-preparation utilities, a working image-level learned quantification baseline across scored cohorts, partial inference code, and remaining scientific or production gaps around calibration, deployment, and per-glomerulus labeling.**
+**A maintained segmentation repository with useful data-preparation utilities, a working image-level learned quantification workflow across scored cohorts, partial inference code, and remaining scientific or production gaps around calibration, deployment, and per-glomerulus labeling.**
 
 This baseline is useful for predictive audit work, but it is not a finished clinically trustworthy scoring system.

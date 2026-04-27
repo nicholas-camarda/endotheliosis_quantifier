@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import pickle
+import re
 from html import escape
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -37,6 +38,12 @@ from eq.data_management.metadata_processor import MetadataProcessor
 from eq.data_management.model_loading import load_model_safely
 from eq.evaluation.quantification_metrics import calculate_quantification_metrics
 from eq.inference.prediction_core import create_prediction_core
+from eq.quantification.burden import (
+    ALLOWED_SCORE_VALUES,
+    BURDEN_COLUMN,
+    derive_biological_grouping,
+    evaluate_burden_index_table,
+)
 from eq.quantification.labelstudio_scores import (
     discover_label_studio_annotation_source,
     recover_label_studio_score_table,
@@ -49,8 +56,6 @@ from eq.quantification.ordinal import (
 )
 from eq.training.transfer_learning import _get_encoder_module
 from eq.utils.logger import get_logger
-
-ALLOWED_SCORE_VALUES = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0], dtype=np.float64)
 
 
 class ContractPreparationError(RuntimeError):
@@ -84,6 +89,34 @@ def _score_probability_column_name(score: float) -> str:
 
 def _score_label(score: float) -> str:
     return f'{score:g}'
+
+
+def _burden_first_artifacts(model_artifacts: Dict[str, Path]) -> Dict[str, Path]:
+    """Return explicit burden-first artifact keys without legacy generic model aliases."""
+    return {
+        key: value
+        for key, value in model_artifacts.items()
+        if key
+        not in {
+            'predictions',
+            'metrics',
+            'confusion_matrix',
+            'model',
+            'review_html',
+            'review_examples',
+            'review_assets_dir',
+        }
+    }
+
+
+def _finite_matrix_status(matrix: np.ndarray) -> dict[str, Any]:
+    values = np.asarray(matrix, dtype=np.float64)
+    return {
+        'finite': bool(np.isfinite(values).all()),
+        'nan_count': int(np.isnan(values).sum()),
+        'posinf_count': int(np.isposinf(values).sum()),
+        'neginf_count': int(np.isneginf(values).sum()),
+    }
 
 
 def _entropy(probabilities: np.ndarray) -> np.ndarray:
@@ -339,6 +372,73 @@ def _manifest_subject_group(row: pd.Series, image_path: Path) -> str:
     return f'{cohort_id}:{subject}'
 
 
+def _identity_token(value: Any, *, default: str = 'unknown') -> str:
+    text = str(value or '').strip()
+    if not text or text.lower() == 'nan':
+        text = default
+    token = re.sub(r'[^A-Za-z0-9]+', '_', text).strip('_').lower()
+    return token or default
+
+
+def _manifest_identity_fields(row: pd.Series, image_path: Path) -> dict[str, str]:
+    manifest_subject_id = str(row.get('subject_id') or '').strip()
+    manifest_sample_id = str(row.get('sample_id') or '').strip()
+    manifest_image_id = str(row.get('image_id') or '').strip()
+    if manifest_subject_id and manifest_sample_id and manifest_image_id:
+        replicate_id = str(
+            row.get('replicate_id') or Path(manifest_image_id).stem
+        ).strip()
+        return {
+            'subject_id': manifest_subject_id,
+            'sample_id': manifest_sample_id,
+            'replicate_id': replicate_id,
+            'image_id': manifest_image_id,
+            'identity_resolution': str(
+                row.get('identity_resolution') or 'manifest_owned_identity'
+            ),
+        }
+
+    cohort_id = _identity_token(row.get('cohort_id'), default='unknown_cohort')
+    source_sample_id = str(row.get('source_sample_id') or '').strip()
+    source_image_name = str(row.get('source_image_name') or image_path.name).strip()
+    subject_group = _manifest_subject_group(row, image_path)
+    _, _, subject_text = subject_group.partition(':')
+
+    dated_match = re.match(
+        r'^(?P<subject>.+?)--(?P<date>[0-9]{4}-[0-9]{2}-[0-9]{2})(?:_Image.*)?$',
+        source_sample_id,
+        flags=re.IGNORECASE,
+    )
+    if dated_match:
+        subject_text = dated_match.group('subject')
+        acquisition_text = dated_match.group('date')
+    else:
+        if '_Image' in source_sample_id:
+            subject_text = source_sample_id.split('_Image', 1)[0]
+        source_date = str(row.get('source_date') or '').strip()
+        source_batch = str(row.get('source_batch') or '').strip()
+        if source_date and source_date.lower() != 'nan':
+            acquisition_text = source_date
+        elif source_batch and source_batch.lower() != 'nan':
+            acquisition_text = source_batch
+        else:
+            acquisition_text = 'undated'
+
+    subject_id = f'{cohort_id}__{_identity_token(subject_text)}'
+    sample_id = f'{subject_id}__{_identity_token(acquisition_text, default="undated")}'
+    replicate_id = _identity_token(
+        Path(source_image_name).stem, default=image_path.stem
+    )
+    image_id = f'{sample_id}__{replicate_id}'
+    return {
+        'subject_id': subject_id,
+        'sample_id': sample_id,
+        'replicate_id': replicate_id,
+        'image_id': image_id,
+        'identity_resolution': 'manifest_derived_acquisition_preserving',
+    }
+
+
 def build_manifest_scored_example_table(
     manifest_root: Path,
     output_dir: Path,
@@ -382,29 +482,47 @@ def build_manifest_scored_example_table(
     if cohort_ids:
         selected = selected[selected['cohort_id'].astype(str).isin(cohort_ids)]
     if lane_assignments:
-        selected = selected[selected['lane_assignment'].astype(str).isin(lane_assignments)]
+        selected = selected[
+            selected['lane_assignment'].astype(str).isin(lane_assignments)
+        ]
     if selected.empty:
         raise ContractPreparationError(
             'Cohort manifest did not contain admitted scored image/mask rows for quantification'
         )
 
     rows: list[dict[str, Any]] = []
-    for row in selected.sort_values(['cohort_id', 'source_sample_id', 'source_image_name']).itertuples(index=False):
+    for row in selected.sort_values(
+        ['cohort_id', 'source_sample_id', 'source_image_name']
+    ).itertuples(index=False):
         series = pd.Series(row._asdict())
-        raw_image_path = Path(_resolve_manifest_path(manifest_root, series['image_path']))
+        raw_image_path = Path(
+            _resolve_manifest_path(manifest_root, series['image_path'])
+        )
         raw_mask_path = Path(_resolve_manifest_path(manifest_root, series['mask_path']))
         score = float(series['score'])
         score_status_raw = str(series.get('score_status') or '').strip()
-        score_status = score_status_raw if score_status_raw and score_status_raw != 'nan' else 'ok'
-        join_status = 'ok' if raw_image_path.exists() and raw_mask_path.exists() and score_status == 'ok' else 'join_failed'
+        score_status = (
+            score_status_raw if score_status_raw and score_status_raw != 'nan' else 'ok'
+        )
+        join_status = (
+            'ok'
+            if raw_image_path.exists()
+            and raw_mask_path.exists()
+            and score_status == 'ok'
+            else 'join_failed'
+        )
         subject_image_id = str(series.get('manifest_row_id') or '').strip()
         if not subject_image_id or subject_image_id == 'nan':
-            subject_image_id = f"{series['cohort_id']}__{raw_image_path.stem}"
+            subject_image_id = f'{series["cohort_id"]}__{raw_image_path.stem}'
+        identity_fields = _manifest_identity_fields(series, raw_image_path)
         rows.append(
             {
                 'subject_image_id': subject_image_id,
-                'image_name': str(series.get('source_image_name') or raw_image_path.name),
+                'image_name': str(
+                    series.get('source_image_name') or raw_image_path.name
+                ),
                 'subject_prefix': _manifest_subject_group(series, raw_image_path),
+                **identity_fields,
                 'glomerulus_id': 1,
                 'score': score,
                 'raw_image_path': str(raw_image_path),
@@ -412,11 +530,17 @@ def build_manifest_scored_example_table(
                 'join_status': join_status,
                 'score_status': score_status,
                 'score_resolution': 'manifest_admitted_score',
-                'roi_status': 'pending' if join_status == 'ok' and score_status == 'ok' else 'join_failed',
+                'roi_status': 'pending'
+                if join_status == 'ok' and score_status == 'ok'
+                else 'join_failed',
                 'cohort_id': str(series.get('cohort_id') or ''),
                 'lane_assignment': str(series.get('lane_assignment') or ''),
                 'manifest_row_id': subject_image_id,
+                'harmonized_id': str(series.get('harmonized_id') or ''),
                 'source_sample_id': str(series.get('source_sample_id') or ''),
+                'source_image_name': str(series.get('source_image_name') or ''),
+                'source_batch': str(series.get('source_batch') or ''),
+                'source_date': str(series.get('source_date') or ''),
                 'source_score_sheet': str(series.get('source_score_sheet') or ''),
                 'score_path': str(series.get('score_path') or ''),
             }
@@ -428,11 +552,44 @@ def build_manifest_scored_example_table(
         'n_manifest_rows': int(len(manifest)),
         'n_scored_rows': int(len(scored_table)),
         'cohort_counts': scored_table['cohort_id'].value_counts(dropna=False).to_dict(),
-        'lane_counts': scored_table['lane_assignment'].value_counts(dropna=False).to_dict(),
-        'join_status_counts': scored_table['join_status'].value_counts(dropna=False).to_dict(),
-        'score_status_counts': scored_table['score_status'].value_counts(dropna=False).to_dict(),
-        'score_value_counts': scored_table['score'].value_counts(dropna=False).sort_index().to_dict(),
+        'lane_counts': scored_table['lane_assignment']
+        .value_counts(dropna=False)
+        .to_dict(),
+        'join_status_counts': scored_table['join_status']
+        .value_counts(dropna=False)
+        .to_dict(),
+        'score_status_counts': scored_table['score_status']
+        .value_counts(dropna=False)
+        .to_dict(),
+        'score_value_counts': scored_table['score']
+        .value_counts(dropna=False)
+        .sort_index()
+        .to_dict(),
+        'identity_contract': {
+            'row_key': 'manifest_row_id',
+            'exact_image_key': 'image_id',
+            'validation_group_key': 'subject_id',
+            'subject_key': 'subject_id',
+            'sample_key': 'sample_id',
+            'identity_resolution': 'manifest_derived_acquisition_preserving',
+            'n_subjects': int(scored_table['subject_id'].nunique()),
+            'n_samples': int(scored_table['sample_id'].nunique()),
+            'n_images': int(scored_table['image_id'].nunique()),
+            'duplicate_image_ids': sorted(
+                scored_table.loc[
+                    scored_table['image_id'].duplicated(keep=False), 'image_id'
+                ].unique()
+            ),
+            'subjects_with_multiple_samples': int(
+                scored_table.groupby('subject_id')['sample_id'].nunique().gt(1).sum()
+            ),
+        },
     }
+    duplicate_images = summary['identity_contract']['duplicate_image_ids']
+    if duplicate_images:
+        raise ContractPreparationError(
+            f'Manifest identity contract produced duplicate image_id values: {duplicate_images[:10]}'
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
     scored_table.to_csv(output_dir / 'scored_examples.csv', index=False)
     _save_json(summary, output_dir / 'manifest_scored_examples_summary.json')
@@ -516,7 +673,7 @@ def run_manifest_quantification(
         'scored_examples': output_dir / 'scored_examples' / 'scored_examples.csv',
         'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
         'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
-        **model_artifacts,
+        **_burden_first_artifacts(model_artifacts),
     }
 
 
@@ -1078,10 +1235,594 @@ def generate_html_review_report(
     }
 
 
-def evaluate_embedding_table(
+def _read_json_if_exists(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding='utf-8'))
+
+
+def _format_optional_float(value: Any, digits: int = 3) -> str:
+    try:
+        if value in ('', None) or not np.isfinite(float(value)):
+            return 'not estimable'
+        return f'{float(value):.{digits}f}'
+    except (TypeError, ValueError):
+        return 'not estimable'
+
+
+def _select_quantification_review_examples(
+    merged_df: pd.DataFrame, max_examples: int = 9
+) -> pd.DataFrame:
+    work = merged_df.copy()
+    selected: list[pd.Series] = []
+    used: set[tuple[str, str]] = set()
+
+    def take(frame: pd.DataFrame, bucket: str, count: int = 1) -> None:
+        nonlocal selected
+        for _, row in frame.iterrows():
+            key = (
+                str(row.get('subject_image_id', '')),
+                str(row.get('glomerulus_id', '')),
+            )
+            if key in used:
+                continue
+            row = row.copy()
+            row['review_bucket'] = bucket
+            selected.append(row)
+            used.add(key)
+            if (
+                len([item for item in selected if item.get('review_bucket') == bucket])
+                >= count
+            ):
+                break
+
+    if 'stage_index_absolute_error' in work.columns:
+        take(
+            work.sort_values('stage_index_absolute_error', ascending=True),
+            'representative_low_error',
+        )
+        take(
+            work.sort_values('stage_index_absolute_error', ascending=False),
+            'high_error',
+        )
+    if 'prediction_set_scores' in work.columns:
+        set_sizes = work['prediction_set_scores'].map(
+            lambda value: len([item for item in str(value).split('|') if item])
+        )
+        take(
+            work.assign(_set_size=set_sizes).sort_values('_set_size', ascending=False),
+            'high_uncertainty',
+        )
+    if 'cohort_id' in work.columns:
+        for cohort, cohort_df in work.groupby('cohort_id'):
+            take(
+                cohort_df.sort_values('stage_index_absolute_error', ascending=True),
+                f'cohort_{cohort}',
+            )
+    if 'score' in work.columns:
+        take(work.sort_values('score', ascending=False), 'high_observed_burden')
+    if len(selected) < min(max_examples, len(work)):
+        take(
+            work.sort_values(
+                ['stage_index_absolute_error', BURDEN_COLUMN], ascending=[False, False]
+            ),
+            'additional_review_case',
+            count=max_examples,
+        )
+    return (
+        pd.DataFrame(selected)
+        .head(min(max_examples, len(work)))
+        .drop(columns=['_set_size'], errors='ignore')
+        .reset_index(drop=True)
+    )
+
+
+def generate_combined_quantification_review(
+    *,
+    ordinal_predictions_path: Path,
+    ordinal_metrics_path: Path,
+    burden_artifacts: dict[str, Path],
+    output_dir: Path,
+) -> dict[str, Path]:
+    """Write a human-readable burden/ordinal quantification review bundle."""
+    output_dir = Path(output_dir)
+    assets_dir = output_dir / 'assets'
+    output_dir.mkdir(parents=True, exist_ok=True)
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    ordinal_predictions = pd.read_csv(ordinal_predictions_path)
+    burden_predictions = pd.read_csv(burden_artifacts['burden_predictions'])
+    ordinal_predictions = ordinal_predictions.rename(columns={'fold': 'ordinal_fold'})
+    join_keys = [
+        key
+        for key in ['subject_image_id', 'glomerulus_id']
+        if key in ordinal_predictions.columns and key in burden_predictions.columns
+    ]
+    if not join_keys:
+        raise ContractPreparationError(
+            'Cannot build quantification review: no shared prediction join keys'
+        )
+    if burden_predictions.duplicated(join_keys).any():
+        raise ContractPreparationError(
+            f'Cannot build quantification review: burden predictions are not one-to-one on {join_keys}'
+        )
+    if ordinal_predictions.duplicated(join_keys).any():
+        raise ContractPreparationError(
+            f'Cannot build quantification review: ordinal predictions are not one-to-one on {join_keys}'
+        )
+    merged = burden_predictions.merge(
+        ordinal_predictions,
+        on=join_keys,
+        how='left',
+        suffixes=('', '_ordinal'),
+        validate='one_to_one',
+    )
+    if len(merged) != len(burden_predictions):
+        raise ContractPreparationError(
+            'Cannot build quantification review: merged row count does not match burden predictions'
+        )
+    if 'predicted_score' in merged.columns and merged['predicted_score'].isna().any():
+        raise ContractPreparationError(
+            'Cannot build quantification review: ordinal comparator fields are missing after merge'
+        )
+    review_examples = _select_quantification_review_examples(merged)
+    review_examples_path = output_dir / 'review_examples.csv'
+    review_examples.to_csv(review_examples_path, index=False)
+
+    burden_metrics = _read_json_if_exists(burden_artifacts['burden_metrics'])
+    ordinal_metrics = _read_json_if_exists(ordinal_metrics_path)
+    grouping_audit = _read_json_if_exists(burden_artifacts['grouping_audit'])
+    uncertainty = _read_json_if_exists(burden_artifacts['uncertainty_calibration'])
+    threshold_support = pd.read_csv(burden_artifacts['threshold_support'])
+    cohort_metrics = (
+        pd.read_csv(burden_artifacts['cohort_metrics'])
+        if burden_artifacts['cohort_metrics'].exists()
+        and burden_artifacts['cohort_metrics'].stat().st_size > 0
+        else pd.DataFrame()
+    )
+    final_cohort_metrics = (
+        pd.read_csv(burden_artifacts['final_model_cohort_metrics'])
+        if burden_artifacts.get('final_model_cohort_metrics')
+        and burden_artifacts['final_model_cohort_metrics'].exists()
+        and burden_artifacts['final_model_cohort_metrics'].stat().st_size > 0
+        else pd.DataFrame()
+    )
+    cohort_metrics_for_results = (
+        final_cohort_metrics if not final_cohort_metrics.empty else cohort_metrics
+    )
+    group_intervals = pd.read_csv(burden_artifacts['group_summary_intervals'])
+    nearest_examples = (
+        pd.read_csv(burden_artifacts['nearest_examples'])
+        if burden_artifacts['nearest_examples'].exists()
+        and burden_artifacts['nearest_examples'].stat().st_size > 0
+        else pd.DataFrame()
+    )
+    signal_comparator = (
+        pd.read_csv(burden_artifacts['signal_comparator_metrics'])
+        if burden_artifacts.get('signal_comparator_metrics')
+        and burden_artifacts['signal_comparator_metrics'].exists()
+        and burden_artifacts['signal_comparator_metrics'].stat().st_size > 0
+        else pd.DataFrame()
+    )
+    precision_candidate_summary = (
+        _read_json_if_exists(burden_artifacts['precision_candidate_summary'])
+        if burden_artifacts.get('precision_candidate_summary')
+        else {}
+    )
+
+    support_status = str(burden_metrics.get('support_gate_status', 'unknown'))
+    numerical_status = str(burden_metrics.get('numerical_stability_status', 'unknown'))
+    overall = burden_metrics.get('overall', {})
+    nominal_coverage = float(uncertainty.get('nominal_coverage', 0.9))
+    empirical_coverage = float(
+        uncertainty.get('overall', {}).get(
+            'coverage', overall.get('prediction_set_coverage', 0.0)
+        )
+    )
+    burden_interval_coverage = float(uncertainty.get('burden_interval_coverage', 0.0))
+    coverage_gate_passed = empirical_coverage >= nominal_coverage
+    numerical_acceptable = numerical_status == 'ok'
+    operational_status = (
+        'operational_candidate'
+        if support_status == 'passed' and numerical_acceptable and coverage_gate_passed
+        else 'exploratory_not_ready'
+    )
+    docs_ready = operational_status == 'operational_candidate'
+    ordinal_overall = ordinal_metrics.get('overall', {})
+    score_counts = burden_metrics.get('score_counts', {})
+    score_distribution = ', '.join(
+        f'{score}: {count}' for score, count in score_counts.items()
+    )
+    best_image_candidate = (
+        precision_candidate_summary.get('best_image_level_candidate', {}) or {}
+    )
+    best_subject_candidate = (
+        precision_candidate_summary.get('best_subject_level_candidate', {}) or {}
+    )
+    precision_recommendation = precision_candidate_summary.get('recommendation', '')
+
+    cohort_table_rows = []
+    for _, row in cohort_metrics_for_results.iterrows():
+        cohort_table_rows.append(
+            '<tr>'
+            f'<td>{escape(str(row.get("cohort_id", "")))}</td>'
+            f'<td>{int(row.get("n_rows", 0))}</td>'
+            f'<td>{int(row.get("n_subjects", row.get("n_samples", 0)))}</td>'
+            f'<td>{_format_optional_float(row.get("subject_weighted_mean_predicted_burden", row.get("sample_weighted_mean_predicted_burden")))}</td>'
+            f'<td>{_format_optional_float(row.get("stage_index_mae"))}</td>'
+            '</tr>'
+        )
+    if not cohort_table_rows:
+        cohort_table_rows.append(
+            '<tr><td colspan="5">No cohort summaries available.</td></tr>'
+        )
+
+    signal_rows = []
+    for _, row in signal_comparator.iterrows():
+        signal_rows.append(
+            '<tr>'
+            f'<td>{escape(str(row.get("candidate_id", row.get("model_family", ""))))}</td>'
+            f'<td>{escape(str(row.get("target_level", "")))}</td>'
+            f'<td>{escape(str(row.get("feature_set", "")))}</td>'
+            f'<td>{escape(str(row.get("validation_grouping", "")))}</td>'
+            f'<td>{_format_optional_float(row.get("stage_index_mae"))}</td>'
+            f'<td>{escape(str(row.get("candidate_status", "")))}</td>'
+            '</tr>'
+        )
+    if not signal_rows:
+        signal_rows.append(
+            '<tr><td colspan="6">No precision candidate screen available.</td></tr>'
+        )
+
+    support_rows = []
+    for _, row in threshold_support.iterrows():
+        support_rows.append(
+            '<tr>'
+            f'<td>{escape(str(row["stratum"]))}</td>'
+            f'<td>&gt; {float(row["threshold"]):g}</td>'
+            f'<td>{int(row["positive_groups"])}</td>'
+            f'<td>{int(row["negative_groups"])}</td>'
+            f'<td>{escape(str(row["support_status"]))}</td>'
+            '</tr>'
+        )
+
+    group_rows = []
+    for _, row in group_intervals.iterrows():
+        group_rows.append(
+            '<tr>'
+            f'<td>{escape(str(row.get("stratum", "")))}</td>'
+            f'<td>{escape(str(row.get("estimand", "")))}</td>'
+            f'<td>{int(row.get("n_clusters", 0))}</td>'
+            f'<td>{_format_optional_float(row.get("mean_burden_0_100"))}</td>'
+            f'<td>{_format_optional_float(row.get("ci_low_0_100"))} to {_format_optional_float(row.get("ci_high_0_100"))}</td>'
+            f'<td>{escape(str(row.get("status", "")))}</td>'
+            '</tr>'
+        )
+
+    cards: list[str] = []
+    for example_index, row in review_examples.iterrows():
+        raw_image_path = Path(
+            str(row.get('raw_image_path', row.get('raw_image_path_ordinal', '')))
+        )
+        raw_mask_path = Path(
+            str(row.get('raw_mask_path', row.get('raw_mask_path_ordinal', '')))
+        )
+        roi_image_path = Path(
+            str(row.get('roi_image_path', row.get('roi_image_path_ordinal', '')))
+        )
+        image_html = ''
+        if (
+            raw_image_path.exists()
+            and raw_mask_path.exists()
+            and roi_image_path.exists()
+        ):
+            bbox = (
+                int(row.get('roi_bbox_x0', row.get('roi_bbox_x0_ordinal', 0))),
+                int(row.get('roi_bbox_y0', row.get('roi_bbox_y0_ordinal', 0))),
+                int(row.get('roi_bbox_x1', row.get('roi_bbox_x1_ordinal', 0))),
+                int(row.get('roi_bbox_y1', row.get('roi_bbox_y1_ordinal', 0))),
+            )
+            raw_preview_path = (
+                assets_dir / f'burden_example_{example_index:02d}_raw.png'
+            )
+            overlay_preview_path = (
+                assets_dir / f'burden_example_{example_index:02d}_overlay.png'
+            )
+            roi_preview_path = (
+                assets_dir / f'burden_example_{example_index:02d}_roi.png'
+            )
+            raw_image = Image.open(raw_image_path).convert('RGB')
+            raw_with_bbox = raw_image.copy()
+            raw_draw = ImageDraw.Draw(raw_with_bbox)
+            raw_draw.rectangle(bbox, outline=(32, 200, 255), width=4)
+            _save_preview_image(raw_with_bbox, raw_preview_path)
+            _save_preview_image(
+                _render_mask_overlay(raw_image_path, raw_mask_path, bbox),
+                overlay_preview_path,
+            )
+            _save_preview_image(
+                Image.open(roi_image_path).convert('RGB'),
+                roi_preview_path,
+                max_side=500,
+            )
+            image_html = f"""
+            <div class="image-grid">
+              <figure><img src="assets/{raw_preview_path.name}" alt="Raw image with ROI box"><figcaption>Raw image with ROI box</figcaption></figure>
+              <figure><img src="assets/{overlay_preview_path.name}" alt="Mask overlay"><figcaption>Mask overlay</figcaption></figure>
+              <figure><img src="assets/{roi_preview_path.name}" alt="ROI crop"><figcaption>ROI crop used for embeddings</figcaption></figure>
+            </div>
+            """
+        subject_image_id = str(row.get('subject_image_id', 'unknown'))
+        neighbor_rows = ''
+        if (
+            not nearest_examples.empty
+            and 'subject_image_id' in nearest_examples.columns
+        ):
+            neighbors = nearest_examples[
+                nearest_examples['subject_image_id'].astype(str) == subject_image_id
+            ].head(3)
+            for _, neighbor in neighbors.iterrows():
+                neighbor_rows += (
+                    '<tr>'
+                    f'<td>{int(neighbor.get("neighbor_rank", 0))}</td>'
+                    f'<td>{escape(str(neighbor.get("neighbor_subject_image_id", "")))}</td>'
+                    f'<td>{_format_optional_float(neighbor.get("neighbor_score"), 1)}</td>'
+                    f'<td>{_format_optional_float(neighbor.get("neighbor_distance"))}</td>'
+                    '</tr>'
+                )
+        if not neighbor_rows:
+            neighbor_rows = (
+                '<tr><td colspan="4">No fold-pure nearest examples available.</td></tr>'
+            )
+        cohort_id = row.get('cohort_id', row.get('cohort_id_ordinal', ''))
+        sample_id = row.get('sample_id', row.get('sample_id_ordinal', ''))
+        prediction_source = row.get(
+            'prediction_source', 'held_out_grouped_fold_prediction'
+        )
+        source_image = row.get('raw_image_path', row.get('raw_image_path_ordinal', ''))
+        roi_image = row.get('roi_image_path', row.get('roi_image_path_ordinal', ''))
+
+        threshold_rows = ''.join(
+            '<tr>'
+            f'<td>{column}</td>'
+            f'<td>{_format_optional_float(row.get(column))}</td>'
+            '</tr>'
+            for column in [
+                'prob_score_gt_0',
+                'prob_score_gt_0p5',
+                'prob_score_gt_1',
+                'prob_score_gt_1p5',
+                'prob_score_gt_2',
+            ]
+        )
+        ordinal_prediction = row.get(
+            'predicted_score', row.get('predicted_score_ordinal', '')
+        )
+        cards.append(
+            f"""
+            <section class="example-card">
+              <h2>{escape(subject_image_id)} <span class="bucket">{escape(str(row.get('review_bucket', '')))}</span></h2>
+              {image_html}
+              <div class="summary-grid">
+                <div><strong>Observed score</strong><span>{_format_optional_float(row.get('score'), 1)}</span></div>
+                <div><strong>Burden index</strong><span>{_format_optional_float(row.get(BURDEN_COLUMN))}</span></div>
+                <div><strong>Burden interval</strong><span>{_format_optional_float(row.get('burden_interval_low_0_100'))} to {_format_optional_float(row.get('burden_interval_high_0_100'))}</span></div>
+                <div><strong>Prediction set</strong><span>{escape(str(row.get('prediction_set_scores', '')))}</span></div>
+                <div><strong>Ordinal prediction</strong><span>{escape(str(ordinal_prediction))}</span></div>
+                <div><strong>Fold</strong><span>{escape(str(row.get('fold', '')))}</span></div>
+                <div><strong>Prediction source</strong><span>{escape(str(prediction_source))}</span></div>
+                <div><strong>Cohort</strong><span>{escape(str(cohort_id))}</span></div>
+                <div><strong>Sample</strong><span>{escape(str(sample_id))}</span></div>
+              </div>
+              <p class="provenance"><strong>Source image:</strong> {escape(str(source_image))}<br><strong>ROI image:</strong> {escape(str(roi_image))}</p>
+              <div class="detail-grid">
+                <div>
+                  <h3>Threshold Profile</h3>
+                  <table><tbody>{threshold_rows}</tbody></table>
+                </div>
+                <div>
+                  <h3>Nearest Scored Examples</h3>
+                  <table><thead><tr><th>Rank</th><th>Example</th><th>Score</th><th>Distance</th></tr></thead><tbody>{neighbor_rows}</tbody></table>
+                </div>
+              </div>
+            </section>
+            """
+        )
+
+    results_summary_csv = output_dir / 'results_summary.csv'
+    summary_rows = [
+        {
+            'metric': 'operational_status',
+            'value': operational_status,
+            'interpretation': 'Burden model status from support and numerical-output gates',
+        },
+        {
+            'metric': 'stage_index_mae',
+            'value': overall.get('stage_index_mae'),
+            'interpretation': 'Primary absolute error on 0-100 ordinal stage index',
+        },
+        {
+            'metric': 'prediction_set_coverage',
+            'value': overall.get('prediction_set_coverage'),
+            'interpretation': 'Empirical score prediction-set coverage',
+        },
+        {
+            'metric': 'nominal_prediction_set_coverage',
+            'value': nominal_coverage,
+            'interpretation': 'Nominal coverage target for score prediction sets',
+        },
+        {
+            'metric': 'coverage_gate_passed',
+            'value': coverage_gate_passed,
+            'interpretation': 'Whether empirical prediction-set coverage met the nominal target',
+        },
+        {
+            'metric': 'burden_interval_empirical_coverage',
+            'value': burden_interval_coverage,
+            'interpretation': 'Empirical coverage for burden interval bounds',
+        },
+        {
+            'metric': 'ordinal_accuracy',
+            'value': ordinal_overall.get('accuracy'),
+            'interpretation': 'Ordinal comparator exact class accuracy',
+        },
+        {
+            'metric': 'best_image_precision_candidate',
+            'value': best_image_candidate.get('candidate_id', ''),
+            'interpretation': (
+                f'Stage-index MAE {_format_optional_float(best_image_candidate.get("stage_index_mae"))}'
+            ),
+        },
+        {
+            'metric': 'best_subject_precision_candidate',
+            'value': best_subject_candidate.get('candidate_id', ''),
+            'interpretation': (
+                f'Stage-index MAE {_format_optional_float(best_subject_candidate.get("stage_index_mae"))}'
+            ),
+        },
+    ]
+    pd.DataFrame(summary_rows).to_csv(results_summary_csv, index=False)
+
+    results_summary_md = output_dir / 'results_summary.md'
+    results_summary_text = f"""# Endotheliosis Quantification Results
+
+## Verdict
+
+- Operational status: `{operational_status}`
+- README/docs-ready: `{docs_ready}`
+- Claim boundary: predictive ordinal stage-burden index from image-level grades; not pixel-level percent endotheliosis and not a causal treatment effect.
+
+## Primary Burden Metrics
+
+- N examples: `{burden_metrics.get('n_examples')}`
+- Subjects: `{burden_metrics.get('n_subject_groups')}`
+- Stage-index MAE: `{_format_optional_float(overall.get('stage_index_mae'))}`
+- Grade-scale MAE: `{_format_optional_float(overall.get('grade_scale_mae'))}`
+- Prediction-set coverage: `{_format_optional_float(overall.get('prediction_set_coverage'))}`
+- Nominal prediction-set coverage target: `{_format_optional_float(nominal_coverage)}`
+- Coverage gate passed: `{coverage_gate_passed}`
+- Burden interval empirical coverage: `{_format_optional_float(burden_interval_coverage)}`
+- Average prediction-set size: `{_format_optional_float(overall.get('average_prediction_set_size'))}`
+- Support gate: `{support_status}`
+- Numerical stability: `{numerical_status}`
+- Cohort composition notes: `{', '.join(map(str, burden_metrics.get('cohort_composition_notes', []))) or 'none'}`
+- Backend warning messages: `{', '.join(map(str, burden_metrics.get('backend_warning_messages', []))) or 'none'}`
+
+## Comparator Metrics
+
+- Direct stage-index regression MAE: `{_format_optional_float(burden_metrics.get('direct_regression_comparator', {}).get('stage_index_mae'))}`
+- Ordinal exact accuracy: `{_format_optional_float(ordinal_overall.get('accuracy'))}`
+- Ordinal MAE: `{_format_optional_float(ordinal_overall.get('mae'))}`
+
+## Precision Candidate Screen
+
+- Best image-level candidate: `{best_image_candidate.get('candidate_id', '')}` with stage-index MAE `{_format_optional_float(best_image_candidate.get('stage_index_mae'))}`.
+- Best subject-level candidate: `{best_subject_candidate.get('candidate_id', '')}` with stage-index MAE `{_format_optional_float(best_subject_candidate.get('stage_index_mae'))}`.
+- Recommendation: {precision_recommendation or 'No precision candidate recommendation was generated.'}
+
+## Documentation Recommendation
+
+Use these results in README/docs only when `README/docs-ready` is `True`. The generated snippet is written every run, but it is not approval for reuse when the readiness flag is false.
+"""
+    results_summary_md.write_text(results_summary_text, encoding='utf-8')
+
+    readme_snippet_path = output_dir / 'readme_results_snippet.md'
+    snippet = f"""### Current Quantification Result
+
+The current full-cohort quantification run reports an endotheliosis burden index as a predictive ordinal stage-burden score, not a pixel-level percent. Operational status: `{operational_status}`. README/docs-ready: `{docs_ready}`. Stage-index MAE: `{_format_optional_float(overall.get('stage_index_mae'))}`; prediction-set coverage: `{_format_optional_float(overall.get('prediction_set_coverage'))}` versus nominal target `{_format_optional_float(nominal_coverage)}`. Cohort composition notes: `{', '.join(map(str, burden_metrics.get('cohort_composition_notes', []))) or 'none'}`. Add a link to the published quantification review artifact before sharing.
+"""
+    readme_snippet_path.write_text(snippet, encoding='utf-8')
+
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <title>Endotheliosis Quantification Review</title>
+      <style>
+        body {{ font-family: "Helvetica Neue", Arial, sans-serif; margin: 2rem auto; max-width: 1280px; color: #1f2933; background: #f7fafc; }}
+        h1, h2, h3 {{ color: #102a43; }}
+        .note {{ background: #fff7e6; border-left: 4px solid #d9822b; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem; }}
+        .status {{ background: white; border-radius: 10px; padding: 1rem; margin-bottom: 1rem; box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08); }}
+        .summary-grid, .image-grid, .detail-grid {{ display: grid; gap: 1rem; }}
+        .summary-grid {{ grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 1rem; }}
+        .summary-grid div {{ background: white; border-radius: 10px; padding: 0.85rem 1rem; box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08); }}
+        .summary-grid strong {{ display: block; font-size: 0.85rem; color: #486581; margin-bottom: 0.25rem; }}
+        .summary-grid span {{ font-size: 1.1rem; font-weight: 600; }}
+        .example-card {{ background: white; padding: 1.25rem; border-radius: 10px; margin-bottom: 1.25rem; box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08); }}
+        .image-grid {{ grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 1rem; }}
+        .detail-grid {{ grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }}
+        img {{ width: 100%; height: auto; border-radius: 8px; border: 1px solid #d9e2ec; background: #f0f4f8; }}
+        figure {{ margin: 0; }}
+        figcaption {{ font-size: 0.85rem; color: #52606d; margin-top: 0.4rem; }}
+        table {{ width: 100%; border-collapse: collapse; background: white; margin-bottom: 1rem; }}
+        th, td {{ text-align: left; padding: 0.45rem 0.4rem; border-bottom: 1px solid #e5e7eb; font-size: 0.92rem; }}
+        .bucket {{ font-size: 0.85rem; color: #486581; }}
+      </style>
+    </head>
+    <body>
+      <h1>Endotheliosis Quantification Review</h1>
+      <h2>Endotheliosis burden index (0-100)</h2>
+      <section class="status">
+        <h2>Operational Verdict</h2>
+        <p><strong>Status:</strong> {escape(operational_status)}</p>
+        <p><strong>README/docs-ready:</strong> {docs_ready}</p>
+        <p><strong>Support gate:</strong> {escape(support_status)}</p>
+        <p><strong>Numerical status:</strong> {escape(numerical_status)}</p>
+        <p><strong>Prediction-set coverage:</strong> {_format_optional_float(empirical_coverage)} versus nominal {_format_optional_float(nominal_coverage)}; gate passed: {coverage_gate_passed}</p>
+        <p><strong>Cohort composition notes:</strong> {escape(', '.join(map(str, burden_metrics.get('cohort_composition_notes', []))) or 'none')}</p>
+        <p><strong>Grouping key:</strong> {escape(str(grouping_audit.get('grouping_key', 'unknown')))} ({escape(str(grouping_audit.get('grouping_status', 'unknown')))})</p>
+      </section>
+      <div class="note">The burden output is a predictive ordinal stage-burden index from manually scored image-level grades. It is not pixel-level percent tissue involvement, not externally validated, and not a causal treatment-effect estimate.</div>
+      <section class="summary-grid">
+        <div><strong>Examples</strong><span>{burden_metrics.get('n_examples')}</span></div>
+        <div><strong>Subjects</strong><span>{burden_metrics.get('n_subject_groups')}</span></div>
+        <div><strong>Stage-index MAE</strong><span>{_format_optional_float(overall.get('stage_index_mae'))}</span></div>
+        <div><strong>Grade-scale MAE</strong><span>{_format_optional_float(overall.get('grade_scale_mae'))}</span></div>
+        <div><strong>Prediction-set coverage</strong><span>{_format_optional_float(overall.get('prediction_set_coverage'))}</span></div>
+        <div><strong>Average set size</strong><span>{_format_optional_float(overall.get('average_prediction_set_size'))}</span></div>
+        <div><strong>Ordinal accuracy</strong><span>{_format_optional_float(ordinal_overall.get('accuracy'))}</span></div>
+        <div><strong>Score distribution</strong><span>{escape(score_distribution)}</span></div>
+      </section>
+      <h2>Comparator Summaries</h2>
+      <table><thead><tr><th>Model</th><th>Metric</th><th>Value</th><th>Role</th></tr></thead><tbody>
+        <tr><td>Burden cumulative threshold model</td><td>Stage-index MAE</td><td>{_format_optional_float(overall.get('stage_index_mae'))}</td><td>Primary candidate</td></tr>
+        <tr><td>Direct stage-index regression</td><td>Stage-index MAE</td><td>{_format_optional_float(burden_metrics.get('direct_regression_comparator', {}).get('stage_index_mae'))}</td><td>Comparator</td></tr>
+        <tr><td>Ordinal/multiclass comparator</td><td>Exact accuracy</td><td>{_format_optional_float(ordinal_overall.get('accuracy'))}</td><td>Comparator</td></tr>
+        <tr><td>Ordinal/multiclass comparator</td><td>Grade-scale MAE</td><td>{_format_optional_float(ordinal_overall.get('mae'))}</td><td>Comparator</td></tr>
+      </tbody></table>
+      <h2>Precision Candidate Screen</h2>
+      <p>{escape(str(precision_recommendation))}</p>
+      <table><thead><tr><th>Candidate</th><th>Target level</th><th>Feature set</th><th>Validation</th><th>Stage-index MAE</th><th>Status</th></tr></thead><tbody>{''.join(signal_rows)}</tbody></table>
+      <h2>Artifact Links</h2>
+      <p>Primary artifacts: <code>burden_model/burden_predictions.csv</code> for held-out grouped validation, <code>burden_model/final_model_predictions.csv</code> for the final full-cohort fitted model, <code>burden_model/burden_metrics.json</code>, <code>burden_model/uncertainty_calibration.json</code>, <code>burden_model/nearest_examples.csv</code>, <code>ordinal_model/ordinal_metrics.json</code>, and <code>ordinal_model/ordinal_predictions.csv</code>.</p>
+      <h2>Final Full-Cohort Summaries</h2>
+      <table><thead><tr><th>Cohort</th><th>Rows</th><th>Subjects</th><th>Subject-weighted burden</th><th>Stage-index MAE</th></tr></thead><tbody>{''.join(cohort_table_rows)}</tbody></table>
+      <h2>Threshold Support</h2>
+      <table><thead><tr><th>Stratum</th><th>Threshold</th><th>Positive groups</th><th>Negative groups</th><th>Status</th></tr></thead><tbody>{''.join(support_rows)}</tbody></table>
+      <h2>Sample Summary Intervals</h2>
+      <table><thead><tr><th>Stratum</th><th>Estimand</th><th>Clusters</th><th>Mean burden</th><th>95% CI</th><th>Status</th></tr></thead><tbody>{''.join(group_rows)}</tbody></table>
+      <h2>Reviewer Examples</h2>
+      {''.join(cards)}
+    </body>
+    </html>
+    """
+    html_path = output_dir / 'quantification_review.html'
+    html_path.write_text(html, encoding='utf-8')
+    return {
+        'quantification_review_html': html_path,
+        'quantification_review_examples': review_examples_path,
+        'quantification_results_summary_md': results_summary_md,
+        'quantification_results_summary_csv': results_summary_csv,
+        'quantification_readme_snippet': readme_snippet_path,
+        'quantification_review_assets_dir': assets_dir,
+    }
+
+
+def _evaluate_ordinal_embedding_table(
     embedding_df: pd.DataFrame, output_dir: Path, n_splits: int = 3
 ) -> Dict[str, Path]:
-    """Train and evaluate the first ordinal endotheliosis predictor."""
+    """Train and evaluate the ordinal comparator on frozen embeddings."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1093,10 +1834,12 @@ def evaluate_embedding_table(
 
     work_df = embedding_df.copy().reset_index(drop=True)
     work_df['score_class'] = work_df['score'].map(_score_to_class_index)
+    group_column, groups_series, grouping_audit = derive_biological_grouping(work_df)
+    work_df[group_column] = groups_series.reset_index(drop=True)
 
     x = work_df[embedding_columns].to_numpy(dtype=np.float64)
     y = work_df['score_class'].to_numpy(dtype=np.int64)
-    groups = work_df['subject_prefix'].astype(str).to_numpy()
+    groups = groups_series.astype(str).to_numpy()
     class_indices = np.arange(len(ALLOWED_SCORE_VALUES), dtype=np.int64)
 
     unique_groups = np.unique(groups)
@@ -1131,7 +1874,7 @@ def evaluate_embedding_table(
         pred_class = probabilities.argmax(axis=1)
         pred_score = _class_index_to_score(pred_class)
         true_score = _class_index_to_score(y_test)
-        expected_score = probabilities @ ALLOWED_SCORE_VALUES
+        expected_score = np.sum(probabilities * ALLOWED_SCORE_VALUES, axis=1)
         sorted_probabilities = np.sort(probabilities, axis=1)
         top_two_margin = sorted_probabilities[:, -1] - sorted_probabilities[:, -2]
         entropy = _entropy(probabilities)
@@ -1191,6 +1934,13 @@ def evaluate_embedding_table(
         )
 
     predictions_df = pd.concat(predictions, ignore_index=True)
+    probability_columns = [
+        _score_probability_column_name(float(score_value))
+        for score_value in ALLOWED_SCORE_VALUES
+    ]
+    probability_output_status = _finite_matrix_status(
+        predictions_df[probability_columns].to_numpy(dtype=np.float64)
+    )
     predictions_path = output_dir / 'ordinal_predictions.csv'
     predictions_df.to_csv(predictions_path, index=False)
 
@@ -1219,6 +1969,8 @@ def evaluate_embedding_table(
         'n_examples': int(len(work_df)),
         'n_subject_groups': int(len(unique_groups)),
         'n_splits': int(split_count),
+        'grouping_key': group_column,
+        'grouping_audit': grouping_audit,
         'fold_metrics': fold_metrics,
         'overall': {
             'mae': float(
@@ -1271,7 +2023,7 @@ def evaluate_embedding_table(
         int(count) > 0 for count in cohort_profile['class_counts'].values()
     )
     certification_blockers: list[str] = []
-    if combined_warning_messages:
+    if not probability_output_status['finite']:
         certification_blockers.append('numerical_instability')
     if not full_target_class_support:
         certification_blockers.append('missing_target_class_support')
@@ -1282,6 +2034,15 @@ def evaluate_embedding_table(
         'fold_warning_messages': fold_warning_messages,
         'final_model_warning_messages': final_model.warning_messages_,
         'zero_unresolved_warning_gate_passed': not combined_warning_messages,
+        'probability_output_status': probability_output_status,
+        'numerical_stability_status': (
+            'nonfinite_output'
+            if not probability_output_status['finite']
+            else 'backend_warnings_outputs_finite'
+            if combined_warning_messages
+            else 'ok'
+        ),
+        'backend_warning_messages': combined_warning_messages,
         'full_target_class_support': full_target_class_support,
         'certification_status': (
             'supported' if not certification_blockers else 'incomplete'
@@ -1310,13 +2071,45 @@ def evaluate_embedding_table(
 
     return {
         'predictions': predictions_path,
+        'ordinal_predictions': predictions_path,
         'confusion_matrix': confusion_path,
+        'ordinal_confusion_matrix': confusion_path,
         'metrics': metrics_path,
+        'ordinal_metrics': metrics_path,
         'model': model_path,
+        'ordinal_model': model_path,
         'review_html': report_artifacts['html'],
+        'ordinal_review_html': report_artifacts['html'],
         'review_examples': report_artifacts['selected_examples'],
+        'ordinal_review_examples': report_artifacts['selected_examples'],
         'review_assets_dir': report_artifacts['assets_dir'],
+        'ordinal_review_assets_dir': report_artifacts['assets_dir'],
     }
+
+
+def evaluate_embedding_table(
+    embedding_df: pd.DataFrame, output_dir: Path, n_splits: int = 3
+) -> Dict[str, Path]:
+    """Train burden-index model and retained ordinal comparator."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    parent_output = output_dir.parent
+    ordinal_artifacts = _evaluate_ordinal_embedding_table(
+        embedding_df, output_dir, n_splits=n_splits
+    )
+    burden_artifacts = evaluate_burden_index_table(
+        embedding_df, parent_output / 'burden_model', n_splits=n_splits
+    )
+    review_artifacts = generate_combined_quantification_review(
+        ordinal_predictions_path=ordinal_artifacts['predictions'],
+        ordinal_metrics_path=ordinal_artifacts['metrics'],
+        burden_artifacts=burden_artifacts,
+        output_dir=parent_output / 'quantification_review',
+    )
+    merged_artifacts: Dict[str, Path] = dict(ordinal_artifacts)
+    merged_artifacts.update(burden_artifacts)
+    merged_artifacts.update(review_artifacts)
+    return merged_artifacts
 
 
 def run_contract_first_quantification(
@@ -1442,7 +2235,7 @@ def run_contract_first_quantification(
             'scored_examples': output_dir / 'scored_examples' / 'scored_examples.csv',
             'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
             'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
-            **model_artifacts,
+            **_burden_first_artifacts(model_artifacts),
         }
 
     metadata_file = project_dir / 'metadata' / 'subject_metadata.xlsx'
@@ -1550,7 +2343,7 @@ def run_contract_first_quantification(
         'scored_examples': output_dir / 'scored_examples' / 'scored_examples.csv',
         'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
         'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
-        **model_artifacts,
+        **_burden_first_artifacts(model_artifacts),
     }
 
 

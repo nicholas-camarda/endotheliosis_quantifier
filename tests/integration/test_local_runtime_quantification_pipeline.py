@@ -9,7 +9,8 @@ from eq.quantification.pipeline import run_contract_first_quantification
 RUNTIME_ROOT = Path('/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier')
 RAW_PROJECT_DIR = RUNTIME_ROOT / 'raw_data/cohorts/lauren_preeclampsia'
 ANNOTATION_SOURCE = (
-    RUNTIME_ROOT / 'raw_data/cohorts/lauren_preeclampsia/scores/labelstudio_annotations.json'
+    RUNTIME_ROOT
+    / 'raw_data/cohorts/lauren_preeclampsia/scores/labelstudio_annotations.json'
 )
 SEGMENTATION_MODEL_PATH = (
     RUNTIME_ROOT
@@ -52,13 +53,21 @@ def test_local_runtime_contract_first_quantification_pipeline(tmp_path: Path):
         'scored_examples',
         'roi_table',
         'embeddings',
-        'predictions',
-        'confusion_matrix',
-        'metrics',
-        'model',
-        'review_html',
-        'review_examples',
-        'review_assets_dir',
+        'burden_predictions',
+        'burden_metrics',
+        'burden_model',
+        'ordinal_predictions',
+        'ordinal_confusion_matrix',
+        'ordinal_metrics',
+        'ordinal_model',
+        'ordinal_review_html',
+        'ordinal_review_examples',
+        'ordinal_review_assets_dir',
+        'quantification_review_html',
+        'quantification_review_examples',
+        'quantification_results_summary_md',
+        'quantification_results_summary_csv',
+        'quantification_readme_snippet',
     }
     assert expected_keys <= outputs.keys()
     for artifact_path in outputs.values():
@@ -94,15 +103,16 @@ def test_local_runtime_contract_first_quantification_pipeline(tmp_path: Path):
     assert len(embeddings) > 0
     assert embedding_columns
 
-    predictions = pd.read_csv(outputs['predictions'])
+    predictions = pd.read_csv(outputs['ordinal_predictions'])
     assert len(predictions) > 0
     assert {'score', 'predicted_score', 'expected_score', 'absolute_error'} <= set(
         predictions.columns
     )
 
-    metrics = json.loads(outputs['metrics'].read_text(encoding='utf-8'))
+    metrics = json.loads(outputs['ordinal_metrics'].read_text(encoding='utf-8'))
     assert metrics['n_examples'] == len(embeddings)
     assert metrics['n_subject_groups'] == 8
+    assert metrics['grouping_key'] == 'subject_id'
     assert metrics['ordinal_model']['estimator_class'] == 'CanonicalOrdinalClassifier'
     assert metrics['cohort_profile']['n_examples'] == 88
     assert metrics['cohort_profile']['embedding_dim'] == len(embedding_columns)
@@ -118,7 +128,12 @@ def test_local_runtime_contract_first_quantification_pipeline(tmp_path: Path):
         for fold_entry in metrics['stability']['fold_warning_messages']
     )
 
-    review_examples = pd.read_csv(outputs['review_examples'])
+    burden_metrics = json.loads(outputs['burden_metrics'].read_text(encoding='utf-8'))
+    assert burden_metrics['n_examples'] == len(embeddings)
+    assert 'prediction_set_coverage' in burden_metrics['overall']
+
+    review_examples = pd.read_csv(outputs['ordinal_review_examples'])
     assert len(review_examples) > 0
-    assert outputs['review_html'].stat().st_size > 0
-    assert any(outputs['review_assets_dir'].iterdir())
+    assert outputs['ordinal_review_html'].stat().st_size > 0
+    assert any(outputs['ordinal_review_assets_dir'].iterdir())
+    assert outputs['quantification_review_html'].stat().st_size > 0

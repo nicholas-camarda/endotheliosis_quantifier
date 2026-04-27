@@ -36,7 +36,7 @@ The YAML is the control surface. In the common case, you should not need to stit
 | Scored cohort registry | `$EQ_RUNTIME_ROOT/raw_data/cohorts/manifest.csv` |
 | Current quantification supervision | Image-level grades joined to image/mask pairs in the active scored cohort workflow |
 | Quantification ROI semantics | Full multi-component union ROI |
-| Quantification outputs | Frozen segmentation-encoder embeddings, ordinal predictions, and an HTML review artifact with example cases |
+| Quantification outputs | Frozen segmentation-encoder embeddings, burden-index predictions, comparator outputs, and combined review artifacts |
 
 ## Environment Contract
 
@@ -258,13 +258,14 @@ eq quant-endo \
 
 To quantify with a different candidate, use that candidate's `.pkl` path.
 
-The current maintained quantification path uses image-level grades joined to each image or mask pair. ROI extraction uses the full multi-component mask bounding box with context padding, then builds frozen segmentation-backbone embeddings and a canonical penalized multiclass ordinal baseline from `src/eq/quantification/ordinal.py`.
+The current maintained quantification path uses image-level grades joined to each image or mask pair. ROI extraction uses the full multi-component mask bounding box with context padding, then builds frozen segmentation-backbone embeddings. The primary model output is an endotheliosis burden index on a `0-100` ordinal stage scale, with direct stage-index regression and ordinal/multiclass outputs retained as comparators.
 
-The pipeline reports cohort-shape and target-support metadata with each run. Treat these outputs as a predictive audit baseline unless the scored cohort provides the target support and validation evidence needed for the intended scientific claim.
+The pipeline reports cohort-shape, biological-group support, calibration, uncertainty, and target-support metadata with each run. Treat these outputs as predictive image-level grade modeling unless the scored cohort provides the target support and validation evidence needed for a stronger scientific claim.
 
-Current ordinal implementation surfaces:
+Current quantification implementation surfaces:
 
-- Canonical estimator surface: `src/eq/quantification/ordinal.py`
+- Primary burden-index estimator surface: `src/eq/quantification/burden.py`
+- Ordinal comparator surface: `src/eq/quantification/ordinal.py`
 - Orchestration caller: `src/eq/quantification/pipeline.py` via `evaluate_embedding_table()` and the contract-first quantification entrypoints
 - CLI entrypoint: `eq quant-endo`
 - Regression surfaces: `tests/unit/test_quantification_pipeline.py` and `tests/integration/test_local_runtime_quantification_pipeline.py`
@@ -274,7 +275,9 @@ Current ordinal implementation surfaces:
 - `labelstudio_scores/` with recovered per-image grades and duplicate-resolution audit tables
 - `roi_crops/` with union-ROI crops over the full multi-component mask
 - `embeddings/` with frozen segmentation-encoder embeddings
-- `ordinal_model/` with predictions, probabilities, metrics, confusion matrix, and `review_report/ordinal_review.html`
+- `burden_model/` with burden predictions, threshold metrics, uncertainty calibration, grouping audit, support gates, nearest examples, cohort metrics, and animal-level summary intervals
+- `ordinal_model/` with comparator predictions, probabilities, metrics, confusion matrix, and `review_report/ordinal_review.html`
+- `quantification_review/` with combined HTML review, reviewer examples, concrete result summaries, and a README/docs snippet from the current run; reuse the snippet only when the reported readiness flag and uncertainty checks pass
 
 ## Configuration Files
 

@@ -282,7 +282,7 @@ For all-data glomeruli training, use the manifest-backed `raw_data/cohorts` regi
 
 The YAML workflow is the normal control surface for full candidate training and comparison. Direct training module commands remain useful for targeted runs, and the later artifact path is derived from the base model name plus the auto-generated run suffix. Transfer training with `--base-model` must load that artifact and copy compatible weights or the run stops. The `--from-scratch` candidate is the no-mitochondria-base comparator with an ImageNet-pretrained ResNet34 encoder, not a literal all-random initialization baseline. `eq run-config` writes workflow logs under `$EQ_RUNTIME_ROOT/logs/run_config/<run_id>/`, model artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/`, and comparison reports under `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/`. After training, inspect the produced `.pkl` path and reuse that exact path in downstream comparison or quantification commands.
 
-### 4. Run The Current Quantification Baseline
+### 4. Run The Current Quantification Workflow
 
 ```bash
 eq prepare-quant-contract \
@@ -304,8 +304,11 @@ This writes:
 - recovered Label Studio score tables and duplicate-resolution audit outputs
 - union-ROI image and mask crops
 - frozen segmentation encoder embeddings
-- ordinal predictions with class probabilities and confidence proxies
-- an HTML review report with 5-7 mixed example cases
+- `burden_model/` artifacts with `endotheliosis_burden_0_100`, threshold probabilities, prediction sets, uncertainty intervals, support gates, grouping audit, nearest scored examples, cohort metrics, and animal-level summary intervals
+- `ordinal_model/` artifacts with ordinal comparator predictions, probabilities, metrics, confusion matrix, and the comparator-specific HTML review
+- `quantification_review/` artifacts with the combined burden/comparator HTML review, reviewer examples, concrete results summaries, and a README/docs snippet generated from the current run
+
+The burden score is a predictive ordinal stage-burden index from image-level grades. It is not a pixel-level tissue-area percent and should be interpreted with the generated support, calibration, and uncertainty artifacts.
 
 ## A Good Mental Model For The Repo
 

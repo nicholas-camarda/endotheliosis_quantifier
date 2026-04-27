@@ -288,15 +288,20 @@ def test_manifest_scored_examples_use_all_admitted_mask_paired_rows(tmp_path: Pa
         'manual_mask_external',
     }
     assert scored['join_status'].eq('ok').all()
-    assert set(scored['subject_prefix']) == {
-        'lauren_preeclampsia:T19',
-        'vegfri_dox:M1',
+    assert set(scored['subject_prefix']) == {'lauren_preeclampsia:T19', 'vegfri_dox:M1'}
+    assert set(scored['subject_id']) == {'lauren_preeclampsia__t19', 'vegfri_dox__m1'}
+    assert set(scored['sample_id']) == {
+        'lauren_preeclampsia__t19__undated',
+        'vegfri_dox__m1__undated',
     }
+    assert scored['image_id'].is_unique
     summary = json.loads(
         (tmp_path / 'out' / 'manifest_scored_examples_summary.json').read_text()
     )
     assert summary['n_scored_rows'] == 2
     assert summary['cohort_counts'] == {'lauren_preeclampsia': 1, 'vegfri_dox': 1}
+    assert summary['identity_contract']['validation_group_key'] == 'subject_id'
+    assert summary['identity_contract']['duplicate_image_ids'] == []
 
 
 def test_canonical_ordinal_classifier_outputs_probability_simplex():
@@ -338,6 +343,8 @@ def test_evaluate_embedding_table_runs_with_grouped_subject_splits(tmp_path: Pat
                 {
                     'subject_image_id': f'{subject_prefix}-{image_index}',
                     'subject_prefix': subject_prefix,
+                    'subject_id': f'cohort__{subject_prefix.lower()}',
+                    'sample_id': f'cohort__{subject_prefix.lower()}__image{image_index}',
                     'glomerulus_id': 1,
                     'score': score,
                     'raw_image_path': str(
@@ -405,10 +412,10 @@ def test_evaluate_embedding_table_runs_with_grouped_subject_splits(tmp_path: Pat
         'prob_score_1_0',
         'prob_score_1_5',
         'prob_score_2_0',
-        'prob_score_2_5',
         'prob_score_3_0',
     ]:
         assert probability_column in predictions_df.columns
+    assert 'prob_score_2_5' not in predictions_df.columns
     assert {
         'expected_score',
         'top_two_margin',
@@ -419,6 +426,7 @@ def test_evaluate_embedding_table_runs_with_grouped_subject_splits(tmp_path: Pat
     metrics = json.loads(artifacts['metrics'].read_text(encoding='utf-8'))
     assert metrics['n_examples'] == len(embedding_df)
     assert metrics['n_subject_groups'] == 4
+    assert metrics['grouping_key'] == 'subject_id'
     assert metrics['ordinal_model']['estimator_class'] == 'CanonicalOrdinalClassifier'
     assert metrics['stability']['zero_unresolved_warning_gate_passed'] is True
     assert metrics['cohort_profile']['embedding_dim'] == 3
@@ -431,3 +439,71 @@ def test_evaluate_embedding_table_runs_with_grouped_subject_splits(tmp_path: Pat
     html = artifacts['review_html'].read_text(encoding='utf-8')
     assert 'descriptive audit signals' in html
     assert html.count('class="example-card"') == 7
+
+    for key in [
+        'burden_predictions',
+        'burden_metrics',
+        'threshold_metrics',
+        'threshold_support',
+        'calibration_bins',
+        'uncertainty_calibration',
+        'grouping_audit',
+        'prediction_explanations',
+        'nearest_examples',
+        'cohort_metrics',
+        'group_summary_intervals',
+        'final_model_predictions',
+        'final_model_cohort_metrics',
+        'final_model_group_summary_intervals',
+        'signal_comparator_metrics',
+        'subject_level_candidate_predictions',
+        'precision_candidate_summary',
+        'burden_model',
+        'quantification_review_html',
+        'quantification_review_examples',
+        'quantification_results_summary_md',
+        'quantification_results_summary_csv',
+        'quantification_readme_snippet',
+    ]:
+        assert artifacts[key].exists(), key
+
+    burden_predictions = pd.read_csv(artifacts['burden_predictions'])
+    assert {
+        'prob_score_gt_0',
+        'prob_score_gt_0p5',
+        'prob_score_gt_1',
+        'prob_score_gt_1p5',
+        'prob_score_gt_2',
+        'endotheliosis_burden_0_100',
+        'prediction_set_scores',
+        'burden_interval_low_0_100',
+        'burden_interval_high_0_100',
+    }.issubset(burden_predictions.columns)
+    assert (
+        burden_predictions['prob_score_gt_0'] >= burden_predictions['prob_score_gt_0p5']
+    ).all()
+    assert (
+        burden_predictions['prob_score_gt_0p5'] >= burden_predictions['prob_score_gt_1']
+    ).all()
+
+    review_html = artifacts['quantification_review_html'].read_text(encoding='utf-8')
+    assert 'Operational Verdict' in review_html
+    assert 'Final Full-Cohort Summaries' in review_html
+    assert 'Reviewer Examples' in review_html
+    assert 'predictive ordinal stage-burden index' in review_html
+    assert 'Endotheliosis burden index (0-100)' in review_html
+    assert 'Comparator Summaries' in review_html
+    assert 'Precision Candidate Screen' in review_html
+    assert 'Direct stage-index regression' in review_html
+    assert 'held_out_grouped_fold_prediction' in review_html
+    assert 'burden_model/burden_predictions.csv' in review_html
+    assert 'burden_model/final_model_predictions.csv' in review_html
+
+    review_examples = pd.read_csv(artifacts['quantification_review_examples'])
+    assert '_set_size' not in review_examples.columns
+    assert 'ordinal_fold' in review_examples.columns
+    assert review_examples['predicted_score'].notna().all()
+
+    snippet = artifacts['quantification_readme_snippet'].read_text(encoding='utf-8')
+    assert 'quantification_review/quantification_review.html' not in snippet
+    assert 'README/docs-ready' in snippet

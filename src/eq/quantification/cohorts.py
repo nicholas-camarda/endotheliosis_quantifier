@@ -17,7 +17,9 @@ import pandas as pd
 
 from eq.utils.paths import (
     get_active_runtime_root,
+    get_dox_assignment_workbook_path,
     get_dox_label_studio_export_path,
+    get_dox_score_workbook_path,
     get_mr_image_root_path,
     get_mr_score_workbook_path,
     get_runtime_cohort_manifest_path,
@@ -55,6 +57,12 @@ HUMAN_OPTIONAL_COLUMNS = (
     'source_score_row',
     'source_batch',
     'source_date',
+    'source_alt_sample_id',
+    'source_assignment_group',
+    'source_identity_workbook',
+    'source_identity_sheet',
+    'source_score_audit_workbook',
+    'source_score_audit_status',
     'score_reduction_method',
     'replicate_count',
 )
@@ -70,6 +78,11 @@ GENERATED_COLUMNS = (
     'mask_sha256',
     'mapping_review_status',
     'discovery_surfaces',
+    'subject_id',
+    'sample_id',
+    'replicate_id',
+    'image_id',
+    'identity_resolution',
 )
 ENRICHED_MANIFEST_COLUMNS = tuple(
     dict.fromkeys(
@@ -543,6 +556,29 @@ def summarize_manifest(manifest: pd.DataFrame) -> dict[str, Any]:
         'lane_counts': manifest['lane_assignment'].value_counts(dropna=False).to_dict()
         if 'lane_assignment' in manifest
         else {},
+        'identity_contract': {
+            'subject_key': 'subject_id',
+            'sample_key': 'sample_id',
+            'image_key': 'image_id',
+            'n_subjects': int(manifest['subject_id'].nunique())
+            if 'subject_id' in manifest
+            else 0,
+            'n_samples': int(manifest['sample_id'].nunique())
+            if 'sample_id' in manifest
+            else 0,
+            'n_images': int(manifest['image_id'].nunique())
+            if 'image_id' in manifest
+            else 0,
+            'duplicate_image_ids': sorted(
+                manifest.loc[
+                    manifest['image_id'].astype(str).duplicated(keep=False), 'image_id'
+                ]
+                .astype(str)
+                .unique()
+            )
+            if 'image_id' in manifest
+            else [],
+        },
     }
 
 
@@ -756,6 +792,298 @@ def treatment_group_from_dox_sample(sample_id: str) -> str:
         'D': 'sor_plus_dox',
         'L': 'sor_plus_lis',
     }.get(prefix, '')
+
+
+def _normalize_dox_group(value: Any) -> str:
+    text = _clean_str(value).lower().replace('&', 'and')
+    text = re.sub(r'\s+', ' ', text)
+    return {
+        'vehicle': 'vehicle',
+        'sorafenib': 'sorafenib',
+        'sor + dox': 'sor_plus_dox',
+        'sor and dox': 'sor_plus_dox',
+        'sor + lis': 'sor_plus_lis',
+        'sor and lis': 'sor_plus_lis',
+    }.get(text, _slug(text) if text else '')
+
+
+def _assignment_sheet_date(sheet_name: str) -> str:
+    text = _clean_str(sheet_name)
+    match = re.fullmatch(r'(?P<month>[0-9]{2})-(?P<day>[0-9]{2})-(?P<year>[0-9]{2})', text)
+    if not match:
+        return text
+    return f'20{match.group("year")}-{match.group("month")}-{match.group("day")}'
+
+
+def load_dox_assignment_table(workbook_path: Path | None = None) -> pd.DataFrame:
+    """Load the Dox assignment workbook as the authoritative sample identity table."""
+    workbook_path = Path(workbook_path) if workbook_path else get_dox_assignment_workbook_path()
+    if not workbook_path.exists():
+        return pd.DataFrame(
+            columns=[
+                'source_sample_id',
+                'source_date',
+                'source_alt_sample_id',
+                'source_assignment_group',
+                'source_identity_workbook',
+                'source_identity_sheet',
+            ]
+        )
+
+    rows: list[dict[str, str]] = []
+    sheets = pd.read_excel(workbook_path, sheet_name=None)
+    for sheet_name, sheet in sheets.items():
+        if 'SampleID' not in sheet.columns:
+            continue
+        for _, row_dict in sheet.iterrows():
+            sample_id = _clean_excel_label(row_dict.get('SampleID'))
+            if not sample_id:
+                continue
+            rows.append(
+                {
+                    'source_sample_id': sample_id,
+                    'source_date': _assignment_sheet_date(sheet_name),
+                    'source_alt_sample_id': _clean_excel_label(
+                        row_dict.get('Alt_SampleID', row_dict.get('Alt SampleID', ''))
+                    ),
+                    'source_assignment_group': _normalize_dox_group(
+                        row_dict.get('Group')
+                    ),
+                    'source_identity_workbook': str(workbook_path),
+                    'source_identity_sheet': _clean_str(sheet_name),
+                }
+            )
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return table
+    duplicates = table['source_sample_id'].duplicated(keep=False)
+    if duplicates.any():
+        duplicated_ids = sorted(table.loc[duplicates, 'source_sample_id'].unique())
+        raise CohortManifestError(
+            f'dox_assignment_duplicate_sample_ids:{duplicated_ids[:10]}'
+        )
+    return table
+
+
+def attach_dox_assignment_metadata(
+    manifest: pd.DataFrame, *, workbook_path: Path | None = None
+) -> pd.DataFrame:
+    """Attach Dox source-date, alternate ID, and treatment group from Rand_Assign."""
+    result = manifest.copy()
+    assignment = load_dox_assignment_table(workbook_path)
+    if assignment.empty:
+        return result
+    result = result.merge(
+        assignment,
+        on='source_sample_id',
+        how='left',
+        suffixes=('', '_assignment'),
+    )
+    matched = result['source_identity_sheet'].notna()
+    for column in (
+        'source_date',
+        'source_alt_sample_id',
+        'source_assignment_group',
+        'source_identity_workbook',
+        'source_identity_sheet',
+    ):
+        assignment_column = f'{column}_assignment'
+        if assignment_column in result.columns:
+            result[column] = np.where(
+                result[assignment_column].notna(),
+                result[assignment_column],
+                result[column] if column in result.columns else '',
+            )
+            result = result.drop(columns=[assignment_column])
+    result.loc[matched, 'treatment_group'] = result.loc[
+        matched, 'source_assignment_group'
+    ]
+    result.loc[matched, 'discovery_surfaces'] = (
+        result.loc[matched, 'discovery_surfaces'].fillna('').astype(str)
+        + ';Rand_Assign.xlsx'
+    ).str.strip(';')
+    return result
+
+
+def _source_image_stem(row: pd.Series) -> str:
+    image_name = _clean_str(row.get('source_image_name'))
+    if image_name:
+        return Path(image_name).stem
+    image_path = _clean_str(row.get('image_path'))
+    if image_path:
+        return Path(image_path).stem
+    return _clean_str(row.get('source_sample_id') or row.get('manifest_row_id'))
+
+
+def _source_image_replicate(row: pd.Series) -> str:
+    stem = _source_image_stem(row)
+    match = re.search(r'(?:_Image|image)(?P<replicate>[A-Za-z0-9]+)$', stem, flags=re.IGNORECASE)
+    if match:
+        return f'image{match.group("replicate")}'
+    return _slug(stem)
+
+
+def apply_manifest_identity_contract(manifest: pd.DataFrame) -> pd.DataFrame:
+    """Write unambiguous subject/sample/image identity columns into the manifest."""
+    result = manifest.copy()
+    for column in ('subject_id', 'sample_id', 'replicate_id', 'image_id', 'identity_resolution'):
+        if column not in result.columns:
+            result[column] = ''
+
+    for index, row in result.iterrows():
+        cohort_id = _slug(row.get('cohort_id'))
+        source_sample_id = _clean_str(row.get('source_sample_id'))
+        source_date = _clean_str(row.get('source_date'))
+        source_batch = _clean_str(row.get('source_batch'))
+        replicate_id = _source_image_replicate(row)
+
+        if cohort_id == 'vegfri_dox' and source_sample_id and source_date:
+            subject_token = f'{_slug(source_date)}__{_slug(source_sample_id)}'
+            resolution = 'dox_rand_assign_subject_preserving'
+        elif cohort_id == 'lauren_preeclampsia' and source_sample_id:
+            subject_token = _slug(source_sample_id.split('_Image', 1)[0])
+            resolution = 'labelstudio_source_sample_subject'
+        elif source_sample_id:
+            batch_token = _slug(source_batch or source_date or 'unbatched')
+            subject_token = f'{batch_token}__{_slug(source_sample_id)}'
+            resolution = 'manifest_source_sample_batch_preserving'
+        else:
+            subject_token = _slug(_source_image_stem(row))
+            resolution = 'manifest_image_stem_subject'
+
+        subject_id = f'{cohort_id}__{subject_token}'
+        sample_id = f'{subject_id}__{replicate_id}'
+        row_token = _slug(row.get('manifest_row_id') or index)
+        image_id = f'{sample_id}__{row_token}'
+        result.at[index, 'subject_id'] = subject_id
+        result.at[index, 'sample_id'] = sample_id
+        result.at[index, 'replicate_id'] = replicate_id
+        result.at[index, 'image_id'] = image_id
+        result.at[index, 'identity_resolution'] = resolution
+
+    duplicate_images = result['image_id'].astype(str).duplicated(keep=False)
+    if duplicate_images.any():
+        duplicate_values = sorted(result.loc[duplicate_images, 'image_id'].astype(str).unique())
+        raise CohortManifestError(
+            f'duplicate_manifest_image_id:{duplicate_values[:10]}'
+        )
+    return result
+
+
+def apply_dox_score_workbook_audit(
+    manifest: pd.DataFrame,
+    *,
+    runtime_root: Path | None = None,
+    workbook_path: Path | None = None,
+) -> pd.DataFrame:
+    """Compare Dox manifest scores against the maintained image-level score workbook."""
+    runtime_root = Path(runtime_root) if runtime_root else get_active_runtime_root()
+    workbook_path = Path(workbook_path) if workbook_path else get_dox_score_workbook_path()
+    result = manifest.copy()
+    for column in ('source_score_audit_workbook', 'source_score_audit_status'):
+        if column not in result.columns:
+            result[column] = ''
+
+    dox_mask = result['cohort_id'].astype(str).eq('vegfri_dox')
+    if not dox_mask.any():
+        return result
+    if not workbook_path.exists():
+        result.loc[dox_mask, 'source_score_audit_status'] = 'workbook_missing'
+        return result
+
+    score_table = pd.read_excel(workbook_path, sheet_name='Sheet1')
+    required = {'Image', 'Score', 'SampleID'}
+    missing = sorted(required.difference(score_table.columns))
+    if missing:
+        raise CohortManifestError(
+            f'dox_score_workbook_missing_columns:{",".join(missing)}'
+        )
+    score_table = score_table.copy()
+    score_table['source_image_stem'] = score_table['Image'].map(_clean_str)
+    score_table['source_sample_id'] = score_table['SampleID'].map(_clean_excel_label)
+    score_table['score_workbook_score'] = pd.to_numeric(
+        score_table['Score'], errors='coerce'
+    )
+    duplicates = score_table.duplicated(
+        subset=['source_sample_id', 'source_image_stem'], keep=False
+    )
+    if duplicates.any():
+        duplicate_keys = score_table.loc[
+            duplicates, ['source_sample_id', 'source_image_stem']
+        ].drop_duplicates()
+        raise CohortManifestError(
+            'dox_score_workbook_duplicate_image_scores:'
+            + duplicate_keys.head(10).to_dict(orient='records').__repr__()
+        )
+
+    lookup = score_table.set_index(['source_sample_id', 'source_image_stem'])[
+        'score_workbook_score'
+    ]
+    audit_rows: list[dict[str, Any]] = []
+    audit_rel = _runtime_relative(workbook_path, runtime_root)
+    for index, row in result.loc[dox_mask].iterrows():
+        sample_id = _clean_str(row.get('source_sample_id'))
+        image_stem = _source_image_stem(row)
+        key = (sample_id, image_stem)
+        manifest_score = _coerce_score(row.get('score'))
+        workbook_score = lookup.get(key, np.nan)
+        if manifest_score is None:
+            status = 'manifest_score_missing'
+        elif pd.isna(workbook_score):
+            status = 'workbook_score_missing'
+        elif np.isclose(float(manifest_score), float(workbook_score)):
+            status = 'matched'
+        else:
+            status = 'mismatch'
+
+        result.at[index, 'source_score_audit_workbook'] = audit_rel
+        result.at[index, 'source_score_audit_status'] = status
+        audit_rows.append(
+            {
+                'manifest_row_id': _clean_str(row.get('manifest_row_id')),
+                'cohort_id': 'vegfri_dox',
+                'source_sample_id': sample_id,
+                'source_image_stem': image_stem,
+                'manifest_score': manifest_score if manifest_score is not None else '',
+                'workbook_score': ''
+                if pd.isna(workbook_score)
+                else float(workbook_score),
+                'audit_status': status,
+                'admission_status': _clean_str(row.get('admission_status')),
+                'score_workbook': str(workbook_path),
+            }
+        )
+
+    metadata_dir = runtime_root / 'raw_data' / 'cohorts' / 'vegfri_dox' / 'metadata'
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    audit = pd.DataFrame(audit_rows)
+    audit_path = metadata_dir / 'score_workbook_agreement.csv'
+    audit.to_csv(audit_path, index=False)
+    summary = {
+        'score_workbook': str(workbook_path),
+        'audit_path': _runtime_relative(audit_path, runtime_root),
+        'rows': int(len(audit)),
+        'status_counts': audit['audit_status'].value_counts(dropna=False).to_dict()
+        if not audit.empty
+        else {},
+        'admitted_status_counts': audit.loc[
+            audit['admission_status'].eq('admitted'), 'audit_status'
+        ].value_counts(dropna=False).to_dict()
+        if not audit.empty
+        else {},
+    }
+    summary_path = metadata_dir / 'score_workbook_agreement_summary.json'
+    summary_path.write_text(json.dumps(summary, indent=2), encoding='utf-8')
+    admitted_failures = audit[
+        audit['admission_status'].eq('admitted')
+        & audit['audit_status'].eq('mismatch')
+    ]
+    if not admitted_failures.empty:
+        raise CohortManifestError(
+            'dox_admitted_score_workbook_disagreement:'
+            + admitted_failures.head(10).to_dict(orient='records').__repr__()
+        )
+    return result
 
 
 def _load_label_studio_choice_scores(annotation_source: Path) -> pd.DataFrame:
@@ -972,8 +1300,8 @@ def build_dox_runtime_cohort(
             }
         )
     if foreign_rows:
-        return pd.concat([merged, pd.DataFrame(foreign_rows)], ignore_index=True)
-    return merged
+        merged = pd.concat([merged, pd.DataFrame(foreign_rows)], ignore_index=True)
+    return attach_dox_assignment_metadata(merged)
 
 
 def inventory_lauren_preeclampsia_from_score_table(
@@ -1839,8 +2167,13 @@ def build_current_accessible_cohorts(
 
     enriched = enrich_unified_manifest(manifest, runtime_root=runtime_root)
     verified = verify_mapping_bundle(enriched, runtime_root=runtime_root)
-    policy_applied = apply_dox_mask_quality_approval(
-        apply_discovery_reconciliation(apply_cohort_admission_policy(verified)),
+    policy_applied = apply_dox_score_workbook_audit(
+        apply_manifest_identity_contract(
+            apply_dox_mask_quality_approval(
+                apply_discovery_reconciliation(apply_cohort_admission_policy(verified)),
+                runtime_root=runtime_root,
+            )
+        ),
         runtime_root=runtime_root,
     )
     manifest_path = write_unified_manifest(
