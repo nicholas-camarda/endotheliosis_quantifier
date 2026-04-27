@@ -16,7 +16,7 @@ This directory contains the current documentation set for the repository.
 ## Lab And Internal Notes
 
 - [TECHNICAL_LAB_NOTEBOOK.md](TECHNICAL_LAB_NOTEBOOK.md)
-  Lab-style status notes covering local cohort-manifest state, the checked-in segmentation snapshot, quantification status, and implementation caveats. This is a lab notebook, not the front-door workflow guide.
+  Lab-style status notes covering local cohort-manifest state, the checked-in segmentation snapshot, exploratory quantification status, candidate-screen interpretation, and implementation caveats. This is a lab notebook, not the front-door workflow guide.
 
 ## Historical Notes
 

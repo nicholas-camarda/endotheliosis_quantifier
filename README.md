@@ -36,7 +36,7 @@ The YAML is the control surface. In the common case, you should not need to stit
 | Scored cohort registry | `$EQ_RUNTIME_ROOT/raw_data/cohorts/manifest.csv` |
 | Current quantification supervision | Image-level grades joined to image/mask pairs in the active scored cohort workflow |
 | Quantification ROI semantics | Full multi-component union ROI |
-| Quantification outputs | Frozen segmentation-encoder embeddings, burden-index predictions, comparator outputs, and combined review artifacts |
+| Quantification outputs | Frozen segmentation-encoder embeddings, exploratory burden-index predictions, comparator outputs, subject/cohort summaries, and combined review artifacts |
 
 ## Environment Contract
 
@@ -258,9 +258,11 @@ eq quant-endo \
 
 To quantify with a different candidate, use that candidate's `.pkl` path.
 
-The current maintained quantification path uses image-level grades joined to each image or mask pair. ROI extraction uses the full multi-component mask bounding box with context padding, then builds frozen segmentation-backbone embeddings. The primary model output is an endotheliosis burden index on a `0-100` ordinal stage scale, with direct stage-index regression and ordinal/multiclass outputs retained as comparators.
+The current maintained quantification path uses image-level grades joined to each image or mask pair. ROI extraction uses the full multi-component mask bounding box with context padding, then builds frozen segmentation-backbone embeddings. The primary model output is an exploratory endotheliosis burden index on a `0-100` ordinal stage scale, with direct stage-index regression and ordinal/multiclass outputs retained as comparators.
 
-The pipeline reports cohort-shape, biological-group support, calibration, uncertainty, and target-support metadata with each run. Treat these outputs as predictive image-level grade modeling unless the scored cohort provides the target support and validation evidence needed for a stronger scientific claim.
+The current burden-index model is not README/docs-ready as an operational model claim. It is useful for review and method development, but the latest full-cohort run still has broad per-image prediction sets, slight undercoverage against the nominal prediction-set target, and finite-output backend matrix warnings. Subject-level ROI aggregation is the strongest current follow-up direction for cohort summaries, while per-image prediction remains a separate calibration and feature-modeling problem.
+
+Endotheliosis is graded by assessing the relative amount of open versus collapsed capillary or arteriole lumina within the glomerulus. The maintained quantification path does not yet explicitly model open-lumen, collapsed-line, or erythrocyte-filled patent-lumen morphology. Candidate screens should not be confused with deployed models, and subject/cohort burden summaries should not be presented as proof that individual image scores are precise.
 
 Current quantification implementation surfaces:
 
@@ -275,7 +277,7 @@ Current quantification implementation surfaces:
 - `labelstudio_scores/` with recovered per-image grades and duplicate-resolution audit tables
 - `roi_crops/` with union-ROI crops over the full multi-component mask
 - `embeddings/` with frozen segmentation-encoder embeddings
-- `burden_model/` with burden predictions, threshold metrics, uncertainty calibration, grouping audit, support gates, nearest examples, cohort metrics, and animal-level summary intervals
+- `burden_model/` with exploratory burden predictions, threshold metrics, uncertainty calibration, grouping audit, support gates, nearest examples, cohort metrics, subject-level candidate screens, and summary intervals
 - `ordinal_model/` with comparator predictions, probabilities, metrics, confusion matrix, and `review_report/ordinal_review.html`
 - `quantification_review/` with combined HTML review, reviewer examples, concrete result summaries, and a README/docs snippet from the current run; reuse the snippet only when the reported readiness flag and uncertainty checks pass
 

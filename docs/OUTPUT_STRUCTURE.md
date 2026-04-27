@@ -176,15 +176,44 @@ output/quantification_results/<cohort_id>/
 ├── scored_examples/
 ├── roi_crops/
 ├── embeddings/
-└── ordinal_model/
-    ├── ordinal_predictions.csv
-    ├── ordinal_metrics.json
-    ├── ordinal_confusion_matrix.csv
-    └── review_report/
-        ├── ordinal_review.html
-        ├── selected_examples.csv
-        └── assets/
+├── burden_model/
+│   ├── burden_model.joblib
+│   ├── burden_predictions.csv
+│   ├── final_model_predictions.csv
+│   ├── burden_metrics.json
+│   ├── uncertainty_calibration.json
+│   ├── threshold_metrics.csv
+│   ├── threshold_support.csv
+│   ├── cohort_metrics.csv
+│   ├── final_model_cohort_metrics.csv
+│   ├── group_summary_intervals.csv
+│   ├── final_model_group_summary_intervals.csv
+│   ├── cohort_stability.csv
+│   ├── grouping_audit.json
+│   ├── validation_design.json
+│   ├── prediction_explanations.csv
+│   ├── nearest_examples.csv
+│   ├── signal_comparator_metrics.csv
+│   ├── subject_level_candidate_predictions.csv
+│   └── precision_candidate_summary.json
+├── ordinal_model/
+│   ├── ordinal_predictions.csv
+│   ├── ordinal_metrics.json
+│   ├── ordinal_confusion_matrix.csv
+│   └── review_report/
+│       ├── ordinal_review.html
+│       ├── selected_examples.csv
+│       └── assets/
+└── quantification_review/
+    ├── quantification_review.html
+    ├── review_examples.csv
+    ├── results_summary.md
+    ├── results_summary.csv
+    ├── readme_results_snippet.md
+    └── assets/
 ```
+
+`burden_model/burden_model.joblib` is the serialized exploratory burden model artifact. Candidate-screen files such as `signal_comparator_metrics.csv`, `subject_level_candidate_predictions.csv`, and `precision_candidate_summary.json` are comparison and planning artifacts, not separately deployed models. Use `burden_predictions.csv` for held-out validation evidence and `final_model_predictions.csv` for final full-cohort fitted summaries.
 
 - `test_output/`
   Temporary files created by tests or debugging scripts.
