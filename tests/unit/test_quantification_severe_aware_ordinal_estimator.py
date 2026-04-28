@@ -210,6 +210,75 @@ def test_false_negative_review_is_interactive_adjudication_surface(tmp_path):
     assert '<img src="file://' in html
 
 
+def test_existing_false_negative_adjudications_are_summarized(tmp_path):
+    burden_root = tmp_path / 'burden_model'
+    _write_source_aware_handoff(burden_root)
+    adjudication_path = (
+        burden_root
+        / 'severe_aware_ordinal_estimator'
+        / 'evidence'
+        / 'severe_false_negative_adjudications.json'
+    )
+    adjudication_path.parent.mkdir(parents=True, exist_ok=True)
+    adjudication_path.write_text(
+        json.dumps(
+            [
+                {
+                    'subject_image_id': 'cohort_b__1_1',
+                    'grade_adjudication': 'grade_correct',
+                    'failure_source': 'valid_grade_model_miss',
+                    'review_confidence': 'high',
+                    'review_notes': '',
+                },
+                {
+                    'subject_image_id': 'cohort_b__2_0',
+                    'grade_adjudication': 'grade_too_high',
+                    'failure_source': 'not_severe_after_review',
+                    'review_confidence': 'medium',
+                    'review_notes': '1.5',
+                },
+            ]
+        ),
+        encoding='utf-8',
+    )
+
+    artifacts = evaluate_severe_aware_ordinal_endotheliosis_estimator(
+        _embedding_df(tmp_path), burden_root, n_splits=3
+    )
+
+    summary = json.loads(
+        artifacts['severe_aware_adjudication_summary'].read_text(encoding='utf-8')
+    )
+    adjudications = pd.read_csv(artifacts['severe_aware_adjudications_csv'])
+    verdict = json.loads(artifacts['severe_aware_estimator_verdict'].read_text())
+
+    assert summary['reviewed_count'] == 2
+    assert summary['adjudicated_still_severe_count'] == 1
+    assert summary['adjudicated_not_severe_count'] == 1
+    assert 'adjudicated_selected_threshold_metrics' in summary
+    assert (
+        'severe_false_negative_count'
+        in summary['adjudicated_selected_threshold_metrics']
+    )
+    rerun_verdict = json.loads(
+        artifacts['severe_aware_adjudicated_rerun_verdict'].read_text()
+    )
+    rerun_metrics = pd.read_csv(artifacts['severe_aware_adjudicated_rerun_metrics'])
+    assert (
+        rerun_verdict['overall_status']
+        == 'adjudicated_current_data_severe_threshold_rerun'
+    )
+    assert not rerun_metrics.empty
+    assert set(rerun_metrics['split_label']) == {
+        'validation_subject_heldout_adjudicated'
+    }
+    assert adjudications['proposed_score'].dropna().tolist() == [1.5]
+    assert (
+        verdict['next_action']
+        == 'rerun_or_interpret_p2_with_adjudicated_severe_false_negative_labels'
+    )
+
+
 def test_nonfinite_predictions_are_hard_failures(tmp_path, monkeypatch):
     def nonfinite_fit(*args, **kwargs):
         df = args[0]

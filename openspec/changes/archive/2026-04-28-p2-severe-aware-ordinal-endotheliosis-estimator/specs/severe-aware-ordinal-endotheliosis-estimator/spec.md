@@ -167,6 +167,33 @@ The estimator SHALL make severe underprediction visible as a first-class failure
 - **THEN** `summary/estimator_verdict.json` SHALL list severe underprediction as a scope limiter or hard blocker depending on severity and output claim
 - **AND** the combined review SHALL not describe scalar burden estimates as reliable for severe endotheliosis
 
+#### Scenario: Reviewer adjudications are ingested and summarized
+- **WHEN** `burden_model/severe_aware_ordinal_estimator/evidence/severe_false_negative_adjudications.json` exists
+- **THEN** the evaluator SHALL treat it as reviewer-provided adjudication evidence for severe false negatives
+- **AND** the evaluator SHALL preserve that JSON artifact
+- **AND** it SHALL write `evidence/severe_false_negative_adjudications.csv`
+- **AND** it SHALL write `evidence/severe_false_negative_adjudication_summary.json`
+- **AND** it SHALL write `evidence/severe_false_negative_adjudication_summary.md`
+- **AND** the summary SHALL count grade adjudications, failure sources, confidence labels, adjudicated still-severe false negatives, and false negatives removed from the severe-positive set
+- **AND** the summary SHALL recompute selected-threshold severe recall, precision, false-negative count, and false-negative rate after replacing reviewed false-negative labels with adjudicated severe-positive status
+- **AND** the verdict SHALL include the adjudication summary and SHALL update the next action when adjudication evidence is present
+
+#### Scenario: Missing reviewer adjudications produce empty review artifacts
+- **WHEN** no `evidence/severe_false_negative_adjudications.json` exists before evaluation
+- **THEN** the evaluator SHALL write an empty adjudication JSON list and corresponding empty CSV/summary artifacts
+- **AND** manifest completeness SHALL not depend on manual review having happened
+
+#### Scenario: Adjudicated label rerun is severe-threshold scoped
+- **WHEN** reviewer adjudication evidence exists
+- **THEN** the evaluator SHALL write a contained `adjudicated_label_rerun/` subtree
+- **AND** it SHALL write `adjudicated_label_rerun/summary/metrics_by_split.csv`
+- **AND** it SHALL write `adjudicated_label_rerun/summary/metrics_by_split.json`
+- **AND** it SHALL write `adjudicated_label_rerun/summary/verdict.json`
+- **AND** it SHALL write `adjudicated_label_rerun/summary/verdict.md`
+- **AND** it SHALL write `adjudicated_label_rerun/predictions/image_predictions.csv`
+- **AND** the rerun SHALL model only adjudicated `score >= 2` severe-threshold status
+- **AND** it SHALL NOT present the adjudicated rerun as a full ordinal burden estimator, segmentation improvement result, or external validation
+
 ### Requirement: Split labels distinguish training validation and testing
 The severe-aware estimator SHALL report training/apparent, validation, and testing metrics with explicit split labels.
 

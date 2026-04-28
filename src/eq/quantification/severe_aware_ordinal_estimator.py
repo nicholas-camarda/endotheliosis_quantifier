@@ -69,6 +69,15 @@ REQUIRED_RELATIVE_ARTIFACTS = [
     'diagnostics/source_severe_sensitivity.json',
     'diagnostics/reliability_labels.json',
     'evidence/severe_false_negative_review.html',
+    'evidence/severe_false_negative_adjudications.json',
+    'evidence/severe_false_negative_adjudications.csv',
+    'evidence/severe_false_negative_adjudication_summary.json',
+    'evidence/severe_false_negative_adjudication_summary.md',
+    'adjudicated_label_rerun/summary/metrics_by_split.csv',
+    'adjudicated_label_rerun/summary/metrics_by_split.json',
+    'adjudicated_label_rerun/summary/verdict.json',
+    'adjudicated_label_rerun/summary/verdict.md',
+    'adjudicated_label_rerun/predictions/image_predictions.csv',
     'internal/candidate_metrics.csv',
     'internal/candidate_summary.json',
 ]
@@ -150,6 +159,43 @@ def severe_aware_output_paths(burden_output_dir: Path) -> dict[str, Path]:
         / 'source_severe_sensitivity.json',
         'reliability_labels': root / 'diagnostics' / 'reliability_labels.json',
         'evidence_review': root / 'evidence' / 'severe_false_negative_review.html',
+        'adjudications_json': root
+        / 'evidence'
+        / 'severe_false_negative_adjudications.json',
+        'adjudications_csv': root
+        / 'evidence'
+        / 'severe_false_negative_adjudications.csv',
+        'adjudication_summary_json': root
+        / 'evidence'
+        / 'severe_false_negative_adjudication_summary.json',
+        'adjudication_summary_md': root
+        / 'evidence'
+        / 'severe_false_negative_adjudication_summary.md',
+        'adjudicated_rerun': root / 'adjudicated_label_rerun',
+        'adjudicated_rerun_summary': root / 'adjudicated_label_rerun' / 'summary',
+        'adjudicated_rerun_predictions': root
+        / 'adjudicated_label_rerun'
+        / 'predictions',
+        'adjudicated_rerun_metrics_csv': root
+        / 'adjudicated_label_rerun'
+        / 'summary'
+        / 'metrics_by_split.csv',
+        'adjudicated_rerun_metrics_json': root
+        / 'adjudicated_label_rerun'
+        / 'summary'
+        / 'metrics_by_split.json',
+        'adjudicated_rerun_verdict_json': root
+        / 'adjudicated_label_rerun'
+        / 'summary'
+        / 'verdict.json',
+        'adjudicated_rerun_verdict_md': root
+        / 'adjudicated_label_rerun'
+        / 'summary'
+        / 'verdict.md',
+        'adjudicated_rerun_image_predictions': root
+        / 'adjudicated_label_rerun'
+        / 'predictions'
+        / 'image_predictions.csv',
         'candidate_metrics': root / 'internal' / 'candidate_metrics.csv',
         'candidate_summary': root / 'internal' / 'candidate_summary.json',
     }
@@ -270,6 +316,14 @@ def _assemble_feature_table(
     feature_df = _merge_optional_feature_table(
         feature_df,
         Path(burden_output_dir) / 'feature_sets' / 'morphology_features.csv',
+        ('morph_',),
+    )
+    feature_df = _merge_optional_feature_table(
+        feature_df,
+        Path(burden_output_dir)
+        / 'primary_burden_index'
+        / 'feature_sets'
+        / 'morphology_features.csv',
         ('morph_',),
     )
     feature_df = _merge_optional_feature_table(
@@ -1057,6 +1111,422 @@ def _write_evidence_review(
     path.write_text(html, encoding='utf-8')
 
 
+def _parse_proposed_score(value: Any) -> float | None:
+    text = str(value or '').strip()
+    if not text:
+        return None
+    if '-' in text:
+        parts = [part.strip() for part in text.split('-', maxsplit=1)]
+        numeric = []
+        for part in parts:
+            if not part:
+                continue
+            try:
+                numeric.append(float(part))
+            except ValueError:
+                return None
+        return float(sum(numeric) / len(numeric)) if numeric else None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _load_adjudication_rows(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(payload, list):
+        raise SevereAwareEstimatorError(
+            f'Adjudication JSON must contain a list: {path}'
+        )
+    rows: list[dict[str, Any]] = []
+    for index, item in enumerate(payload, start=1):
+        if not isinstance(item, dict):
+            raise SevereAwareEstimatorError(
+                f'Adjudication row {index} is not an object: {path}'
+            )
+        subject_image_id = str(item.get('subject_image_id', '')).strip()
+        if not subject_image_id:
+            raise SevereAwareEstimatorError(
+                f'Adjudication row {index} is missing subject_image_id: {path}'
+            )
+        rows.append(
+            {
+                'subject_image_id': subject_image_id,
+                'grade_adjudication': str(item.get('grade_adjudication', '')).strip(),
+                'failure_source': str(item.get('failure_source', '')).strip(),
+                'review_confidence': str(item.get('review_confidence', '')).strip(),
+                'review_notes': str(item.get('review_notes', '')).strip(),
+            }
+        )
+    return rows
+
+
+def _write_adjudication_summary_md(path: Path, summary: dict[str, Any]) -> None:
+    lines = [
+        '# Severe False-Negative Adjudication Summary',
+        '',
+        f'Reviewed false negatives: `{summary["reviewed_count"]}`.',
+        f'Adjudicated still severe: `{summary["adjudicated_still_severe_count"]}`.',
+        f'Adjudicated not severe: `{summary["adjudicated_not_severe_count"]}`.',
+        f'Adjudicated selected-threshold recall: `{summary["adjudicated_selected_threshold_metrics"]["severe_recall"]}`.',
+        f'Adjudicated selected-threshold false negatives: `{summary["adjudicated_selected_threshold_metrics"]["severe_false_negative_count"]}`.',
+        '',
+        '## Grade Adjudication Counts',
+        '',
+    ]
+    for key, value in summary['grade_adjudication_counts'].items():
+        lines.append(f'- `{key or "blank"}`: {value}')
+    lines.extend(['', '## Failure Source Counts', ''])
+    for key, value in summary['failure_source_counts'].items():
+        lines.append(f'- `{key or "blank"}`: {value}')
+    lines.extend(['', '## Interpretation', '', str(summary['interpretation'])])
+    path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+
+def _write_adjudication_outputs(
+    paths: dict[str, Path], predictions: pd.DataFrame
+) -> dict[str, Any]:
+    rows = _load_adjudication_rows(paths['adjudications_json'])
+    if not paths['adjudications_json'].exists():
+        _save_json(rows, paths['adjudications_json'])
+    adjudications = pd.DataFrame(
+        rows,
+        columns=[
+            'subject_image_id',
+            'grade_adjudication',
+            'failure_source',
+            'review_confidence',
+            'review_notes',
+        ],
+    )
+    if adjudications.empty:
+        adjudications['proposed_score'] = pd.Series(dtype='float64')
+        adjudications['adjudicated_severe_positive'] = pd.Series(dtype='bool')
+        adjudications['original_score'] = pd.Series(dtype='float64')
+        adjudications['original_severe_false_negative'] = pd.Series(dtype='bool')
+    else:
+        adjudications['proposed_score'] = adjudications['review_notes'].map(
+            _parse_proposed_score
+        )
+        adjudications['adjudicated_severe_positive'] = ~adjudications[
+            'grade_adjudication'
+        ].isin(['grade_too_high', 'exclude_or_bad_image'])
+        adjudications.loc[
+            adjudications['failure_source'].eq('not_severe_after_review'),
+            'adjudicated_severe_positive',
+        ] = False
+        adjudications.loc[
+            adjudications['grade_adjudication'].eq('grade_too_low'),
+            'adjudicated_severe_positive',
+        ] = True
+        joined = predictions[
+            [
+                'subject_image_id',
+                'score',
+                'predicted_stage_index',
+                'severe_probability',
+                'severe_predicted_label',
+                'cohort_id',
+                'subject_id',
+            ]
+        ].copy()
+        joined = joined.rename(columns={'score': 'original_score'})
+        adjudications = adjudications.merge(
+            joined, on='subject_image_id', how='left', validate='one_to_one'
+        )
+        adjudications['original_severe_false_negative'] = adjudications[
+            'original_score'
+        ].astype(float).ge(PRIMARY_SEVERE_THRESHOLD) & ~adjudications[
+            'severe_predicted_label'
+        ].astype(bool)
+    adjudications.to_csv(paths['adjudications_csv'], index=False)
+    reviewed_count = int(len(adjudications))
+    still_severe_count = int(
+        adjudications['adjudicated_severe_positive'].fillna(False).sum()
+    )
+    not_severe_count = int(reviewed_count - still_severe_count)
+    observed_original = predictions['score'].astype(float).ge(PRIMARY_SEVERE_THRESHOLD)
+    observed_adjudicated = observed_original.copy()
+    if not adjudications.empty:
+        adjudicated_map = adjudications.set_index('subject_image_id')[
+            'adjudicated_severe_positive'
+        ].to_dict()
+        observed_adjudicated = (
+            predictions['subject_image_id']
+            .map(adjudicated_map)
+            .where(
+                predictions['subject_image_id'].isin(adjudicated_map), observed_original
+            )
+        )
+        observed_adjudicated = observed_adjudicated.astype(bool)
+    predicted = predictions['severe_predicted_label'].astype(bool)
+    adjudicated_positive_count = int(observed_adjudicated.sum())
+    adjudicated_tp = int((observed_adjudicated & predicted).sum())
+    adjudicated_fp = int((~observed_adjudicated & predicted).sum())
+    adjudicated_fn = int((observed_adjudicated & ~predicted).sum())
+    summary = {
+        'reviewed_count': reviewed_count,
+        'grade_adjudication_counts': adjudications['grade_adjudication']
+        .fillna('')
+        .value_counts()
+        .sort_index()
+        .to_dict(),
+        'failure_source_counts': adjudications['failure_source']
+        .fillna('')
+        .value_counts()
+        .sort_index()
+        .to_dict(),
+        'confidence_counts': adjudications['review_confidence']
+        .fillna('')
+        .value_counts()
+        .sort_index()
+        .to_dict(),
+        'adjudicated_still_severe_count': still_severe_count,
+        'adjudicated_not_severe_count': not_severe_count,
+        'adjudicated_severe_false_negative_count': still_severe_count,
+        'adjudicated_removed_from_severe_false_negative_count': not_severe_count,
+        'adjudicated_selected_threshold_metrics': {
+            'threshold': PRIMARY_SEVERE_THRESHOLD,
+            'positive_rows': adjudicated_positive_count,
+            'severe_recall': float(adjudicated_tp / adjudicated_positive_count)
+            if adjudicated_positive_count
+            else None,
+            'severe_precision': float(
+                adjudicated_tp / (adjudicated_tp + adjudicated_fp)
+            )
+            if (adjudicated_tp + adjudicated_fp)
+            else None,
+            'severe_false_negative_count': adjudicated_fn,
+            'severe_false_negative_rate': float(
+                adjudicated_fn / adjudicated_positive_count
+            )
+            if adjudicated_positive_count
+            else None,
+        },
+        'inconsistent_rows': adjudications[
+            adjudications['grade_adjudication'].eq('grade_too_high')
+            & adjudications['failure_source'].eq('valid_grade_model_miss')
+        ]['subject_image_id']
+        .astype(str)
+        .tolist(),
+        'interpretation': (
+            'Adjudication indicates whether P2 false negatives remain true grade '
+            '2/3 misses after manual review. This is label-review evidence, not '
+            'external validation.'
+        ),
+    }
+    _save_json(summary, paths['adjudication_summary_json'])
+    _write_adjudication_summary_md(paths['adjudication_summary_md'], summary)
+    return summary
+
+
+def _adjudicated_label_frame(
+    feature_df: pd.DataFrame, adjudication_path: Path
+) -> pd.DataFrame:
+    rows = _load_adjudication_rows(adjudication_path)
+    adjudications = pd.DataFrame(rows)
+    adjusted = feature_df.copy()
+    adjusted['original_score'] = adjusted['score'].astype(float)
+    adjusted['adjudicated_severe_positive'] = adjusted['original_score'].ge(
+        PRIMARY_SEVERE_THRESHOLD
+    )
+    if not adjudications.empty:
+        adjudications['adjudicated_severe_positive'] = ~adjudications[
+            'grade_adjudication'
+        ].isin(['grade_too_high', 'exclude_or_bad_image'])
+        adjudications.loc[
+            adjudications['failure_source'].eq('not_severe_after_review'),
+            'adjudicated_severe_positive',
+        ] = False
+        adjudications.loc[
+            adjudications['grade_adjudication'].eq('grade_too_low'),
+            'adjudicated_severe_positive',
+        ] = True
+        label_map = adjudications.set_index('subject_image_id')[
+            'adjudicated_severe_positive'
+        ].to_dict()
+        reviewed = adjusted['subject_image_id'].isin(label_map)
+        adjusted.loc[reviewed, 'adjudicated_severe_positive'] = adjusted.loc[
+            reviewed, 'subject_image_id'
+        ].map(label_map)
+    adjusted['score'] = np.where(adjusted['adjudicated_severe_positive'], 2.0, 0.0)
+    adjusted['observed_stage_index'] = np.where(
+        adjusted['adjudicated_severe_positive'], 80.0, 0.0
+    )
+    return adjusted
+
+
+def _adjudicated_candidate_specs(
+    feature_support: dict[str, Any],
+) -> list[CandidateSpec]:
+    specs: list[CandidateSpec] = []
+    roi = tuple(feature_support['roi_qc']['columns'])
+    morph = tuple(feature_support['morphology']['columns'])
+    if roi:
+        specs.append(
+            CandidateSpec(
+                'adjudicated_severe_roi_qc_threshold',
+                'image',
+                'roi_qc',
+                'severe_threshold_logistic',
+                roi,
+                PRIMARY_SEVERE_THRESHOLD,
+            )
+        )
+    if morph:
+        specs.append(
+            CandidateSpec(
+                'adjudicated_severe_morphology_threshold',
+                'image',
+                'morphology',
+                'severe_threshold_logistic',
+                morph,
+                PRIMARY_SEVERE_THRESHOLD,
+            )
+        )
+    if roi and morph:
+        specs.append(
+            CandidateSpec(
+                'adjudicated_severe_roi_qc_morphology_threshold',
+                'image',
+                'roi_qc_morphology',
+                'severe_threshold_logistic',
+                tuple(dict.fromkeys([*roi, *morph])),
+                PRIMARY_SEVERE_THRESHOLD,
+            )
+        )
+    return specs
+
+
+def _write_adjudicated_label_rerun(
+    paths: dict[str, Path],
+    feature_df: pd.DataFrame,
+    feature_support: dict[str, Any],
+    n_splits: int,
+) -> dict[str, Any]:
+    for key in ['adjudicated_rerun_summary', 'adjudicated_rerun_predictions']:
+        paths[key].mkdir(parents=True, exist_ok=True)
+    if not _load_adjudication_rows(paths['adjudications_json']):
+        metrics = pd.DataFrame()
+        metrics.to_csv(paths['adjudicated_rerun_metrics_csv'], index=False)
+        _save_json([], paths['adjudicated_rerun_metrics_json'])
+        pd.DataFrame().to_csv(paths['adjudicated_rerun_image_predictions'], index=False)
+        verdict = {
+            'overall_status': 'no_reviewer_adjudications',
+            'selected_candidate': '',
+            'reportable_scope': 'none',
+            'claim_boundary': 'adjudicated rerun requires reviewer-provided severe false-negative adjudications',
+            'next_action': 'review_severe_false_negative_evidence_before_adjudicated_label_rerun',
+        }
+        _save_json(verdict, paths['adjudicated_rerun_verdict_json'])
+        paths['adjudicated_rerun_verdict_md'].write_text(
+            '\n'.join(
+                [
+                    '# Adjudicated Label Rerun Verdict',
+                    '',
+                    'Status: `no_reviewer_adjudications`.',
+                    'Selected candidate: ``.',
+                    'Reportable scope: `none`.',
+                    '',
+                    'Reviewer adjudications are required before this subtree can report an adjudicated severe-threshold rerun.',
+                ]
+            )
+            + '\n',
+            encoding='utf-8',
+        )
+        return verdict
+    adjusted = _adjudicated_label_frame(feature_df, paths['adjudications_json'])
+    specs = _adjudicated_candidate_specs(feature_support)
+    metrics_rows: list[dict[str, Any]] = []
+    predictions_by_candidate: dict[str, pd.DataFrame] = {}
+    for spec in specs:
+        predictions, messages = _fit_candidate_oof(adjusted, spec, n_splits)
+        predictions['original_score'] = adjusted['original_score'].to_numpy()
+        predictions['adjudicated_severe_positive'] = adjusted[
+            'adjudicated_severe_positive'
+        ].to_numpy()
+        predictions_by_candidate[spec.candidate_id] = predictions
+        metrics_rows.append(
+            _metric_row(
+                predictions,
+                spec,
+                split_label='validation_subject_heldout_adjudicated',
+                split_description='Grouped out-of-fold validation using adjudicated grade 2/3 labels',
+                eligible_for_model_selection=True,
+                warning_messages=messages,
+            )
+        )
+    metrics = pd.DataFrame(metrics_rows)
+    metrics.to_csv(paths['adjudicated_rerun_metrics_csv'], index=False)
+    _save_json(
+        metrics.to_dict(orient='records'), paths['adjudicated_rerun_metrics_json']
+    )
+    if metrics.empty:
+        verdict = {
+            'overall_status': 'no_adjudicated_candidates',
+            'selected_candidate': '',
+            'reportable_scope': 'none',
+        }
+        pd.DataFrame().to_csv(paths['adjudicated_rerun_image_predictions'], index=False)
+    else:
+        selected = str(
+            metrics.sort_values(
+                [
+                    'severe_false_negative_count',
+                    'severe_precision',
+                    'stage_index_mae',
+                    'candidate_id',
+                ],
+                ascending=[True, False, True, True],
+            ).iloc[0]['candidate_id']
+        )
+        selected_predictions = predictions_by_candidate[selected]
+        selected_predictions.to_csv(
+            paths['adjudicated_rerun_image_predictions'], index=False
+        )
+        selected_metrics = (
+            metrics[metrics['candidate_id'].eq(selected)].iloc[0].to_dict()
+        )
+        verdict = {
+            'overall_status': 'adjudicated_current_data_severe_threshold_rerun',
+            'selected_candidate': selected,
+            'reportable_scope': 'current_data_adjudicated_severe_threshold_only',
+            'target': 'adjudicated score >= 2 severe-aware label',
+            'selected_metrics': selected_metrics,
+            'claim_boundary': 'adjudicated current-data grade 2/3 severe-threshold evidence only; not ordinal burden, external validation, or segmentation improvement evidence',
+            'next_action': 'inspect_adjudicated_label_rerun_before_feature_engineering_change',
+        }
+    _save_json(verdict, paths['adjudicated_rerun_verdict_json'])
+    verdict_md = [
+        '# Adjudicated Label Rerun Verdict',
+        '',
+        f'Status: `{verdict["overall_status"]}`.',
+        f'Selected candidate: `{verdict.get("selected_candidate", "")}`.',
+        f'Reportable scope: `{verdict.get("reportable_scope", "")}`.',
+        '',
+        'This rerun uses reviewer-adjudicated grade 2/3 status for severe-threshold modeling only.',
+    ]
+    if 'selected_metrics' in verdict:
+        metrics_payload = verdict['selected_metrics']
+        verdict_md.extend(
+            [
+                '',
+                '## Selected Metrics',
+                '',
+                f'- severe recall: `{metrics_payload.get("severe_recall")}`',
+                f'- severe precision: `{metrics_payload.get("severe_precision")}`',
+                f'- severe false negatives: `{metrics_payload.get("severe_false_negative_count")}`',
+                f'- severe false-negative rate: `{metrics_payload.get("severe_false_negative_rate")}`',
+            ]
+        )
+    paths['adjudicated_rerun_verdict_md'].write_text(
+        '\n'.join(verdict_md) + '\n', encoding='utf-8'
+    )
+    return verdict
+
+
 def _evidence_review_css() -> str:
     return """
 body{font-family:Arial,sans-serif;margin:2rem;max-width:1440px;color:#111827}
@@ -1450,7 +1920,9 @@ def _artifact_manifest(root: Path) -> dict[str, Any]:
             }
         )
     actual = sorted(
-        str(path.relative_to(root)) for path in root.rglob('*') if path.is_file()
+        str(path.relative_to(root))
+        for path in root.rglob('*')
+        if path.is_file() and not any(part.startswith('.') for part in path.parts)
     )
     return {
         'root': str(root),
@@ -1738,6 +2210,12 @@ def evaluate_severe_aware_ordinal_endotheliosis_estimator(
         threshold_metrics = _write_severe_threshold_metrics(
             selected_image_predictions, paths['severe_threshold_metrics']
         )
+        adjudication_summary = _write_adjudication_outputs(
+            paths, selected_image_predictions
+        )
+        adjudicated_rerun_verdict = _write_adjudicated_label_rerun(
+            paths, feature_df, feature_support, n_splits
+        )
         source_sensitivity = _source_severe_sensitivity(
             selected_image_predictions, support
         )
@@ -1808,9 +2286,15 @@ def evaluate_severe_aware_ordinal_endotheliosis_estimator(
             'source_aware_handoff': source_handoff,
             'threshold_support_decisions': support,
             'reliability_label_definitions': reliability,
+            'severe_false_negative_adjudication': adjudication_summary,
+            'adjudicated_label_rerun': adjudicated_rerun_verdict,
             'next_action': 'review_severe_false_negative_evidence_before_upstream_segmentation_or_annotation_change',
             'claim_boundary': 'predictive grade-equivalent, severe-risk, or ordinal-set evidence for current scored MR TIFF/ROI data; not tissue percent, closed-capillary percent, causal evidence, or external validation',
         }
+        if adjudication_summary['reviewed_count']:
+            verdict['next_action'] = (
+                'rerun_or_interpret_p2_with_adjudicated_severe_false_negative_labels'
+            )
         selected_image_predictions.to_csv(paths['image_predictions'], index=False)
         if selected_subject_predictions.empty:
             pd.DataFrame().to_csv(paths['subject_predictions'], index=False)
@@ -1880,6 +2364,25 @@ def evaluate_severe_aware_ordinal_endotheliosis_estimator(
             ],
             'severe_aware_reliability_labels': paths['reliability_labels'],
             'severe_aware_evidence_review': paths['evidence_review'],
+            'severe_aware_adjudications_json': paths['adjudications_json'],
+            'severe_aware_adjudications_csv': paths['adjudications_csv'],
+            'severe_aware_adjudication_summary': paths['adjudication_summary_json'],
+            'severe_aware_adjudication_summary_md': paths['adjudication_summary_md'],
+            'severe_aware_adjudicated_rerun_metrics': paths[
+                'adjudicated_rerun_metrics_csv'
+            ],
+            'severe_aware_adjudicated_rerun_metrics_json': paths[
+                'adjudicated_rerun_metrics_json'
+            ],
+            'severe_aware_adjudicated_rerun_verdict': paths[
+                'adjudicated_rerun_verdict_json'
+            ],
+            'severe_aware_adjudicated_rerun_verdict_md': paths[
+                'adjudicated_rerun_verdict_md'
+            ],
+            'severe_aware_adjudicated_rerun_image_predictions': paths[
+                'adjudicated_rerun_image_predictions'
+            ],
             'severe_aware_candidate_metrics': paths['candidate_metrics'],
             'severe_aware_candidate_summary': paths['candidate_summary'],
             **{

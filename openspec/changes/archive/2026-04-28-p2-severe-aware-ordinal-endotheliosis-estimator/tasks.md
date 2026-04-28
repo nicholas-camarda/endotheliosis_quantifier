@@ -103,3 +103,13 @@
 - [x] 9.7 Run `PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python scripts/check_openspec_explicitness.py openspec/changes/p2-severe-aware-ordinal-endotheliosis-estimator`.
 - [x] 9.8 Run the full workflow with `PYTORCH_ENABLE_MPS_FALLBACK=1 MPLCONFIGDIR=/tmp/mpl_eq PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq run-config --config configs/endotheliosis_quantification.yaml`.
 - [x] 9.9 Inspect the final runtime severe-aware verdict, artifact root, severe support, severe-threshold metrics, source sensitivity, summary figures, hard blockers, scope limiters, reportable scopes, README eligibility, manifest completeness, durable run log, captured P2 logger events, and next action before marking the change complete.
+
+## 10. Post-Review Adjudication Ingestion
+
+- [x] 10.1 Update the severe false-negative review contract so exported reviewer adjudications are first-class P2 evidence artifacts.
+- [x] 10.2 Add `evidence/severe_false_negative_adjudications.json`, `evidence/severe_false_negative_adjudications.csv`, `evidence/severe_false_negative_adjudication_summary.json`, and `evidence/severe_false_negative_adjudication_summary.md` to the contained manifest-governed subtree.
+- [x] 10.3 Implement adjudication ingestion that preserves pasted JSON, normalizes reviewer rows, parses proposed score notes where possible, joins selected image predictions, counts adjudicated still-severe versus no-longer-severe false negatives, recomputes selected-threshold severe metrics under adjudicated false-negative labels, and writes a severe-threshold-only adjudicated-label rerun subtree.
+- [x] 10.4 Include adjudication summary evidence and updated next action in `summary/estimator_verdict.json` when reviewer adjudications exist.
+- [x] 10.5 Persist the current reviewer-exported adjudication JSON under the P2 evidence root and regenerate the P2 evidence summaries.
+- [x] 10.6 Add regression coverage for adjudication ingestion, summary artifacts, manifest inclusion, verdict next-action behavior, and the adjudicated-label rerun subtree.
+- [x] 10.7 Re-run focused severe-aware tests, lint/format checks, `openspec validate p2-severe-aware-ordinal-endotheliosis-estimator --strict`, and the OpenSpec explicitness check.
