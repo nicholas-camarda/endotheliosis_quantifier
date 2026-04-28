@@ -11,6 +11,8 @@
 - [ ] 1.9 Inventory feasibility for current FastAI U-Net, torchvision DeepLabV3, nnU-Net v2, DeepLabV3+ via external dependency, Mask2Former-style models, SAM, and MedSAM, including installed status, install path, weights/code source, hardware target, dataset conversion burden, and whether existing masks are sufficient.
 - [ ] 1.10 Decide whether alternative segmentation could improve severity-correlated feature extraction rather than only ROI geometry, and record candidate features affected by mask quality in `audit-results.md`.
 - [ ] 1.11 Record all audit-first decisions from `proposal.md` and `design.md` before final candidate fitting starts.
+- [ ] 1.12 Confirm the repo-wide execution logging contract from `p1-repo-wide-execution-logging-contract` is implemented before wiring P2 runtime execution, including availability of `src/eq/utils/execution_logging.py` and durable capture for `eq run-config --config configs/endotheliosis_quantification.yaml`.
+- [ ] 1.13 Record P2 logging participation in `audit-results.md`: `evaluate_severe_aware_ordinal_endotheliosis_estimator` is `high_level_function_events_only`, durable capture is owned by `endotheliosis_quantification`, and P2 adds no independent log root or file-handler system.
 
 ## 2. Core Estimator Module
 
@@ -20,6 +22,8 @@
 - [ ] 2.4 Implement severe threshold support computation for `score >= 1.5`, `score >= 2`, and `score >= 3`.
 - [ ] 2.5 Implement feature-family assembly for ROI/QC, morphology, learned ROI, embedding-derived inputs, and any audit-approved reduced embedding summaries without adding new learned ROI providers.
 - [ ] 2.6 Implement candidate configuration only after tasks 1.2, 1.4, and 1.5 have recorded audit decisions.
+- [ ] 2.7 Add function-level logger events in `evaluate_severe_aware_ordinal_endotheliosis_estimator` for start, resolved inputs, output root, row/subject/source counts, threshold support, feature-family decisions, candidate IDs, hard blockers, scope limiters, verdict path, artifact manifest path, completion, and failure context.
+- [ ] 2.8 Ensure the evaluator does not call `setup_logging(...)`, attach durable file handlers, create `$EQ_RUNTIME_ROOT/logs/...`, create repo-root `logs/`, or implement custom subprocess teeing.
 
 ## 3. Severe Separability And Threshold Modeling
 
@@ -62,6 +66,7 @@
 - [ ] 6.4 Link the capped severe-aware summary figures and severe false-negative review from the combined HTML review when present.
 - [ ] 6.5 Update `results_summary.csv` and `results_summary.md` generation with severe-aware hard-blocker, scope-limiter, output-type, severe-threshold, training/apparent, validation, testing-availability, reportability, and README-eligibility rows.
 - [ ] 6.6 Update `readme_results_snippet.md` generation so severe-aware results appear only when `estimator_verdict.json` marks the relevant scope eligible.
+- [ ] 6.7 Confirm `src/eq/quantification/pipeline.py` calls the severe-aware evaluator inside the existing `endotheliosis_quantification` execution surface so its logger events are captured by the repo-wide durable run log after P1 logging is implemented.
 
 ## 7. Tests
 
@@ -72,6 +77,9 @@
 - [ ] 7.5 Add regression coverage proving hard blockers prevent severe-aware claims when selected predictions are nonfinite or `subject_id` leakage is detected.
 - [ ] 7.6 Extend existing quantification pipeline tests for combined review contract and README-snippet eligibility behavior.
 - [ ] 7.7 Add regression coverage proving all generated severe-aware artifacts are manifest-listed and no more than the capped first-pass figure set is generated.
+- [ ] 7.8 Add `caplog` coverage proving the severe-aware evaluator emits function-level events for start, input/output roots, threshold support, selected candidates, verdict path, completion, and failure context.
+- [ ] 7.9 Add regression coverage proving the severe-aware evaluator does not create independent durable log files, attach leaked file handlers, erase an active execution-log handler, or create repo-root runtime directories.
+- [ ] 7.10 Extend the quantification run-config logging test so a dry-run or monkeypatched severe-aware run proves P2 events are captured through the existing `endotheliosis_quantification` durable log path rather than a P2-specific log root.
 
 ## 8. Documentation
 
@@ -88,9 +96,10 @@
 
 - [ ] 9.1 Run `PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m pytest -q tests/unit/test_quantification_severe_aware_ordinal_estimator.py`.
 - [ ] 9.2 Run focused quantification tests covering burden, learned ROI, source-aware estimator, severe-aware estimator, and pipeline report integration.
-- [ ] 9.3 Run `PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m pytest -q`.
-- [ ] 9.4 Run `ruff check` and `ruff format --check` on changed source and test files.
-- [ ] 9.5 Run `openspec validate p2-severe-aware-ordinal-endotheliosis-estimator --strict`.
-- [ ] 9.6 Run `PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python scripts/check_openspec_explicitness.py openspec/changes/p2-severe-aware-ordinal-endotheliosis-estimator`.
-- [ ] 9.7 Run the full workflow with `PYTORCH_ENABLE_MPS_FALLBACK=1 MPLCONFIGDIR=/tmp/mpl_eq PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq run-config --config configs/endotheliosis_quantification.yaml`.
-- [ ] 9.8 Inspect the final runtime severe-aware verdict, artifact root, severe support, severe-threshold metrics, source sensitivity, summary figures, hard blockers, scope limiters, reportable scopes, README eligibility, manifest completeness, and next action before marking the change complete.
+- [ ] 9.3 Run focused logging-contract tests affected by P2, including severe-aware `caplog` coverage and quantification run-config durable-capture coverage.
+- [ ] 9.4 Run `PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m pytest -q`.
+- [ ] 9.5 Run `ruff check` and `ruff format --check` on changed source and test files.
+- [ ] 9.6 Run `openspec validate p2-severe-aware-ordinal-endotheliosis-estimator --strict`.
+- [ ] 9.7 Run `PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python scripts/check_openspec_explicitness.py openspec/changes/p2-severe-aware-ordinal-endotheliosis-estimator`.
+- [ ] 9.8 Run the full workflow with `PYTORCH_ENABLE_MPS_FALLBACK=1 MPLCONFIGDIR=/tmp/mpl_eq PYTHONPATH=src /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq run-config --config configs/endotheliosis_quantification.yaml`.
+- [ ] 9.9 Inspect the final runtime severe-aware verdict, artifact root, severe support, severe-threshold metrics, source sensitivity, summary figures, hard blockers, scope limiters, reportable scopes, README eligibility, manifest completeness, durable run log, captured P2 logger events, and next action before marking the change complete.

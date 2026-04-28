@@ -41,6 +41,7 @@ Can severe cases be separated at all?
 - Report severe false negatives explicitly, including example review.
 - Keep source behavior visible and scoped as current-data sensitivity, not external validation.
 - Keep the artifact tree bounded, indexed, and manifest-governed.
+- Emit function-level logger events for the severe-aware evaluator and rely on the repo-wide execution logging contract for durable capture through the existing `endotheliosis_quantification` workflow.
 - Decide from evidence whether the honest P2 output is a scalar burden, severe-risk label, ordinal prediction set, subject-level aggregate, or limited/non-reportable finding.
 
 **Non-Goals:**
@@ -50,6 +51,7 @@ Can severe cases be separated at all?
 - Do not claim tissue-area percent, closed-capillary percent, causal mechanism, or histologic truth.
 - Do not weaken validation gates to make severe prediction look better.
 - Do not create a second active quantification config unless the code audit shows the existing `endotheliosis_quantification` workflow cannot safely host the estimator.
+- Do not create a second execution logging helper, independent log-root contract, or evaluator-owned durable file handler.
 - Do not solve segmentation promotion, mask provenance, or glomeruli model scientific promotion in this change.
 
 ## Decisions
@@ -174,6 +176,32 @@ Rationale: The user needs one runnable control surface. P1 already integrated in
 
 Alternative considered: create `configs/severe_aware_ordinal_quantification.yaml`. Deferred. A separate config may be useful later for experiments, but the current spec should keep the main quantification command complete.
 
+### Decision: Inherit repo-wide execution logging instead of adding P2 logging plumbing
+
+P2 modifies the supported `endotheliosis_quantification` execution surface and adds one high-level evaluator:
+
+```text
+src/eq/quantification/severe_aware_ordinal_estimator.py::evaluate_severe_aware_ordinal_endotheliosis_estimator
+```
+
+The evaluator should be classified as `high_level_function_events_only`. It should emit logger events for:
+
+- start and completion status
+- resolved input artifact roots and output root
+- row, subject, source, and threshold-support counts
+- selected feature families and candidate IDs
+- hard blockers, scope limiters, selected output type, and verdict path
+- artifact manifest path and severe false-negative review path
+- failure context before re-raising exceptions
+
+Durable capture is owned by the existing `endotheliosis_quantification` workflow and `eq run-config` entrypoint after `p1-repo-wide-execution-logging-contract` lands. P2 should not call `setup_logging(...)` from imported evaluator code, attach independent file handlers, write a separate `logs/` tree, or tee subprocesses through custom P2 code.
+
+Logging docs impact for P2 is limited: because P2 adds no new log root and no new public command, P2 should not require README or logging-doc changes beyond confirming the severe-aware runtime artifacts are discoverable from the combined quantification review and `docs/OUTPUT_STRUCTURE.md`.
+
+Rationale: the logging spec is intentionally repo-wide. Re-implementing capture in P2 would reintroduce duplicate path systems and handler ownership risk.
+
+Alternative considered: add a P2-specific run log under `burden_model/severe_aware_ordinal_estimator/`. Rejected because estimator artifacts and execution logs answer different questions; operational logs belong under `$EQ_RUNTIME_ROOT/logs/...`, while estimator evidence belongs under the manifest-governed output subtree.
+
 ### Decision: Gate manual annotation and segmentation-backbone escalation
 
 P2 should not assume that new Label Studio patch/mask annotation or a stronger segmentation backbone is required. Those are plausible future directions, but they answer a different question than severe-aware grading:
@@ -283,6 +311,9 @@ Alternative considered: start a new manual patch/mask dataset now. Rejected for 
 - [Risk] A two-stage model can become difficult to explain.
   - Mitigation: verdict must say whether the reportable output is scalar burden, severe-risk label, ordinal prediction set, subject-level aggregate, or limited/non-reportable.
 
+- [Risk] P2 could accidentally duplicate the repo-wide logging system while trying to make a long run auditable.
+  - Mitigation: classify the evaluator as function-event-only, rely on `endotheliosis_quantification` durable capture, and test that P2 does not create independent log files or erase execution handlers.
+
 - [Risk] A stronger segmenter may improve ROI extraction but not severe-grade prediction.
   - Mitigation: require severe false-negative review, ROI-failure localization, and testing of whether alternative masks improve severity-correlated feature extraction before starting a segmentation-backbone or annotation change.
 
@@ -295,8 +326,9 @@ Alternative considered: start a new manual patch/mask dataset now. Rejected for 
 2. Implement P2 as additive. Do not remove P1 source-aware artifacts or change their meaning.
 3. Add the P2 evaluator behind the existing `endotheliosis_quantification` workflow.
 4. Write P2 artifacts under `burden_model/severe_aware_ordinal_estimator/`.
-5. Integrate P2 verdict links into `quantification_review/` without adding README-snippet claims unless the final verdict explicitly permits them.
-6. Validate with focused unit tests, full `pytest`, strict OpenSpec validation, explicitness check, and the full `eq run-config` workflow.
+5. Ensure the P2 evaluator emits function-level logger events and inherits durable run capture from the existing `endotheliosis_quantification` execution surface after the repo-wide logging contract is implemented.
+6. Integrate P2 verdict links into `quantification_review/` without adding README-snippet claims unless the final verdict explicitly permits them.
+7. Validate with focused unit tests, logging-contract checks, full `pytest`, strict OpenSpec validation, explicitness check, and the full `eq run-config` workflow.
 
 Rollback strategy: because P2 is additive and contained under a new output subtree, rollback means removing the P2 pipeline call and generated combined-review references while leaving P1 source-aware outputs intact.
 
@@ -308,6 +340,8 @@ Rollback strategy: because P2 is additive and contained under a new output subtr
 - Output root: `burden_model/severe_aware_ordinal_estimator/`.
 - Main workflow: `endotheliosis_quantification`.
 - Main config: `configs/endotheliosis_quantification.yaml`.
+- Logging classification: `evaluate_severe_aware_ordinal_endotheliosis_estimator` is `high_level_function_events_only`; durable capture is provided by the existing `endotheliosis_quantification` workflow and `eq run-config` logging contract.
+- Logging docs impact: no new log root or public command is introduced by P2; P2 documentation changes should focus on severe-aware artifacts and should not duplicate the repo-wide logging docs.
 - Primary validation grouping key: `subject_id`.
 - Primary source/context field: `cohort_id`.
 - Primary severe threshold: `score >= 2`.

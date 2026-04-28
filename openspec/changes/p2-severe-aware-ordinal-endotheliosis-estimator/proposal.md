@@ -26,6 +26,7 @@ The practical goal remains unchanged: apply the current MR TIFF/ROI workflow to 
 - Add severe false-negative review artifacts so high-grade underprediction is visible and not hidden by overall MAE.
 - Keep artifacts contained and indexed under one new subtree: `burden_model/severe_aware_ordinal_estimator/`.
 - Keep first-pass outputs capped by `summary/artifact_manifest.json`.
+- Participate in the repo-wide execution logging contract established by `p1-repo-wide-execution-logging-contract`: the P2 evaluator emits useful function-level logger events, the existing `endotheliosis_quantification` workflow remains the durable capture surface, and P2 does not create an independent log-root or file-handler system.
 - Do not expand learned ROI provider extraction in this change. Existing learned ROI features may be evaluated as inputs, but new fitted foundation/backbone providers require a separate OpenSpec decision.
 - Do not weaken P1 claim boundaries: outputs remain predictive grade-equivalent or severe-risk evidence for current scored MR TIFF/ROI data, not tissue percent, closed-capillary percent, causal evidence, or external validation.
 - Add an explicit future decision gate for manual patch/mask annotation and upstream segmentation-backbone escalation. P2 SHALL first decide whether severe failure is caused by ROI extraction/segmentation limits, feature/model limits, or the current grading target itself.
@@ -47,6 +48,7 @@ The practical goal remains unchanged: apply the current MR TIFF/ROI workflow to 
 
 Affected code surfaces:
 
+- `src/eq/utils/execution_logging.py`: P2 depends on the repo-wide logging contract implemented by `p1-repo-wide-execution-logging-contract`; P2 should not add separate durable logging helpers.
 - `src/eq/quantification/source_aware_estimator.py`: evidence source for P1 verdict and selected current-data candidates.
 - `src/eq/quantification/burden.py`: existing cumulative threshold and burden-index comparator logic that P2 should audit before adding a parallel implementation.
 - `src/eq/quantification/pipeline.py`: likely integration point after burden, learned ROI, and source-aware artifacts are available.
@@ -65,6 +67,7 @@ Affected tests:
 - New unit tests for severe-threshold support, ordinal split labels, two-stage candidate behavior, severe false-negative review, artifact manifest completeness, and hard-blocker behavior.
 - Existing quantification pipeline tests for combined review integration and README-snippet eligibility.
 - Regression tests proving high-score underprediction is reported as a failure mode rather than hidden by overall metrics.
+- Logging-contract validation proving the new evaluator emits function-level events, inherits durable capture from `eq run-config --config configs/endotheliosis_quantification.yaml`, and does not create duplicate file handlers or a separate log root.
 
 Compatibility and scientific interpretation:
 
@@ -83,6 +86,7 @@ Compatibility and scientific interpretation:
 - Runnable config remains `configs/endotheliosis_quantification.yaml`.
 - Proposed module path: `src/eq/quantification/severe_aware_ordinal_estimator.py`.
 - Proposed evaluator function: `evaluate_severe_aware_ordinal_endotheliosis_estimator`.
+- Logging participation: `evaluate_severe_aware_ordinal_endotheliosis_estimator` is a high-level function-events-only surface; durable capture is owned by the existing `endotheliosis_quantification` workflow through the repo-wide logging contract.
 - Proposed output root: `burden_model/severe_aware_ordinal_estimator/`.
 - Primary validation split label remains `validation_subject_heldout`.
 - Apparent full-data metrics must use `training_apparent`.

@@ -16,6 +16,29 @@ The severe-aware ordinal estimator SHALL run inside the existing quantification 
 - **AND** it SHALL record selected P1 image candidate, selected P1 subject candidate, hard blockers, scope limiters, reportable scopes, and testing status in its own diagnostics or verdict
 - **AND** it SHALL NOT treat P1 source-aware outputs as external validation or promoted truth
 
+### Requirement: Severe-aware evaluator participates in repo-wide execution logging
+The severe-aware evaluator SHALL emit operational logger events as a high-level function while durable log capture remains owned by the existing quantification execution surface.
+
+#### Scenario: Evaluator emits function-level events
+- **WHEN** `evaluate_severe_aware_ordinal_endotheliosis_estimator` runs inside the quantification workflow or under caller-owned logging
+- **THEN** it SHALL emit logger events for start, resolved input artifact roots, output root, row count, subject count, source count, threshold-support summary, selected feature families, candidate IDs, hard blockers, scope limiters, verdict path, artifact manifest path, completion status, and elapsed time where available
+- **AND** these events SHALL be capturable by the repo-wide execution logging context when the existing `endotheliosis_quantification` workflow is run through `eq run-config`
+
+#### Scenario: Evaluator failure is logged and re-raised
+- **WHEN** the severe-aware evaluator fails after execution begins
+- **THEN** it SHALL log failure context including the surface name, failing step where known, available input or output roots, exception message, and verdict/artifact status where known
+- **AND** it SHALL re-raise rather than converting the failure into a successful limited verdict unless the failure is an explicitly modeled scientific scope limiter
+
+#### Scenario: Evaluator does not own durable execution logging
+- **WHEN** the severe-aware evaluator is imported or called by another Python function
+- **THEN** it SHALL NOT call `setup_logging(...)`, attach durable file handlers, create `$EQ_RUNTIME_ROOT/logs/...`, create repo-root `logs/`, or implement custom subprocess stdout/stderr teeing
+- **AND** durable capture SHALL remain the responsibility of the existing `endotheliosis_quantification` workflow and repo-wide execution logging contract
+
+#### Scenario: Logging docs impact is bounded
+- **WHEN** P2 adds the severe-aware evaluator without adding a new CLI command or log root
+- **THEN** P2 documentation SHALL describe the severe-aware artifact subtree and review links
+- **AND** it SHALL NOT duplicate the repo-wide logging documentation unless P2 changes log roots, automatic durable logging behavior, or public execution commands
+
 ### Requirement: Severe separability audit precedes final candidate selection
 The estimator SHALL audit whether severe cases are separable in current features before selecting severe-aware candidates.
 
