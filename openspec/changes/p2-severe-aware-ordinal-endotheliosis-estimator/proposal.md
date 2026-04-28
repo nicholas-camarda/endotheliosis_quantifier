@@ -75,6 +75,8 @@ Compatibility and scientific interpretation:
 - P2 should not remove or reinterpret P1 outputs; it should add a more targeted estimator track focused on severe-end failure.
 - No external validation will be created by this change. Current-data sensitivity, source-stratified validation, and leave-source-out diagnostics must stay labeled as internal/current-data evidence.
 
+docs-impact: Update `docs/OUTPUT_STRUCTURE.md` to document `burden_model/severe_aware_ordinal_estimator/` as an indexed experimental estimator subtree. Public README/onboarding wording remains unchanged unless the final P2 verdict marks a scope README-eligible; default README eligibility is false.
+
 ## Explicit Decisions
 
 - Change ID: `p2-severe-aware-ordinal-endotheliosis-estimator`.

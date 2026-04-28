@@ -22,6 +22,9 @@ from .pipeline import (
     run_endotheliosis_scoring_pipeline,
 )
 from .roi import extract_rois_for_scored_examples
+from .severe_aware_ordinal_estimator import (
+    evaluate_severe_aware_ordinal_endotheliosis_estimator,
+)
 from .source_aware_estimator import evaluate_source_aware_endotheliosis_estimator
 
 __all__ = [
@@ -39,6 +42,7 @@ __all__ = [
     'extract_encoder_embeddings_from_rois',
     'evaluate_learned_roi_quantification',
     'evaluate_source_aware_endotheliosis_estimator',
+    'evaluate_severe_aware_ordinal_endotheliosis_estimator',
     'CanonicalOrdinalClassifier',
     'run_grouped_ordinal_experiment',
     'prepare_quantification_contract',

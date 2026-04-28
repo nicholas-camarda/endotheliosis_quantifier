@@ -344,6 +344,7 @@ def test_evaluate_embedding_table_runs_with_grouped_subject_splits(tmp_path: Pat
                     'subject_image_id': f'{subject_prefix}-{image_index}',
                     'subject_prefix': subject_prefix,
                     'subject_id': f'cohort__{subject_prefix.lower()}',
+                    'cohort_id': 'cohort',
                     'sample_id': f'cohort__{subject_prefix.lower()}__image{image_index}',
                     'glomerulus_id': 1,
                     'score': score,
@@ -470,6 +471,8 @@ def test_evaluate_embedding_table_runs_with_grouped_subject_splits(tmp_path: Pat
         'subject_morphology_candidate_predictions',
         'morphology_candidate_summary',
         'burden_model',
+        'burden_model_index',
+        'primary_burden_index_index',
         'quantification_review_html',
         'quantification_review_examples',
         'quantification_results_summary_md',
@@ -517,11 +520,26 @@ def test_evaluate_embedding_table_runs_with_grouped_subject_splits(tmp_path: Pat
     assert 'Metrics by split' in review_html
     assert 'Direct stage-index regression' in review_html
     assert 'held_out_grouped_fold_prediction' in review_html
-    assert 'burden_model/primary_model/burden_predictions.csv' in review_html
-    assert 'burden_model/primary_model/final_model_predictions.csv' in review_html
-    assert 'burden_model/feature_sets/morphology_features.csv' in review_html
+    assert (
+        'burden_model/primary_burden_index/model/burden_predictions.csv' in review_html
+    )
+    assert (
+        'burden_model/primary_burden_index/model/final_model_predictions.csv'
+        in review_html
+    )
+    assert (
+        'burden_model/primary_burden_index/feature_sets/morphology_features.csv'
+        in review_html
+    )
     assert artifacts['morphology_candidate_metrics'].parent.name == 'candidates'
-    assert artifacts['burden_model'].parent.name == 'primary_model'
+    assert artifacts['burden_model'].parent.name == 'model'
+    assert artifacts['burden_model'].parents[1].name == 'primary_burden_index'
+    assert not (
+        tmp_path / 'quantification_results' / 'burden_model' / 'primary_model'
+    ).exists()
+    assert not (
+        tmp_path / 'quantification_results' / 'burden_model' / 'summaries'
+    ).exists()
     source_verdict = json.loads(
         artifacts['source_aware_estimator_verdict'].read_text(encoding='utf-8')
     )

@@ -304,12 +304,13 @@ This writes:
 - recovered Label Studio score tables and duplicate-resolution audit outputs
 - union-ROI image and mask crops
 - frozen segmentation encoder embeddings
-- `burden_model/primary_model/` artifacts with `endotheliosis_burden_0_100`, threshold probabilities, prediction sets, uncertainty intervals, and the serialized exploratory burden model
-- `burden_model/validation/`, `burden_model/calibration/`, `burden_model/summaries/`, and `burden_model/evidence/` artifacts with support gates, grouping audit, calibration, nearest scored examples, cohort metrics, summary intervals, and prediction explanations
-- `burden_model/feature_sets/` and `burden_model/diagnostics/` morphology feature artifacts for open lumina, collapsed/slit-like structures, RBC-like patent-lumen confounding, and ROI quality
-- `burden_model/candidates/` candidate-screen artifacts such as `signal_comparator_metrics.csv`, `subject_level_candidate_predictions.csv`, `precision_candidate_summary.json`, `morphology_candidate_metrics.csv`, and `morphology_candidate_summary.json`; these are review artifacts, not deployed models
-- `burden_model/evidence/morphology_feature_review/` with the visual feature review page, selected cases, overlay assets, and operator adjudication template
-- `burden_model/learned_roi/` with the capped learned ROI phase-1 screen, provider audit, learned feature table, candidate metrics, calibration summary, cohort-confounding diagnostics, nearest examples, and learned ROI evidence review
+- `burden_model/INDEX.md` as the first-read map for the burden-model subtree
+- `burden_model/primary_burden_index/model/` artifacts with `endotheliosis_burden_0_100`, threshold probabilities, prediction sets, uncertainty intervals, and the serialized exploratory burden model
+- `burden_model/primary_burden_index/validation/`, `burden_model/primary_burden_index/calibration/`, `burden_model/primary_burden_index/summaries/`, and `burden_model/primary_burden_index/evidence/` artifacts with support gates, grouping audit, calibration, nearest scored examples, cohort metrics, summary intervals, and prediction explanations
+- `burden_model/primary_burden_index/feature_sets/` and `burden_model/primary_burden_index/diagnostics/` morphology feature artifacts for open lumina, collapsed/slit-like structures, RBC-like patent-lumen confounding, and ROI quality
+- `burden_model/primary_burden_index/candidates/` candidate-screen artifacts such as `signal_comparator_metrics.csv`, `subject_level_candidate_predictions.csv`, `precision_candidate_summary.json`, `morphology_candidate_metrics.csv`, and `morphology_candidate_summary.json`; these are review artifacts, not deployed models
+- `burden_model/primary_burden_index/evidence/morphology_feature_review/` with the visual feature review page, selected cases, overlay assets, and operator adjudication template
+- `burden_model/learned_roi/` with `INDEX.md`, `summary/` first-read verdict artifacts, the capped learned ROI phase-1 screen, provider audit, learned feature table, candidate metrics, calibration summary, cohort-confounding diagnostics, nearest examples, and learned ROI evidence review
 - `ordinal_model/` artifacts with ordinal comparator predictions, probabilities, metrics, confusion matrix, and the comparator-specific HTML review
 - `quantification_review/` artifacts with the combined burden/comparator HTML review, reviewer examples, concrete results summaries, and a README/docs snippet generated from the current run
 

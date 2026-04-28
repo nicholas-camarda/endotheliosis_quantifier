@@ -29,7 +29,7 @@ from eq.quantification.learned_roi_review import write_learned_roi_review
 from eq.quantification.ordinal import NUMERICAL_INSTABILITY_PATTERNS
 
 LEARNED_ROI_OUTPUT_GROUPS = {
-    'primary_model': 'primary_model',
+    'summary': 'summary',
     'validation': 'validation',
     'calibration': 'calibration',
     'summaries': 'summaries',
@@ -60,13 +60,102 @@ class CandidateSpec:
 def learned_roi_output_paths(burden_output_dir: Path) -> dict[str, Path]:
     """Return canonical learned ROI grouped output directories."""
     root = Path(burden_output_dir) / LEARNED_ROI_ROOT_NAME
-    return {key: root / dirname for key, dirname in LEARNED_ROI_OUTPUT_GROUPS.items()}
+    paths = {key: root / dirname for key, dirname in LEARNED_ROI_OUTPUT_GROUPS.items()}
+    paths['root'] = root
+    paths['index'] = root / 'INDEX.md'
+    paths['estimator_verdict'] = paths['summary'] / 'estimator_verdict.json'
+    paths['estimator_verdict_md'] = paths['summary'] / 'estimator_verdict.md'
+    paths['artifact_manifest'] = paths['summary'] / 'artifact_manifest.json'
+    return paths
 
 
 def _save_json(payload: dict[str, Any], path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
     return path
+
+
+def _relative_to_root(path: Path, root: Path) -> str:
+    return path.relative_to(root).as_posix()
+
+
+def _write_learned_roi_first_read_artifacts(
+    *, paths: dict[str, Path], summary: dict[str, Any], artifacts: dict[str, Path]
+) -> dict[str, Path]:
+    root = paths['root']
+    manifest = {
+        'estimator': 'learned_roi',
+        'first_read': {
+            'index': 'INDEX.md',
+            'verdict_json': 'summary/estimator_verdict.json',
+            'verdict_markdown': 'summary/estimator_verdict.md',
+        },
+        'artifact_contract': summary['artifact_contract'],
+        'artifacts': {
+            key: _relative_to_root(path, root)
+            for key, path in artifacts.items()
+            if path.exists()
+        },
+    }
+    verdict = {
+        'estimator': 'learned_roi',
+        'candidate_count': summary['candidate_count'],
+        'readme_docs_ready': summary['readme_docs_ready'],
+        'readme_docs_ready_track': summary['readme_docs_ready_track'],
+        'per_image_status': summary['per_image_readiness'].get('status', ''),
+        'subject_cohort_status': summary['subject_cohort_readiness'].get('status', ''),
+        'best_image_level_candidate': summary['best_image_level_candidate'].get(
+            'candidate_id', ''
+        ),
+        'best_subject_level_candidate': summary['best_subject_level_candidate'].get(
+            'candidate_id', ''
+        ),
+        'cohort_diagnostics_status': summary['cohort_diagnostics_status'],
+        'blockers': summary['blockers'],
+        'next_action': summary['next_action'],
+        'claim_boundary': summary['claim_boundary'],
+    }
+    verdict_path = _save_json(verdict, paths['estimator_verdict'])
+    manifest_path = _save_json(manifest, paths['artifact_manifest'])
+    verdict_md = f"""# Learned ROI Summary
+
+- README/docs-ready: `{verdict['readme_docs_ready']}`
+- Ready track: `{verdict['readme_docs_ready_track'] or 'none'}`
+- Per-image status: `{verdict['per_image_status']}`
+- Subject/cohort status: `{verdict['subject_cohort_status']}`
+- Best image-level candidate: `{verdict['best_image_level_candidate']}`
+- Best subject-level candidate: `{verdict['best_subject_level_candidate']}`
+- Cohort diagnostics: `{verdict['cohort_diagnostics_status']}`
+- Next action: `{verdict['next_action']}`
+
+Claim boundary: {verdict['claim_boundary']}
+"""
+    paths['estimator_verdict_md'].write_text(verdict_md, encoding='utf-8')
+    index_text = """# Learned ROI
+
+This subtree contains the capped learned-ROI candidate screen.
+
+## First Read
+
+- `summary/estimator_verdict.json`: machine-readable readiness verdict.
+- `summary/estimator_verdict.md`: compact reviewer-facing verdict.
+- `summary/artifact_manifest.json`: generated artifact map.
+- `candidates/learned_roi_candidate_summary.json`: full candidate-screen summary.
+- `validation/`: image-level and subject-level validation predictions.
+- `calibration/`: prediction-set and uncertainty calibration.
+- `diagnostics/`: provider and cohort-confounding diagnostics.
+- `evidence/`: review HTML and nearest examples.
+- `feature_sets/`: learned ROI feature tables.
+
+`summary/` contains first-read verdict material. Aggregate subject/cohort interval outputs remain under `summaries/`.
+"""
+    paths['index'].write_text(index_text, encoding='utf-8')
+    return {
+        'learned_roi_index': paths['index'],
+        'learned_roi_estimator_verdict': verdict_path,
+        'learned_roi_estimator_verdict_md': paths['estimator_verdict_md'],
+        'learned_roi_artifact_manifest': manifest_path,
+    }
 
 
 def _package_version(package: str) -> str:
@@ -1044,7 +1133,15 @@ def evaluate_learned_roi_quantification(
 ) -> dict[str, Path]:
     """Evaluate the capped phase-1 learned ROI candidate screen."""
     paths = learned_roi_output_paths(burden_output_dir)
-    for path in paths.values():
+    file_keys = {
+        'index',
+        'estimator_verdict',
+        'estimator_verdict_md',
+        'artifact_manifest',
+    }
+    for key, path in paths.items():
+        if key in file_keys:
+            continue
         path.mkdir(parents=True, exist_ok=True)
 
     provider_audit_path = paths['diagnostics'] / 'provider_audit.json'
@@ -1226,8 +1323,26 @@ def evaluate_learned_roi_quantification(
     summary_path = paths['candidates'] / 'learned_roi_candidate_summary.json'
     _save_json(summary, summary_path)
 
+    first_read_artifacts = _write_learned_roi_first_read_artifacts(
+        paths=paths,
+        summary=summary,
+        artifacts={
+            'learned_roi_candidate_summary': summary_path,
+            'learned_roi_candidate_metrics': metrics_path,
+            'learned_roi_predictions': predictions_path,
+            'learned_roi_subject_predictions': subject_predictions_path,
+            'learned_roi_calibration': calibration_path,
+            'learned_roi_subject_summary_intervals': subject_summary_path,
+            'learned_roi_cohort_confounding_diagnostics': cohort_diagnostics_path,
+            'learned_roi_nearest_examples': nearest_path,
+            **review_artifacts,
+            **feature_artifacts,
+        },
+    )
+
     return {
         'learned_roi_provider_audit': provider_audit_path,
+        **first_read_artifacts,
         **feature_artifacts,
         'learned_roi_candidate_metrics': metrics_path,
         'learned_roi_predictions': predictions_path,

@@ -284,7 +284,7 @@ Current quantification implementation surfaces:
 - `labelstudio_scores/` with recovered per-image grades and duplicate-resolution audit tables
 - `roi_crops/` with union-ROI crops over the full multi-component mask
 - `embeddings/` with frozen segmentation-encoder embeddings
-- `burden_model/` with grouped `primary_model/`, `validation/`, `calibration/`, `summaries/`, `evidence/`, `candidates/`, `diagnostics/`, `feature_sets/`, and `learned_roi/` subfolders for exploratory burden predictions, support gates, uncertainty calibration, cohort summaries, nearest examples, candidate screens, morphology features, learned ROI screens, and review diagnostics
+- `burden_model/` with `INDEX.md`, a contained `primary_burden_index/` subtree for exploratory burden predictions, support gates, uncertainty calibration, cohort summaries, nearest examples, candidate screens, morphology features, and review diagnostics, plus contained estimator subtrees such as `learned_roi/`, `source_aware_estimator/`, and `severe_aware_ordinal_estimator/`
 - `ordinal_model/` with comparator predictions, probabilities, metrics, confusion matrix, and `review_report/ordinal_review.html`
 - `quantification_review/` with combined HTML review, reviewer examples, concrete result summaries, and a README/docs snippet from the current run; reuse the snippet only when the reported readiness flag and uncertainty checks pass
 

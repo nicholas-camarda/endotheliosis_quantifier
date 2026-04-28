@@ -6,7 +6,7 @@ The quantification workflow SHALL extract morphology-aware features from the exi
 
 #### Scenario: Morphology feature table is written
 - **WHEN** `eq run-config --config configs/endotheliosis_quantification.yaml` reaches quantification feature extraction
-- **THEN** the run SHALL write `burden_model/feature_sets/morphology_features.csv`
+- **THEN** the run SHALL write `burden_model/primary_burden_index/feature_sets/morphology_features.csv`
 - **AND** the table SHALL contain one row per valid ROI embedding row
 - **AND** the table SHALL preserve `subject_id`, `sample_id`, `image_id`, `subject_image_id`, `score`, `cohort_id`, `lane_assignment`, `roi_image_path`, and `roi_mask_path` when present
 - **AND** all numeric feature columns SHALL be finite or explicitly marked non-estimable with a reason column
@@ -49,17 +49,17 @@ The workflow SHALL generate a visual QA bundle so the operator can inspect wheth
 
 #### Scenario: Feature review HTML is written
 - **WHEN** morphology features are extracted
-- **THEN** the run SHALL write `burden_model/evidence/morphology_feature_review/feature_review.html`
+- **THEN** the run SHALL write `burden_model/primary_burden_index/evidence/morphology_feature_review/feature_review.html`
 - **AND** it SHALL show raw ROI, glomerulus mask, pale/open lumen overlay, RBC-filled lumen candidate overlay, border false-slit overlay, nuclear/mesangial false-slit overlay, accepted collapsed/slit-like overlay, manual score, and key feature values for selected cases
 
 #### Scenario: Review cases cover important failure modes
 - **WHEN** feature review cases are selected
-- **THEN** the run SHALL write `burden_model/evidence/morphology_feature_review/feature_review_cases.csv`
+- **THEN** the run SHALL write `burden_model/primary_burden_index/evidence/morphology_feature_review/feature_review_cases.csv`
 - **AND** selected cases SHALL include high-score, low-score, high-uncertainty, high-RBC-confounder, high-collapsed-line, high-open-lumen, and poor-quality/orientation examples where available
 
 #### Scenario: Feature review assets are path-stable
 - **WHEN** feature review assets are generated
-- **THEN** all images used by `feature_review.html` SHALL live under `burden_model/evidence/morphology_feature_review/assets/`
+- **THEN** all images used by `feature_review.html` SHALL live under `burden_model/primary_burden_index/evidence/morphology_feature_review/assets/`
 - **AND** the HTML SHALL use relative links within that review bundle
 
 ### Requirement: Operator adjudication is plug-and-play
@@ -67,7 +67,7 @@ The workflow SHALL create an operator review template that can be filled without
 
 #### Scenario: Adjudication template is written
 - **WHEN** feature review cases are selected
-- **THEN** the run SHALL write `burden_model/evidence/morphology_feature_review/operator_adjudication_template.csv`
+- **THEN** the run SHALL write `burden_model/primary_burden_index/evidence/morphology_feature_review/operator_adjudication_template.csv`
 - **AND** the table SHALL include `case_id`, `subject_id`, `sample_id`, `image_id`, `score`, `open_empty_lumen_present`, `open_rbc_filled_lumen_present`, `collapsed_slit_like_lumen_present`, `mesangial_or_nuclear_false_slit_present`, `border_false_slit_present`, `poor_orientation_or_quality`, `feature_detection_problem`, `preferred_label_if_detection_wrong`, and `notes`
 
 #### Scenario: Completed adjudication can be read on rerun
@@ -97,7 +97,7 @@ The workflow SHALL evaluate morphology features separately for image-level predi
 
 #### Scenario: Candidate summary is written
 - **WHEN** morphology candidate evaluation completes
-- **THEN** the run SHALL write `burden_model/candidates/morphology_candidate_summary.json`
+- **THEN** the run SHALL write `burden_model/primary_burden_index/candidates/morphology_candidate_summary.json`
 - **AND** the summary SHALL identify the best image-level candidate, best subject-level candidate, selected track if any, readiness status, and next action
 - **AND** it SHALL explicitly state whether the result is suitable for README/docs sharing
 - **AND** it SHALL block morphology-candidate promotion when accepted slit signal is common in score-zero images, accepted slit signal is nearly ubiquitous, slit signal has high boundary overlap, or nuclear/mesangial confounder burden is high
@@ -107,7 +107,7 @@ The workflow SHALL diagnose feature quality and numerical stability before candi
 
 #### Scenario: Feature diagnostics are written
 - **WHEN** morphology features are extracted
-- **THEN** the run SHALL write `burden_model/diagnostics/morphology_feature_diagnostics.json`
+- **THEN** the run SHALL write `burden_model/primary_burden_index/diagnostics/morphology_feature_diagnostics.json`
 - **AND** it SHALL include row count, subject count, feature count, nonfinite counts, zero-variance counts, near-zero-variance counts, missingness counts, and feature ranges
 
 #### Scenario: Numerical warnings are attributed
@@ -119,7 +119,7 @@ The workflow SHALL diagnose feature quality and numerical stability before candi
 Deterministic morphology features SHALL remain reviewer-visible QC/evidence when their visual feature-readiness gate is blocked, but SHALL NOT be used as biological proof of closed-lumen burden.
 
 #### Scenario: Blocked morphology is excluded from learned biological claims
-- **WHEN** `burden_model/candidates/morphology_candidate_summary.json` reports `selection_status` as `blocked_by_visual_feature_readiness`
+- **WHEN** `burden_model/primary_burden_index/candidates/morphology_candidate_summary.json` reports `selection_status` as `blocked_by_visual_feature_readiness`
 - **THEN** learned ROI reports SHALL treat deterministic morphology features as QC/evidence only
 - **AND** learned ROI reports SHALL NOT use deterministic slit features to justify a closed-lumen mechanistic claim
 

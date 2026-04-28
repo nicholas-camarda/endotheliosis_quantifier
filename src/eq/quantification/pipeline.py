@@ -55,6 +55,9 @@ from eq.quantification.ordinal import (
     CanonicalOrdinalClassifier,
     build_grouped_ordinal_cohort_profile,
 )
+from eq.quantification.severe_aware_ordinal_estimator import (
+    evaluate_severe_aware_ordinal_endotheliosis_estimator,
+)
 from eq.quantification.source_aware_estimator import (
     evaluate_source_aware_endotheliosis_estimator,
 )
@@ -1489,6 +1492,25 @@ def generate_combined_quantification_review(
         if burden_artifacts.get('source_aware_upstream_roi_adequacy')
         else {}
     )
+    severe_aware_verdict = (
+        _read_json_if_exists(burden_artifacts['severe_aware_estimator_verdict'])
+        if burden_artifacts.get('severe_aware_estimator_verdict')
+        else {}
+    )
+    severe_aware_metrics = (
+        pd.read_csv(burden_artifacts['severe_aware_metrics_by_split'])
+        if burden_artifacts.get('severe_aware_metrics_by_split')
+        and burden_artifacts['severe_aware_metrics_by_split'].exists()
+        and burden_artifacts['severe_aware_metrics_by_split'].stat().st_size > 0
+        else pd.DataFrame()
+    )
+    severe_threshold_metrics = (
+        pd.read_csv(burden_artifacts['severe_aware_severe_threshold_metrics'])
+        if burden_artifacts.get('severe_aware_severe_threshold_metrics')
+        and burden_artifacts['severe_aware_severe_threshold_metrics'].exists()
+        and burden_artifacts['severe_aware_severe_threshold_metrics'].stat().st_size > 0
+        else pd.DataFrame()
+    )
 
     support_status = str(burden_metrics.get('support_gate_status', 'unknown'))
     numerical_status = str(burden_metrics.get('numerical_stability_status', 'unknown'))
@@ -1540,6 +1562,23 @@ def generate_combined_quantification_review(
     source_aware_scope_limiters = source_aware_verdict.get('scope_limiters', [])
     source_aware_hard_blockers = source_aware_verdict.get('hard_blockers', [])
     source_aware_reportable = source_aware_verdict.get('reportable_scopes', {})
+    severe_aware_status = str(severe_aware_verdict.get('overall_status', 'not_run'))
+    severe_aware_readme_ready = bool(
+        severe_aware_verdict.get('readme_snippet_eligible', False)
+    )
+    severe_aware_reportable = severe_aware_verdict.get('reportable_scopes', {})
+    severe_aware_scope_limiters = severe_aware_verdict.get('scope_limiters', [])
+    severe_aware_hard_blockers = severe_aware_verdict.get('hard_blockers', [])
+    severe_aware_figure_links = []
+    for key, path in burden_artifacts.items():
+        if key.startswith('severe_aware_figure_') and path.exists():
+            rel = (
+                Path('../burden_model/severe_aware_ordinal_estimator/summary/figures')
+                / path.name
+            )
+            severe_aware_figure_links.append(
+                f'<li><a href="{escape(str(rel))}">{escape(path.name)}</a></li>'
+            )
     source_aware_figure_links = []
     for key, path in burden_artifacts.items():
         if key.startswith('source_aware_figure_') and path.exists():
@@ -1889,6 +1928,66 @@ def generate_combined_quantification_review(
             'value': source_aware_readme_ready,
             'interpretation': 'Whether source-aware estimator results may enter README snippets',
         },
+        {
+            'metric': 'severe_aware_status',
+            'value': severe_aware_status,
+            'interpretation': 'Severe-aware ordinal estimator verdict status',
+        },
+        {
+            'metric': 'severe_aware_output_type',
+            'value': severe_aware_verdict.get('selected_output_type', ''),
+            'interpretation': 'Whether P2 reports scalar burden, severe risk, ordinal set, subject-level aggregate, aggregate summary, or limited evidence',
+        },
+        {
+            'metric': 'severe_aware_selected_threshold',
+            'value': severe_aware_verdict.get('selected_severe_threshold', ''),
+            'interpretation': 'Primary severe threshold used for P2 false-negative review',
+        },
+        {
+            'metric': 'severe_aware_hard_blockers',
+            'value': ' | '.join(map(str, severe_aware_hard_blockers)),
+            'interpretation': 'Hard blockers for severe-aware estimator claims',
+        },
+        {
+            'metric': 'severe_aware_scope_limiters',
+            'value': ' | '.join(map(str, severe_aware_scope_limiters)),
+            'interpretation': 'Scope limiters for severe-aware estimator claims',
+        },
+        {
+            'metric': 'severe_aware_severe_risk_reportable',
+            'value': severe_aware_reportable.get('severe_risk', ''),
+            'interpretation': 'Whether severe-risk output is reportable within the current-data claim boundary',
+        },
+        {
+            'metric': 'severe_aware_ordinal_set_reportable',
+            'value': severe_aware_reportable.get('ordinal_prediction_set', ''),
+            'interpretation': 'Whether ordinal prediction-set output is reportable within the current-data claim boundary',
+        },
+        {
+            'metric': 'severe_aware_scalar_burden_reportable',
+            'value': severe_aware_reportable.get('scalar_burden', ''),
+            'interpretation': 'Whether P2 supports scalar burden reliability for severe endotheliosis',
+        },
+        {
+            'metric': 'severe_aware_subject_level_reportable',
+            'value': severe_aware_reportable.get('subject_level', ''),
+            'interpretation': 'Whether subject-level severe-aware aggregation is reportable within the current-data claim boundary',
+        },
+        {
+            'metric': 'severe_aware_aggregate_current_data_reportable',
+            'value': severe_aware_reportable.get('aggregate_current_data', ''),
+            'interpretation': 'Whether aggregate current-data severe-aware summaries are reportable',
+        },
+        {
+            'metric': 'severe_aware_testing_availability',
+            'value': severe_aware_verdict.get('testing_status', ''),
+            'interpretation': 'Independent testing availability for severe-aware estimator',
+        },
+        {
+            'metric': 'severe_aware_readme_snippet_eligible',
+            'value': severe_aware_readme_ready,
+            'interpretation': 'Whether severe-aware estimator results may enter README snippets',
+        },
     ]
     if not source_aware_metrics.empty:
         for _, row in source_aware_metrics.iterrows():
@@ -1901,6 +2000,27 @@ def generate_combined_quantification_review(
                     'metric': f'source_aware_{row.get("split_label")}_stage_index_mae',
                     'value': row.get('stage_index_mae'),
                     'interpretation': f'Source-aware selected image candidate {row.get("candidate_id")} {row.get("split_label")}',
+                }
+            )
+    if not severe_aware_metrics.empty:
+        selected_severe_candidate = str(
+            severe_aware_verdict.get('selected_image_candidate', '')
+        )
+        for _, row in severe_aware_metrics.iterrows():
+            if str(row.get('candidate_id', '')) != selected_severe_candidate:
+                continue
+            summary_rows.append(
+                {
+                    'metric': f'severe_aware_{row.get("split_label")}_stage_index_mae',
+                    'value': row.get('stage_index_mae'),
+                    'interpretation': f'Severe-aware selected image candidate {row.get("candidate_id")} {row.get("split_label")}',
+                }
+            )
+            summary_rows.append(
+                {
+                    'metric': f'severe_aware_{row.get("split_label")}_severe_false_negative_count',
+                    'value': row.get('severe_false_negative_count'),
+                    'interpretation': f'Severe false-negative count for selected candidate {row.get("candidate_id")} {row.get("split_label")}',
                 }
             )
     pd.DataFrame(summary_rows).to_csv(results_summary_csv, index=False)
@@ -1948,7 +2068,7 @@ def generate_combined_quantification_review(
 - Feature count: `{morphology_diagnostics.get('feature_count', '')}`
 - Best image-level morphology candidate: `{morphology_best_image.get('candidate_id', '')}` with stage-index MAE `{_format_optional_float(morphology_best_image.get('stage_index_mae'))}`.
 - Best subject-level morphology candidate: `{morphology_best_subject.get('candidate_id', '')}` with stage-index MAE `{_format_optional_float(morphology_best_subject.get('stage_index_mae'))}`.
-- Feature review: `../burden_model/evidence/morphology_feature_review/feature_review.html`
+- Feature review: `../burden_model/primary_burden_index/evidence/morphology_feature_review/feature_review.html`
 
 ## Learned ROI Screen
 
@@ -1971,6 +2091,20 @@ def generate_combined_quantification_review(
 - Metrics by split: `../burden_model/source_aware_estimator/summary/metrics_by_split.csv`
 - Index: `../burden_model/source_aware_estimator/INDEX.md`
 
+## Severe-Aware Ordinal Estimator
+
+- Status: `{severe_aware_status}`
+- Selected image candidate: `{severe_aware_verdict.get('selected_image_candidate', '')}`
+- Selected subject candidate: `{severe_aware_verdict.get('selected_subject_candidate', '')}`
+- Selected severe threshold: `{severe_aware_verdict.get('selected_severe_threshold', '')}`
+- Selected output type: `{severe_aware_verdict.get('selected_output_type', '')}`
+- Reportable scopes: `{severe_aware_reportable}`
+- Hard blockers: `{', '.join(map(str, severe_aware_hard_blockers)) or 'none'}`
+- Scope limiters: `{', '.join(map(str, severe_aware_scope_limiters)) or 'none'}`
+- Metrics by split: `../burden_model/severe_aware_ordinal_estimator/summary/metrics_by_split.csv`
+- Severe false-negative review: `../burden_model/severe_aware_ordinal_estimator/evidence/severe_false_negative_review.html`
+- Index: `../burden_model/severe_aware_ordinal_estimator/INDEX.md`
+
 ## Documentation Recommendation
 
 Use these results in README/docs only when `README/docs-ready` is `True`. The generated snippet is written every run, but it is not approval for reuse when the readiness flag is false.
@@ -1992,6 +2126,12 @@ The current full-cohort quantification run reports an endotheliosis burden index
         snippet += (
             '\nSource-aware estimator result: eligible under the current-data scoped verdict. '
             'This remains a predictive grade-equivalent burden estimate, not external validation.\n'
+        )
+    if severe_aware_readme_ready:
+        snippet += (
+            '\nSevere-aware estimator result: eligible under the severe-aware scoped verdict. '
+            f'Output type: `{severe_aware_verdict.get("selected_output_type", "")}`. '
+            'This remains predictive grade-equivalent, severe-risk, or ordinal-set evidence for current scored MR TIFF/ROI data, not external validation or tissue percent.\n'
         )
     readme_snippet_path.write_text(snippet, encoding='utf-8')
 
@@ -2058,7 +2198,7 @@ The current full-cohort quantification run reports an endotheliosis burden index
       <table><thead><tr><th>Candidate</th><th>Target level</th><th>Feature set</th><th>Validation</th><th>Stage-index MAE</th><th>Status</th></tr></thead><tbody>{''.join(signal_rows)}</tbody></table>
       <h2>Morphology Feature Screen</h2>
       <p>The morphology screen is exploratory until the operator review confirms the feature detections. Feature rows: {escape(str(morphology_diagnostics.get('row_count', '')))}; feature count: {escape(str(morphology_diagnostics.get('feature_count', '')))}.</p>
-      <p><a href="../burden_model/evidence/morphology_feature_review/feature_review.html">Open morphology feature review</a></p>
+      <p><a href="../burden_model/primary_burden_index/evidence/morphology_feature_review/feature_review.html">Open morphology feature review</a></p>
       <table><thead><tr><th>Candidate</th><th>Target level</th><th>Feature set</th><th>Validation</th><th>Stage-index MAE</th><th>Status</th></tr></thead><tbody>{''.join(morphology_rows)}</tbody></table>
       <h2>Learned ROI Quantification</h2>
       <p><strong>README/docs-ready:</strong> {learned_roi_ready}; <strong>selected track:</strong> {escape(learned_roi_track or 'none')}.</p>
@@ -2075,8 +2215,17 @@ The current full-cohort quantification run reports an endotheliosis burden index
       <p><strong>Scope limiters:</strong> {escape(', '.join(map(str, source_aware_scope_limiters)) or 'none')}</p>
       <p><a href="../burden_model/source_aware_estimator/INDEX.md">Open source-aware estimator index</a> | <a href="../burden_model/source_aware_estimator/summary/metrics_by_split.csv">Metrics by split</a></p>
       <ul>{''.join(source_aware_figure_links) or '<li>No source-aware figures available.</li>'}</ul>
+      <h2>Severe-Aware Ordinal Estimator</h2>
+      <p><strong>Status:</strong> {escape(severe_aware_status)}; <strong>selected output type:</strong> {escape(str(severe_aware_verdict.get('selected_output_type', '')))}</p>
+      <p><strong>Selected image candidate:</strong> {escape(str(severe_aware_verdict.get('selected_image_candidate', '')))}; <strong>selected subject candidate:</strong> {escape(str(severe_aware_verdict.get('selected_subject_candidate', '')))}</p>
+      <p><strong>Selected severe threshold:</strong> {escape(str(severe_aware_verdict.get('selected_severe_threshold', '')))}</p>
+      <p><strong>Reportable scopes:</strong> {escape(str(severe_aware_reportable))}</p>
+      <p><strong>Hard blockers:</strong> {escape(', '.join(map(str, severe_aware_hard_blockers)) or 'none')}</p>
+      <p><strong>Scope limiters:</strong> {escape(', '.join(map(str, severe_aware_scope_limiters)) or 'none')}</p>
+      <p><a href="../burden_model/severe_aware_ordinal_estimator/INDEX.md">Open severe-aware estimator index</a> | <a href="../burden_model/severe_aware_ordinal_estimator/summary/metrics_by_split.csv">Metrics by split</a> | <a href="../burden_model/severe_aware_ordinal_estimator/summary/severe_threshold_metrics.csv">Severe threshold metrics</a> | <a href="../burden_model/severe_aware_ordinal_estimator/evidence/severe_false_negative_review.html">Severe false-negative review</a></p>
+      <ul>{''.join(severe_aware_figure_links) or '<li>No severe-aware figures available.</li>'}</ul>
       <h2>Artifact Links</h2>
-      <p>Primary artifacts: <code>burden_model/primary_model/burden_predictions.csv</code> for held-out grouped validation, <code>burden_model/primary_model/final_model_predictions.csv</code> for the final full-cohort fitted model, <code>burden_model/primary_model/burden_metrics.json</code>, <code>burden_model/calibration/uncertainty_calibration.json</code>, <code>burden_model/evidence/nearest_examples.csv</code>, <code>burden_model/candidates/precision_candidate_summary.json</code>, <code>burden_model/candidates/morphology_candidate_summary.json</code>, <code>burden_model/feature_sets/morphology_features.csv</code>, <code>burden_model/learned_roi/candidates/learned_roi_candidate_summary.json</code>, <code>burden_model/learned_roi/diagnostics/cohort_confounding_diagnostics.json</code>, <code>ordinal_model/ordinal_metrics.json</code>, and <code>ordinal_model/ordinal_predictions.csv</code>.</p>
+      <p>Primary artifacts: <code>burden_model/primary_burden_index/model/burden_predictions.csv</code> for held-out grouped validation, <code>burden_model/primary_burden_index/model/final_model_predictions.csv</code> for the final full-cohort fitted model, <code>burden_model/primary_burden_index/model/burden_metrics.json</code>, <code>burden_model/primary_burden_index/calibration/uncertainty_calibration.json</code>, <code>burden_model/primary_burden_index/evidence/nearest_examples.csv</code>, <code>burden_model/primary_burden_index/candidates/precision_candidate_summary.json</code>, <code>burden_model/primary_burden_index/candidates/morphology_candidate_summary.json</code>, <code>burden_model/primary_burden_index/feature_sets/morphology_features.csv</code>, <code>burden_model/learned_roi/summary/estimator_verdict.json</code>, <code>burden_model/learned_roi/candidates/learned_roi_candidate_summary.json</code>, <code>burden_model/learned_roi/diagnostics/cohort_confounding_diagnostics.json</code>, <code>ordinal_model/ordinal_metrics.json</code>, and <code>ordinal_model/ordinal_predictions.csv</code>.</p>
       <h2>Final Full-Cohort Summaries</h2>
       <table><thead><tr><th>Cohort</th><th>Rows</th><th>Subjects</th><th>Subject-weighted burden</th><th>Stage-index MAE</th></tr></thead><tbody>{''.join(cohort_table_rows)}</tbody></table>
       <h2>Threshold Support</h2>
@@ -2098,6 +2247,53 @@ The current full-cohort quantification run reports an endotheliosis burden index
         'quantification_readme_snippet': readme_snippet_path,
         'quantification_review_assets_dir': assets_dir,
     }
+
+
+def _write_burden_model_index(
+    burden_output_dir: Path, artifacts: dict[str, Path]
+) -> Path:
+    index_path = Path(burden_output_dir) / 'INDEX.md'
+    rows = [
+        (
+            'primary_burden_index',
+            'Primary grouped cumulative-threshold burden-index evaluator',
+            'primary_burden_index/INDEX.md',
+        ),
+        ('learned_roi', 'Capped learned-ROI candidate screen', 'learned_roi/INDEX.md'),
+        (
+            'source_aware_estimator',
+            'Source-aware estimator verdict bundle',
+            'source_aware_estimator/INDEX.md',
+        ),
+        (
+            'severe_aware_ordinal_estimator',
+            'Severe-aware ordinal estimator verdict bundle',
+            'severe_aware_ordinal_estimator/INDEX.md',
+        ),
+    ]
+    table_rows = '\n'.join(
+        f'| `{slug}` | {description} | `{first_read}` |'
+        for slug, description, first_read in rows
+    )
+    generated = sorted(
+        key
+        for key, value in artifacts.items()
+        if isinstance(value, Path) and value.exists()
+    )
+    text = f"""# Burden Model Artifacts
+
+This directory is organized by model or estimator subtree. Open the subtree index first, then follow its summary or typed artifact folders.
+
+| Subtree | Role | First read |
+| --- | --- | --- |
+{table_rows}
+
+`summary/` means first-read verdict material inside an estimator subtree. `summaries/` means aggregate tables such as cohort summaries or interval summaries.
+
+Generated artifact keys: {', '.join(generated)}
+"""
+    index_path.write_text(text, encoding='utf-8')
+    return index_path
 
 
 def _evaluate_ordinal_embedding_table(
@@ -2428,6 +2624,28 @@ def evaluate_embedding_table(
         source_aware_artifacts['source_aware_estimator_verdict'],
     )
     logger.info(
+        'Evaluating severe-aware ordinal estimator -> %s',
+        parent_output / 'burden_model' / 'severe_aware_ordinal_estimator',
+    )
+    severe_aware_artifacts = evaluate_severe_aware_ordinal_endotheliosis_estimator(
+        embedding_df,
+        parent_output / 'burden_model',
+        n_splits=n_splits,
+        change_dir=Path(
+            'openspec/changes/p2-severe-aware-ordinal-endotheliosis-estimator'
+        ),
+    )
+    burden_artifacts.update(severe_aware_artifacts)
+    logger.info(
+        'Severe-aware ordinal estimator complete: verdict=%s',
+        severe_aware_artifacts['severe_aware_estimator_verdict'],
+    )
+    burden_model_index = _write_burden_model_index(
+        parent_output / 'burden_model', burden_artifacts
+    )
+    burden_artifacts['burden_model_index'] = burden_model_index
+    logger.info('Burden-model first-read index written -> %s', burden_model_index)
+    logger.info(
         'Generating combined quantification review -> %s',
         parent_output / 'quantification_review' / 'quantification_review.html',
     )
@@ -2478,7 +2696,9 @@ def run_contract_first_quantification(
 
     manifest_path = project_dir / 'manifest.csv'
     if manifest_path.exists() and score_source == 'auto' and annotation_source is None:
-        logger.info('Manifest-backed quantification detected: manifest=%s', manifest_path)
+        logger.info(
+            'Manifest-backed quantification detected: manifest=%s', manifest_path
+        )
         return run_manifest_quantification(
             manifest_root=project_dir,
             segmentation_model_path=segmentation_model_path,
@@ -2568,7 +2788,11 @@ def run_contract_first_quantification(
             segmentation_model_path=segmentation_model_path,
             output_dir=output_dir / 'embeddings',
         )
-        logger.info('Embedding table ready: rows=%d, columns=%d', len(embedding_table), len(embedding_table.columns))
+        logger.info(
+            'Embedding table ready: rows=%d, columns=%d',
+            len(embedding_table),
+            len(embedding_table.columns),
+        )
         if stop_after == 'embeddings':
             return {
                 'raw_inventory': inventory_path,
@@ -2605,7 +2829,11 @@ def run_contract_first_quantification(
     metadata_df = processor.process_glomeruli_scoring_matrix(
         metadata_file, output_path=metadata_output_dir / 'standardized_metadata.csv'
     )
-    logger.info('Metadata standardized: rows=%d, output=%s', len(metadata_df), metadata_output_dir / 'standardized_metadata.csv')
+    logger.info(
+        'Metadata standardized: rows=%d, output=%s',
+        len(metadata_df),
+        metadata_output_dir / 'standardized_metadata.csv',
+    )
 
     migration_plan = build_migration_plan(
         project_dir, metadata_df, mapping_file=mapping_file
@@ -2624,7 +2852,11 @@ def run_contract_first_quantification(
     validation_path = save_contract_report(
         validation_report, output_dir / 'canonical_contract_validation.json'
     )
-    logger.info('Canonical contract validation status=%s report=%s', validation_report['overall_status'], validation_path)
+    logger.info(
+        'Canonical contract validation status=%s report=%s',
+        validation_report['overall_status'],
+        validation_path,
+    )
 
     if validation_report['overall_status'] != 'PASS':
         unresolved = migration_plan[
@@ -2682,7 +2914,11 @@ def run_contract_first_quantification(
         segmentation_model_path=segmentation_model_path,
         output_dir=output_dir / 'embeddings',
     )
-    logger.info('Embedding table ready: rows=%d, columns=%d', len(embedding_table), len(embedding_table.columns))
+    logger.info(
+        'Embedding table ready: rows=%d, columns=%d',
+        len(embedding_table),
+        len(embedding_table.columns),
+    )
     if stop_after == 'embeddings':
         return {
             'raw_inventory': inventory_path,

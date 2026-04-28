@@ -8,15 +8,15 @@ Future burden-index runs SHALL organize burden artifacts into role-specific subf
 
 #### Scenario: Grouped burden output folders are written
 - **WHEN** `eq run-config --config configs/endotheliosis_quantification.yaml` completes quantification
-- **THEN** the run SHALL write burden artifacts under `burden_model/primary_model/`, `burden_model/validation/`, `burden_model/calibration/`, `burden_model/summaries/`, `burden_model/evidence/`, `burden_model/candidates/`, `burden_model/diagnostics/`, and `burden_model/feature_sets/`
-- **AND** candidate-screen artifacts SHALL live under `burden_model/candidates/`
-- **AND** feature tables SHALL live under `burden_model/feature_sets/`
-- **AND** review evidence SHALL live under `burden_model/evidence/`
+- **THEN** the run SHALL write burden artifacts under `burden_model/primary_burden_index/model/`, `burden_model/primary_burden_index/validation/`, `burden_model/primary_burden_index/calibration/`, `burden_model/primary_burden_index/summaries/`, `burden_model/primary_burden_index/evidence/`, `burden_model/primary_burden_index/candidates/`, `burden_model/primary_burden_index/diagnostics/`, and `burden_model/primary_burden_index/feature_sets/`
+- **AND** candidate-screen artifacts SHALL live under `burden_model/primary_burden_index/candidates/`
+- **AND** feature tables SHALL live under `burden_model/primary_burden_index/feature_sets/`
+- **AND** review evidence SHALL live under `burden_model/primary_burden_index/evidence/`
 
 #### Scenario: Candidate artifacts are not presented as deployed models
 - **WHEN** quantification review reports or summaries list model artifacts
-- **THEN** `burden_model/candidates/*` artifacts SHALL be labeled as candidate screens or review evidence
-- **AND** only serialized selected model artifacts under `burden_model/primary_model/` SHALL be described as model artifacts
+- **THEN** `burden_model/primary_burden_index/candidates/*` artifacts SHALL be labeled as candidate screens or review evidence
+- **AND** only serialized selected model artifacts under `burden_model/primary_burden_index/model/` SHALL be described as model artifacts
 - **AND** the report SHALL state that candidate screens do not establish deployment readiness
 
 #### Scenario: Historical flat outputs are not silently shimmed
@@ -29,7 +29,7 @@ The endotheliosis quantification workflow SHALL produce a continuous `endothelio
 
 #### Scenario: Burden predictions are written for the full scored cohort
 - **WHEN** `eq run-config --config configs/endotheliosis_quantification.yaml` completes the full admitted scored mask-paired cohort workflow
-- **THEN** the run SHALL write `burden_model/primary_model/burden_predictions.csv` under the quantification output root
+- **THEN** the run SHALL write `burden_model/primary_burden_index/model/burden_predictions.csv` under the quantification output root
 - **AND** the table SHALL contain one row per evaluated embedding row
 - **AND** the table SHALL contain `endotheliosis_burden_0_100`
 - **AND** the table SHALL contain `burden_interval_low_0_100`, `burden_interval_high_0_100`, `burden_interval_coverage`, `burden_interval_method`, and `prediction_set_scores`
@@ -53,21 +53,21 @@ The burden-index workflow SHALL provide calibrated uncertainty for each image-le
 
 #### Scenario: Per-image prediction intervals are emitted
 - **WHEN** burden predictions are written
-- **THEN** `burden_model/primary_model/burden_predictions.csv` SHALL contain `burden_interval_low_0_100`, `burden_interval_high_0_100`, `burden_interval_coverage`, and `burden_interval_method`
+- **THEN** `burden_model/primary_burden_index/model/burden_predictions.csv` SHALL contain `burden_interval_low_0_100`, `burden_interval_high_0_100`, `burden_interval_coverage`, and `burden_interval_method`
 - **AND** `0 <= burden_interval_low_0_100 <= endotheliosis_burden_0_100 <= burden_interval_high_0_100 <= 100` SHALL hold within floating-point tolerance
 - **AND** `burden_interval_coverage` SHALL identify the nominal coverage target used for the interval
 - **AND** `burden_interval_method` SHALL identify the calibration method
 
 #### Scenario: Prediction set scores are emitted
 - **WHEN** burden predictions are written
-- **THEN** `burden_model/primary_model/burden_predictions.csv` SHALL contain `prediction_set_scores`
+- **THEN** `burden_model/primary_burden_index/model/burden_predictions.csv` SHALL contain `prediction_set_scores`
 - **AND** each prediction set SHALL contain only supported rubric values from `[0.0, 0.5, 1.0, 1.5, 2.0, 3.0]`
-- **AND** the prediction set construction method SHALL be recorded in `burden_model/calibration/uncertainty_calibration.json`
+- **AND** the prediction set construction method SHALL be recorded in `burden_model/primary_burden_index/calibration/uncertainty_calibration.json`
 - **AND** prediction sets SHALL be calibrated with grouped subject-level conformal calibration or another grouped out-of-fold method that does not use same-biological-unit rows as independent calibration examples
 
 #### Scenario: Uncertainty calibration is auditable
 - **WHEN** burden evaluation completes
-- **THEN** the run SHALL write `burden_model/calibration/uncertainty_calibration.json`
+- **THEN** the run SHALL write `burden_model/primary_burden_index/calibration/uncertainty_calibration.json`
 - **AND** the artifact SHALL record the calibration method, grouping column, nominal coverage, empirical coverage where estimable, residual or conformity score summary, and any folds or thresholds where calibration was underpowered
 - **AND** the artifact SHALL report prediction-set empirical coverage and average set size overall, by cohort where estimable, and by observed score stratum where estimable
 
@@ -89,13 +89,13 @@ The burden-index model SHALL predict ordered threshold probabilities for the exp
 
 #### Scenario: Threshold probability columns are emitted
 - **WHEN** burden predictions are written
-- **THEN** `burden_model/primary_model/burden_predictions.csv` SHALL contain `prob_score_gt_0`, `prob_score_gt_0p5`, `prob_score_gt_1`, `prob_score_gt_1p5`, and `prob_score_gt_2`
+- **THEN** `burden_model/primary_burden_index/model/burden_predictions.csv` SHALL contain `prob_score_gt_0`, `prob_score_gt_0p5`, `prob_score_gt_1`, `prob_score_gt_1p5`, and `prob_score_gt_2`
 - **AND** each probability SHALL be finite and within `[0, 1]`
 
 #### Scenario: Public threshold probabilities are monotonic
 - **WHEN** a prediction row is inspected
 - **THEN** `prob_score_gt_0 >= prob_score_gt_0p5 >= prob_score_gt_1 >= prob_score_gt_1p5 >= prob_score_gt_2` SHALL hold after any deterministic monotonic correction
-- **AND** the correction method SHALL be recorded in `burden_model/primary_model/burden_metrics.json`
+- **AND** the correction method SHALL be recorded in `burden_model/primary_burden_index/model/burden_metrics.json`
 
 #### Scenario: Burden index formula is stable
 - **WHEN** threshold probabilities are available for a prediction row
@@ -131,18 +131,18 @@ The burden-index model SHALL be evaluated with grouped subject-level cross-valid
 - **WHEN** the scored cohort contains multiple image replicates per subject
 - **THEN** burden validation SHALL group by `subject_id`
 - **AND** all image replicates from the same subject SHALL stay in the same train or validation partition
-- **AND** the run SHALL write `burden_model/validation/validation_design.json`
+- **AND** the run SHALL write `burden_model/primary_burden_index/validation/validation_design.json`
 
 #### Scenario: Cohort-level burden stability is assessed
 - **WHEN** cohort-level burden summaries are considered for README/docs or downstream analysis
 - **THEN** the run SHALL compare subject-heldout cohort mean burden estimates with final full-cohort fitted cohort mean burden estimates
-- **AND** the run SHALL write `burden_model/summaries/cohort_stability.csv`
+- **AND** the run SHALL write `burden_model/primary_burden_index/summaries/cohort_stability.csv`
 - **AND** cohort mean estimates SHOULD differ by no more than 5 burden-index points unless the cohort summary is explicitly marked exploratory
 - **AND** final full-cohort fitted predictions SHALL be reported separately from held-out validation predictions
 
 #### Scenario: Biological grouping key is audited before validation
 - **WHEN** burden modeling begins
-- **THEN** the run SHALL write `burden_model/diagnostics/grouping_audit.json`
+- **THEN** the run SHALL write `burden_model/primary_burden_index/diagnostics/grouping_audit.json`
 - **AND** the artifact SHALL identify the grouping key used for cross-validation, conformal calibration, nearest-neighbor exclusion, and grouped resampling
 - **AND** the artifact SHALL state whether `subject_id` is present and used as the certified grouped-validation key
 - **AND** if `subject_id` cannot be certified, the report SHALL mark the burden model as exploratory rather than operationally ready
@@ -151,27 +151,27 @@ The burden-index model SHALL be evaluated with grouped subject-level cross-valid
 - **WHEN** burden modeling evaluates the full scored cohort
 - **THEN** cross-validation SHALL group rows by the certified biological unit grouping key
 - **AND** no `subject_id` group SHALL appear in both train and validation partitions for a fold
-- **AND** the number of folds SHALL be recorded in `burden_model/primary_model/burden_metrics.json`
+- **AND** the number of folds SHALL be recorded in `burden_model/primary_burden_index/model/burden_metrics.json`
 
 #### Scenario: Overall burden metrics are written
 - **WHEN** burden evaluation completes
-- **THEN** `burden_model/primary_model/burden_metrics.json` SHALL include `n_examples`, `n_subject_groups`, `n_splits`, score counts, threshold positive counts, overall stage-index MAE, overall grade-scale MAE, threshold Brier scores, and numerical-stability status
+- **THEN** `burden_model/primary_burden_index/model/burden_metrics.json` SHALL include `n_examples`, `n_subject_groups`, `n_splits`, score counts, threshold positive counts, overall stage-index MAE, overall grade-scale MAE, threshold Brier scores, and numerical-stability status
 
 #### Scenario: Threshold support gates are written
 - **WHEN** burden evaluation completes
-- **THEN** the run SHALL write `burden_model/validation/threshold_support.csv`
+- **THEN** the run SHALL write `burden_model/primary_burden_index/validation/threshold_support.csv`
 - **AND** the artifact SHALL report positive and negative support by row count and biological-group count for each public threshold overall and by cohort where available
 - **AND** thresholds or cohorts with inadequate biological-group support SHALL be marked underpowered or non-estimable
 - **AND** an underpowered public threshold SHALL prevent the report from calling the model operationally ready for that unsupported threshold or stratum
 
 #### Scenario: Cohort-stratified burden metrics are written
 - **WHEN** burden evaluation completes and `cohort_id` is available
-- **THEN** `burden_model/summaries/cohort_metrics.csv` SHALL include separate rows for `lauren_preeclampsia` and `vegfri_dox` when those cohorts are present
+- **THEN** `burden_model/primary_burden_index/summaries/cohort_metrics.csv` SHALL include separate rows for `lauren_preeclampsia` and `vegfri_dox` when those cohorts are present
 - **AND** each row SHALL report at least the row count, biological-group count, stage-index MAE, grade-scale MAE, image-row mean predicted burden, and biological-unit-weighted mean predicted burden
 
 #### Scenario: Group summary confidence intervals are written
 - **WHEN** burden evaluation completes and groupable strata are available
-- **THEN** `burden_model/summaries/group_summary_intervals.csv` SHALL summarize burden estimates for available strata such as `subject_prefix`, `cohort_id`, treatment group, or other validated grouping columns
+- **THEN** `burden_model/primary_burden_index/summaries/group_summary_intervals.csv` SHALL summarize burden estimates for available strata such as `subject_prefix`, `cohort_id`, treatment group, or other validated grouping columns
 - **AND** interval calculations SHALL use grouped resampling or another method that does not treat repeated image rows from the same subject as independent biological units
 - **AND** the artifact SHALL label the interval type as an aggregate confidence interval, distinct from per-image prediction intervals
 - **AND** the artifact SHALL record the estimand, resampling unit, weighting rule, number of clusters, and non-estimable or unstable flags
@@ -179,8 +179,8 @@ The burden-index model SHALL be evaluated with grouped subject-level cross-valid
 
 #### Scenario: Calibration artifacts are written
 - **WHEN** burden evaluation completes
-- **THEN** `burden_model/calibration/calibration_bins.csv` SHALL summarize predicted burden bins against observed threshold-derived burden targets
-- **AND** empty bins SHALL be represented explicitly or omitted with the binning method recorded in `burden_model/primary_model/burden_metrics.json`
+- **THEN** `burden_model/primary_burden_index/calibration/calibration_bins.csv` SHALL summarize predicted burden bins against observed threshold-derived burden targets
+- **AND** empty bins SHALL be represented explicitly or omitted with the binning method recorded in `burden_model/primary_burden_index/model/burden_metrics.json`
 
 ### Requirement: Burden model comparison is explicit
 The quantification workflow SHALL compare the cumulative threshold burden model against direct regression and ordinal/multiclass comparator outputs before presenting an operational verdict.
@@ -198,7 +198,7 @@ The quantification workflow SHALL compare the cumulative threshold burden model 
 
 #### Scenario: Precision candidate screen is expanded
 - **WHEN** burden evaluation completes
-- **THEN** `burden_model/candidates/signal_comparator_metrics.csv` SHALL include image-level frozen-embedding, ROI scalar, and embedding-plus-ROI ridge candidates validated with subject-heldout folds
+- **THEN** `burden_model/primary_burden_index/candidates/signal_comparator_metrics.csv` SHALL include image-level frozen-embedding, ROI scalar, and embedding-plus-ROI ridge candidates validated with subject-heldout folds
 - **AND** it SHALL include subject-level global-mean baseline, ROI scalar, frozen-embedding, and embedding-plus-ROI candidates validated across held-out subjects
 - **AND** every candidate row SHALL identify the target level, target definition, model family, feature set, validation grouping, row count, subject count, feature count, stage-index MAE, finite-output status, backend warning count, candidate status, and intended use
 - **AND** image-level candidates SHALL NOT split a `subject_id` across train and validation folds
@@ -206,12 +206,12 @@ The quantification workflow SHALL compare the cumulative threshold burden model 
 
 #### Scenario: Subject-level precision predictions are written
 - **WHEN** subject-level precision candidates are evaluated
-- **THEN** `burden_model/candidates/subject_level_candidate_predictions.csv` SHALL contain one row per held-out subject per subject-level candidate
+- **THEN** `burden_model/primary_burden_index/candidates/subject_level_candidate_predictions.csv` SHALL contain one row per held-out subject per subject-level candidate
 - **AND** each row SHALL include `subject_id`, `cohort_id`, observed subject mean stage-index target, predicted subject burden, absolute error, fold, candidate identifier, feature set, model family, and prediction source
 
 #### Scenario: Precision candidate recommendation is recorded
 - **WHEN** the precision candidate screen is written
-- **THEN** `burden_model/candidates/precision_candidate_summary.json` SHALL identify the current primary burden model metrics, best image-level candidate, best subject-level candidate, numerical-warning status, and recommendation
+- **THEN** `burden_model/primary_burden_index/candidates/precision_candidate_summary.json` SHALL identify the current primary burden model metrics, best image-level candidate, best subject-level candidate, numerical-warning status, and recommendation
 - **AND** the recommendation SHALL distinguish candidates suitable for per-image operational prediction from candidates suitable only for subject/cohort-level burden summaries
 - **AND** the recommendation SHALL NOT select a candidate with nonfinite outputs
 
@@ -291,7 +291,7 @@ The quantification workflow SHALL write a combined reviewer-facing report that m
 #### Scenario: Morphology feature summary is included when available
 - **WHEN** morphology features are generated
 - **THEN** `quantification_review/quantification_review.html` SHALL include a morphology feature summary section
-- **AND** it SHALL link to `burden_model/evidence/morphology_feature_review/feature_review.html`
+- **AND** it SHALL link to `burden_model/primary_burden_index/evidence/morphology_feature_review/feature_review.html`
 - **AND** it SHALL show whether operator adjudication was provided
 
 #### Scenario: Subject/cohort and image-level tracks are separated
@@ -318,13 +318,13 @@ The burden-index workflow SHALL produce evidence artifacts that help reviewers u
 
 #### Scenario: Threshold-profile explanations are written
 - **WHEN** burden predictions are written
-- **THEN** the run SHALL write `burden_model/evidence/prediction_explanations.csv`
+- **THEN** the run SHALL write `burden_model/primary_burden_index/evidence/prediction_explanations.csv`
 - **AND** each row SHALL include the row identifier, threshold probabilities, burden estimate, prediction interval fields, prediction set scores, and source image or ROI provenance
 - **AND** the artifact SHALL label threshold probabilities as model evidence rather than causal explanation
 
 #### Scenario: Nearest scored examples are written
 - **WHEN** burden evaluation completes
-- **THEN** the run SHALL write `burden_model/evidence/nearest_examples.csv`
+- **THEN** the run SHALL write `burden_model/primary_burden_index/evidence/nearest_examples.csv`
 - **AND** each evaluated row SHALL include at least the nearest scored example identifiers, nearest example scores, distances in the frozen embedding space, cohort or source identifiers when available, and path provenance needed to inspect the examples
 - **AND** nearest-neighbor search SHALL be computed within the same frozen-embedding feature space used by the burden model
 - **AND** nearest examples for out-of-fold predictions SHALL come only from the corresponding training fold and SHALL exclude the same biological unit
@@ -332,7 +332,7 @@ The burden-index workflow SHALL produce evidence artifacts that help reviewers u
 
 #### Scenario: Threshold-level calibration is reported
 - **WHEN** burden evaluation completes
-- **THEN** threshold-level calibration summaries SHALL be written to `burden_model/validation/threshold_metrics.csv` or another documented burden artifact
+- **THEN** threshold-level calibration summaries SHALL be written to `burden_model/primary_burden_index/validation/threshold_metrics.csv` or another documented burden artifact
 - **AND** pooled burden calibration SHALL NOT be the only calibration evidence used for model selection
 
 #### Scenario: Visual attribution is optional and caveated
@@ -346,11 +346,11 @@ Burden-index artifacts SHALL record enough provenance to identify the model fami
 
 #### Scenario: Final burden model is serialized
 - **WHEN** burden modeling completes
-- **THEN** the run SHALL write `burden_model/primary_model/burden_model.joblib`
+- **THEN** the run SHALL write `burden_model/primary_burden_index/model/burden_model.joblib`
 - **AND** the serialized artifact SHALL include the allowed score values, threshold values, embedding column names, scaler or preprocessing state, final fitted threshold models, and model metadata
 
 #### Scenario: Burden metrics identify the implementation
-- **WHEN** `burden_model/primary_model/burden_metrics.json` is inspected
+- **WHEN** `burden_model/primary_burden_index/model/burden_metrics.json` is inspected
 - **THEN** it SHALL identify `eq.quantification.burden` as the canonical module
 - **AND** it SHALL identify the estimator family, regularization settings, random state, monotonic correction method, and any numerical warning messages captured during fitting or prediction
 
@@ -404,12 +404,13 @@ The combined quantification report SHALL include learned ROI candidate evidence 
 - **AND** it SHALL NOT present a subject/cohort result as evidence that individual image predictions are operationally precise
 - **AND** it SHALL NOT include learned ROI results when readiness passed by stage-index MAE alone without passing uncertainty, numerical-stability, ordinal/grade-scale, and cohort-diagnostic gates
 
-### Requirement: Learned ROI outputs use grouped burden layout
-Learned ROI artifacts SHALL live under the grouped burden output contract.
+### Requirement: Learned ROI outputs use contained burden subtree layout
+Learned ROI artifacts SHALL live under the learned ROI subtree of the burden output contract.
 
 #### Scenario: Learned ROI output folders are written
 - **WHEN** learned ROI evaluation runs
-- **THEN** artifacts SHALL be written under `burden_model/learned_roi/primary_model/`, `burden_model/learned_roi/validation/`, `burden_model/learned_roi/calibration/`, `burden_model/learned_roi/summaries/`, `burden_model/learned_roi/evidence/`, `burden_model/learned_roi/candidates/`, `burden_model/learned_roi/diagnostics/`, and `burden_model/learned_roi/feature_sets/`
+- **THEN** first-read learned ROI artifacts SHALL be written under `burden_model/learned_roi/summary/`
+- **AND** typed learned ROI artifacts SHALL be written under `burden_model/learned_roi/validation/`, `burden_model/learned_roi/calibration/`, `burden_model/learned_roi/summaries/`, `burden_model/learned_roi/evidence/`, `burden_model/learned_roi/candidates/`, `burden_model/learned_roi/diagnostics/`, and `burden_model/learned_roi/feature_sets/`
 - **AND** the workflow SHALL NOT write duplicate learned ROI compatibility aliases to flat `burden_model/*` locations
 
 ### Requirement: Learned ROI burden claims remain predictive
@@ -470,4 +471,3 @@ Experimental burden estimators SHALL be organized so the first artifact a reader
 - **THEN** they SHALL live under an `internal/` or `diagnostics/` role folder
 - **AND** human-facing verdict files SHALL live under `summary/`
 - **AND** the workflow SHALL NOT duplicate the same experimental table into multiple role folders without a named consumer
-

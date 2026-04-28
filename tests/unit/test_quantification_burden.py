@@ -93,11 +93,13 @@ def test_evaluate_burden_index_table_writes_expected_artifacts(tmp_path):
         'morphology_candidate_metrics',
         'subject_morphology_candidate_predictions',
         'morphology_candidate_summary',
+        'primary_burden_index_index',
     ]:
         assert artifacts[key].exists()
 
-    assert artifacts['burden_predictions'].parent.name == 'primary_model'
-    assert artifacts['burden_metrics'].parent.name == 'primary_model'
+    assert artifacts['burden_predictions'].parent.name == 'model'
+    assert artifacts['burden_metrics'].parent.name == 'model'
+    assert artifacts['burden_predictions'].parents[1].name == 'primary_burden_index'
     assert artifacts['threshold_metrics'].parent.name == 'validation'
     assert artifacts['uncertainty_calibration'].parent.name == 'calibration'
     assert artifacts['group_summary_intervals'].parent.name == 'summaries'
@@ -110,6 +112,10 @@ def test_evaluate_burden_index_table_writes_expected_artifacts(tmp_path):
     )
     assert not (tmp_path / 'burden' / 'burden_predictions.csv').exists()
     assert not (tmp_path / 'burden' / 'burden_model.joblib').exists()
+    assert not (tmp_path / 'burden' / 'primary_model').exists()
+    assert not (tmp_path / 'burden' / 'summaries').exists()
+    assert not (tmp_path / 'burden' / 'validation').exists()
+    assert (tmp_path / 'burden' / 'primary_burden_index' / 'INDEX.md').exists()
 
     predictions = pd.read_csv(artifacts['burden_predictions'])
     assert 'animal_id' not in predictions.columns

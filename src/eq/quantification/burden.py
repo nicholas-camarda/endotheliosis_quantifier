@@ -38,8 +38,9 @@ THRESHOLD_PROBABILITY_COLUMNS = [
 BURDEN_COLUMN = 'endotheliosis_burden_0_100'
 STAGE_INDEX_TARGETS = {0.0: 0.0, 0.5: 20.0, 1.0: 40.0, 1.5: 60.0, 2.0: 80.0, 3.0: 100.0}
 PREDICTION_SET_COVERAGE = 0.90
+PRIMARY_BURDEN_INDEX_ROOT_NAME = 'primary_burden_index'
 BURDEN_OUTPUT_GROUPS = {
-    'primary_model': 'primary_model',
+    'primary_model': 'model',
     'validation': 'validation',
     'calibration': 'calibration',
     'summaries': 'summaries',
@@ -74,8 +75,10 @@ LEGACY_FLAT_BURDEN_FILES = [
 
 def burden_output_paths(output_dir: Path) -> dict[str, Path]:
     """Return the canonical grouped burden artifact directories."""
-    root = Path(output_dir)
+    root = Path(output_dir) / PRIMARY_BURDEN_INDEX_ROOT_NAME
     paths = {key: root / dirname for key, dirname in BURDEN_OUTPUT_GROUPS.items()}
+    paths['root'] = root
+    paths['index'] = root / 'INDEX.md'
     paths['morphology_review'] = paths['evidence'] / 'morphology_feature_review'
     return paths
 
@@ -83,13 +86,40 @@ def burden_output_paths(output_dir: Path) -> dict[str, Path]:
 def _prepare_burden_output_contract(output_dir: Path) -> dict[str, Path]:
     """Create grouped output directories and remove stale flat artifacts."""
     paths = burden_output_paths(output_dir)
-    for directory in paths.values():
+    file_keys = {'index'}
+    for key, directory in paths.items():
+        if key in file_keys:
+            continue
         directory.mkdir(parents=True, exist_ok=True)
     for filename in LEGACY_FLAT_BURDEN_FILES:
         stale_path = Path(output_dir) / filename
         if stale_path.is_file():
             stale_path.unlink()
     return paths
+
+
+def _write_primary_burden_index(index_path: Path) -> Path:
+    text = """# Primary Burden Index
+
+This subtree contains the original grouped cumulative-threshold burden-index evaluator.
+
+## First Read
+
+- `model/burden_metrics.json`: validation metrics, support gates, calibration contract, and model provenance.
+- `model/burden_predictions.csv`: subject-held-out grouped validation predictions.
+- `model/final_model_predictions.csv`: final full-cohort fitted predictions.
+- `summaries/`: aggregate cohort and interval summary tables.
+- `validation/`: grouped validation design, threshold support, threshold metrics, and cohort stability.
+- `calibration/`: calibration bins and uncertainty calibration.
+- `evidence/`: reviewer evidence, nearest examples, and morphology feature review.
+- `candidates/`: exploratory precision and morphology candidate screens.
+- `feature_sets/`: deterministic feature tables used by candidate screens.
+- `diagnostics/`: feature diagnostics and other machine-readable checks.
+
+`summaries/` contains aggregate tables. Estimator `summary/` directories elsewhere under `burden_model/` contain first-read verdict bundles.
+"""
+    index_path.write_text(text, encoding='utf-8')
+    return index_path
 
 
 class BurdenModelError(ValueError):
@@ -1875,8 +1905,8 @@ def evaluate_burden_index_table(
                 'threshold_models': final_models,
                 'model_metadata': metrics,
                 'prediction_contract': {
-                    'validation_predictions': 'primary_model/burden_predictions.csv',
-                    'final_full_cohort_predictions': 'primary_model/final_model_predictions.csv',
+                    'validation_predictions': 'primary_burden_index/model/burden_predictions.csv',
+                    'final_full_cohort_predictions': 'primary_burden_index/model/final_model_predictions.csv',
                     'final_prediction_source': 'final_model_full_cohort_fit',
                     'validation_prediction_source': 'held_out_grouped_fold_prediction',
                 },
@@ -1884,8 +1914,14 @@ def evaluate_burden_index_table(
             handle,
         )
     logger.info('Serialized burden model written -> %s', model_path)
+    primary_burden_index = _write_primary_burden_index(output_paths['index'])
+    logger.info(
+        'Primary burden-index first-read index written -> %s', primary_burden_index
+    )
 
     return {
+        'primary_burden_index': output_paths['root'],
+        'primary_burden_index_index': primary_burden_index,
         'burden_predictions': predictions_path,
         'burden_metrics': metrics_path,
         'threshold_metrics': threshold_metrics_path,

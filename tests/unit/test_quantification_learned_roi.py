@@ -117,6 +117,10 @@ def test_evaluate_learned_roi_writes_capped_candidates_and_gates(tmp_path):
 
     for key in [
         'learned_roi_provider_audit',
+        'learned_roi_index',
+        'learned_roi_estimator_verdict',
+        'learned_roi_estimator_verdict_md',
+        'learned_roi_artifact_manifest',
         'learned_roi_features',
         'learned_roi_feature_metadata',
         'learned_roi_feature_diagnostics',
@@ -199,9 +203,22 @@ def test_evaluate_learned_roi_writes_capped_candidates_and_gates(tmp_path):
         summary['claim_boundary']
         == 'predictive grade-equivalent endotheliosis burden; not tissue percent, closed-capillary percent, causal evidence, or mechanistic proof'
     )
+    verdict = json.loads(
+        artifacts['learned_roi_estimator_verdict'].read_text(encoding='utf-8')
+    )
+    assert verdict['estimator'] == 'learned_roi'
+    assert verdict['candidate_count'] == len(expected_candidates)
+    assert verdict['claim_boundary'] == summary['claim_boundary']
+    manifest = json.loads(
+        artifacts['learned_roi_artifact_manifest'].read_text(encoding='utf-8')
+    )
+    assert manifest['first_read']['verdict_json'] == 'summary/estimator_verdict.json'
+    assert 'learned_roi_candidate_summary' in manifest['artifacts']
+    assert (tmp_path / 'burden' / 'learned_roi' / 'INDEX.md').exists()
 
     review_html = artifacts['learned_roi_review_html'].read_text(encoding='utf-8')
     assert 'Learned ROI Quantification Review' in review_html
     assert 'not proof of closed-lumen biology' in review_html
     assert not (tmp_path / 'burden' / 'learned_roi_candidate_summary.json').exists()
     assert not (tmp_path / 'burden' / 'learned_roi_predictions.csv').exists()
+    assert not (tmp_path / 'burden' / 'learned_roi' / 'primary_model').exists()
