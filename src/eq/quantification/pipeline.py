@@ -55,6 +55,9 @@ from eq.quantification.ordinal import (
     CanonicalOrdinalClassifier,
     build_grouped_ordinal_cohort_profile,
 )
+from eq.quantification.source_aware_estimator import (
+    evaluate_source_aware_endotheliosis_estimator,
+)
 from eq.training.transfer_learning import _get_encoder_module
 from eq.utils.logger import get_logger
 
@@ -1469,6 +1472,23 @@ def generate_combined_quantification_review(
         and burden_artifacts['learned_roi_candidate_metrics'].stat().st_size > 0
         else pd.DataFrame()
     )
+    source_aware_verdict = (
+        _read_json_if_exists(burden_artifacts['source_aware_estimator_verdict'])
+        if burden_artifacts.get('source_aware_estimator_verdict')
+        else {}
+    )
+    source_aware_metrics = (
+        pd.read_csv(burden_artifacts['source_aware_metrics_by_split'])
+        if burden_artifacts.get('source_aware_metrics_by_split')
+        and burden_artifacts['source_aware_metrics_by_split'].exists()
+        and burden_artifacts['source_aware_metrics_by_split'].stat().st_size > 0
+        else pd.DataFrame()
+    )
+    source_aware_upstream = (
+        _read_json_if_exists(burden_artifacts['source_aware_upstream_roi_adequacy'])
+        if burden_artifacts.get('source_aware_upstream_roi_adequacy')
+        else {}
+    )
 
     support_status = str(burden_metrics.get('support_gate_status', 'unknown'))
     numerical_status = str(burden_metrics.get('numerical_stability_status', 'unknown'))
@@ -1513,6 +1533,23 @@ def generate_combined_quantification_review(
     learned_roi_ready = bool(learned_roi_summary.get('readme_docs_ready', False))
     learned_roi_track = str(learned_roi_summary.get('readme_docs_ready_track', ''))
     learned_roi_blockers = learned_roi_summary.get('blockers', [])
+    source_aware_status = str(source_aware_verdict.get('overall_status', 'not_run'))
+    source_aware_readme_ready = bool(
+        source_aware_verdict.get('readme_snippet_eligible', False)
+    )
+    source_aware_scope_limiters = source_aware_verdict.get('scope_limiters', [])
+    source_aware_hard_blockers = source_aware_verdict.get('hard_blockers', [])
+    source_aware_reportable = source_aware_verdict.get('reportable_scopes', {})
+    source_aware_figure_links = []
+    for key, path in burden_artifacts.items():
+        if key.startswith('source_aware_figure_') and path.exists():
+            rel = (
+                Path('../burden_model/source_aware_estimator/summary/figures')
+                / path.name
+            )
+            source_aware_figure_links.append(
+                f'<li><a href="{escape(str(rel))}">{escape(path.name)}</a></li>'
+            )
 
     cohort_table_rows = []
     for _, row in cohort_metrics_for_results.iterrows():
@@ -1812,7 +1849,60 @@ def generate_combined_quantification_review(
             'value': ' | '.join(map(str, learned_roi_blockers)),
             'interpretation': 'Explicit learned ROI readiness blockers',
         },
+        {
+            'metric': 'source_aware_status',
+            'value': source_aware_status,
+            'interpretation': 'Source-aware estimator verdict status',
+        },
+        {
+            'metric': 'source_aware_upstream_roi_adequacy',
+            'value': source_aware_upstream.get('status', ''),
+            'interpretation': 'Upstream MR TIFF-to-ROI adequacy status',
+        },
+        {
+            'metric': 'source_aware_hard_blockers',
+            'value': ' | '.join(map(str, source_aware_hard_blockers)),
+            'interpretation': 'Hard blockers for source-aware estimator claims',
+        },
+        {
+            'metric': 'source_aware_scope_limiters',
+            'value': ' | '.join(map(str, source_aware_scope_limiters)),
+            'interpretation': 'Scope limiters for source-aware estimator claims',
+        },
+        {
+            'metric': 'source_aware_image_reportable',
+            'value': source_aware_reportable.get('image_level', ''),
+            'interpretation': 'Whether image-level source-aware estimates are reportable within the current claim boundary',
+        },
+        {
+            'metric': 'source_aware_subject_reportable',
+            'value': source_aware_reportable.get('subject_level', ''),
+            'interpretation': 'Whether subject-level source-aware estimates are reportable within the current claim boundary',
+        },
+        {
+            'metric': 'source_aware_aggregate_current_data_reportable',
+            'value': source_aware_reportable.get('aggregate_current_data', ''),
+            'interpretation': 'Whether aggregate current-data source-aware estimates are reportable within the current claim boundary',
+        },
+        {
+            'metric': 'source_aware_readme_snippet_eligible',
+            'value': source_aware_readme_ready,
+            'interpretation': 'Whether source-aware estimator results may enter README snippets',
+        },
     ]
+    if not source_aware_metrics.empty:
+        for _, row in source_aware_metrics.iterrows():
+            if str(row.get('candidate_id', '')) != str(
+                source_aware_verdict.get('selected_image_candidate', '')
+            ):
+                continue
+            summary_rows.append(
+                {
+                    'metric': f'source_aware_{row.get("split_label")}_stage_index_mae',
+                    'value': row.get('stage_index_mae'),
+                    'interpretation': f'Source-aware selected image candidate {row.get("candidate_id")} {row.get("split_label")}',
+                }
+            )
     pd.DataFrame(summary_rows).to_csv(results_summary_csv, index=False)
 
     results_summary_md = output_dir / 'results_summary.md'
@@ -1869,6 +1959,18 @@ def generate_combined_quantification_review(
 - Blockers: `{', '.join(map(str, learned_roi_blockers)) or 'none'}`
 - Evidence review: `../burden_model/learned_roi/evidence/learned_roi_review.html`
 
+## Source-Aware Estimator
+
+- Status: `{source_aware_status}`
+- Upstream ROI adequacy: `{source_aware_upstream.get('status', '')}`
+- Selected image candidate: `{source_aware_verdict.get('selected_image_candidate', '')}`
+- Selected subject candidate: `{source_aware_verdict.get('selected_subject_candidate', '')}`
+- Reportable scopes: `{source_aware_reportable}`
+- Hard blockers: `{', '.join(map(str, source_aware_hard_blockers)) or 'none'}`
+- Scope limiters: `{', '.join(map(str, source_aware_scope_limiters)) or 'none'}`
+- Metrics by split: `../burden_model/source_aware_estimator/summary/metrics_by_split.csv`
+- Index: `../burden_model/source_aware_estimator/INDEX.md`
+
 ## Documentation Recommendation
 
 Use these results in README/docs only when `README/docs-ready` is `True`. The generated snippet is written every run, but it is not approval for reuse when the readiness flag is false.
@@ -1885,6 +1987,11 @@ The current full-cohort quantification run reports an endotheliosis burden index
             '\nLearned ROI result: '
             f'`{learned_roi_track}` track is README/docs-ready under the learned ROI gates. '
             'This remains a predictive grade-equivalent burden estimate, not tissue percent or mechanism.\n'
+        )
+    if source_aware_readme_ready:
+        snippet += (
+            '\nSource-aware estimator result: eligible under the current-data scoped verdict. '
+            'This remains a predictive grade-equivalent burden estimate, not external validation.\n'
         )
     readme_snippet_path.write_text(snippet, encoding='utf-8')
 
@@ -1960,6 +2067,14 @@ The current full-cohort quantification run reports an endotheliosis burden index
       <p><strong>Cohort diagnostic status:</strong> {escape(str(learned_roi_summary.get('cohort_diagnostics_status', '')))}</p>
       <p><a href="../burden_model/learned_roi/evidence/learned_roi_review.html">Open learned ROI evidence review</a></p>
       <table><thead><tr><th>Candidate</th><th>Target level</th><th>Feature set</th><th>Validation</th><th>Stage-index MAE</th><th>Grade-scale MAE</th><th>Status</th></tr></thead><tbody>{''.join(learned_roi_rows)}</tbody></table>
+      <h2>Source-Aware Estimator</h2>
+      <p><strong>Status:</strong> {escape(source_aware_status)}; <strong>upstream ROI adequacy:</strong> {escape(str(source_aware_upstream.get('status', '')))}</p>
+      <p><strong>Selected image candidate:</strong> {escape(str(source_aware_verdict.get('selected_image_candidate', '')))}; <strong>selected subject candidate:</strong> {escape(str(source_aware_verdict.get('selected_subject_candidate', '')))}</p>
+      <p><strong>Reportable scopes:</strong> {escape(str(source_aware_reportable))}</p>
+      <p><strong>Hard blockers:</strong> {escape(', '.join(map(str, source_aware_hard_blockers)) or 'none')}</p>
+      <p><strong>Scope limiters:</strong> {escape(', '.join(map(str, source_aware_scope_limiters)) or 'none')}</p>
+      <p><a href="../burden_model/source_aware_estimator/INDEX.md">Open source-aware estimator index</a> | <a href="../burden_model/source_aware_estimator/summary/metrics_by_split.csv">Metrics by split</a></p>
+      <ul>{''.join(source_aware_figure_links) or '<li>No source-aware figures available.</li>'}</ul>
       <h2>Artifact Links</h2>
       <p>Primary artifacts: <code>burden_model/primary_model/burden_predictions.csv</code> for held-out grouped validation, <code>burden_model/primary_model/final_model_predictions.csv</code> for the final full-cohort fitted model, <code>burden_model/primary_model/burden_metrics.json</code>, <code>burden_model/calibration/uncertainty_calibration.json</code>, <code>burden_model/evidence/nearest_examples.csv</code>, <code>burden_model/candidates/precision_candidate_summary.json</code>, <code>burden_model/candidates/morphology_candidate_summary.json</code>, <code>burden_model/feature_sets/morphology_features.csv</code>, <code>burden_model/learned_roi/candidates/learned_roi_candidate_summary.json</code>, <code>burden_model/learned_roi/diagnostics/cohort_confounding_diagnostics.json</code>, <code>ordinal_model/ordinal_metrics.json</code>, and <code>ordinal_model/ordinal_predictions.csv</code>.</p>
       <h2>Final Full-Cohort Summaries</h2>
@@ -2299,6 +2414,18 @@ def evaluate_embedding_table(
     logger.info(
         'Learned ROI evaluation complete: summary=%s',
         learned_roi_artifacts['learned_roi_candidate_summary'],
+    )
+    logger.info(
+        'Evaluating source-aware estimator -> %s',
+        parent_output / 'burden_model' / 'source_aware_estimator',
+    )
+    source_aware_artifacts = evaluate_source_aware_endotheliosis_estimator(
+        embedding_df, parent_output / 'burden_model', n_splits=n_splits
+    )
+    burden_artifacts.update(source_aware_artifacts)
+    logger.info(
+        'Source-aware estimator complete: verdict=%s',
+        source_aware_artifacts['source_aware_estimator_verdict'],
     )
     logger.info(
         'Generating combined quantification review -> %s',

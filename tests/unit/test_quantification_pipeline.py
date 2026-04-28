@@ -475,6 +475,13 @@ def test_evaluate_embedding_table_runs_with_grouped_subject_splits(tmp_path: Pat
         'quantification_results_summary_md',
         'quantification_results_summary_csv',
         'quantification_readme_snippet',
+        'source_aware_index',
+        'source_aware_estimator_verdict',
+        'source_aware_metrics_by_split',
+        'source_aware_artifact_manifest',
+        'source_aware_image_predictions',
+        'source_aware_subject_predictions',
+        'source_aware_upstream_roi_adequacy',
     ]:
         assert artifacts[key].exists(), key
 
@@ -506,6 +513,8 @@ def test_evaluate_embedding_table_runs_with_grouped_subject_splits(tmp_path: Pat
     assert 'Comparator Summaries' in review_html
     assert 'Precision Candidate Screen' in review_html
     assert 'Morphology Feature Screen' in review_html
+    assert 'Source-Aware Estimator' in review_html
+    assert 'Metrics by split' in review_html
     assert 'Direct stage-index regression' in review_html
     assert 'held_out_grouped_fold_prediction' in review_html
     assert 'burden_model/primary_model/burden_predictions.csv' in review_html
@@ -513,6 +522,15 @@ def test_evaluate_embedding_table_runs_with_grouped_subject_splits(tmp_path: Pat
     assert 'burden_model/feature_sets/morphology_features.csv' in review_html
     assert artifacts['morphology_candidate_metrics'].parent.name == 'candidates'
     assert artifacts['burden_model'].parent.name == 'primary_model'
+    source_verdict = json.loads(
+        artifacts['source_aware_estimator_verdict'].read_text(encoding='utf-8')
+    )
+    assert source_verdict['testing_status'] == (
+        'testing_not_available_current_data_sensitivity'
+    )
+    source_metrics = pd.read_csv(artifacts['source_aware_metrics_by_split'])
+    assert 'training_apparent' in set(source_metrics['split_label'])
+    assert 'validation_subject_heldout' in set(source_metrics['split_label'])
 
     review_examples = pd.read_csv(artifacts['quantification_review_examples'])
     assert '_set_size' not in review_examples.columns
