@@ -6,13 +6,14 @@ The deterministic morphology-feature pass showed that hand-engineered closed-sli
 
 - Add a learned ROI representation workflow that extracts one or more learned feature sets from the existing union ROI image/mask crops and evaluates them for endotheliosis score and burden prediction.
 - Keep deterministic morphology features as QC/evidence only; they SHALL NOT be promoted as closed-lumen biology while `morphology_candidate_summary.json` reports `blocked_by_visual_feature_readiness`.
-- Add learned-feature candidate screens that compare:
-  - current glomeruli encoder embeddings from `src/eq/quantification/pipeline.py`;
-  - frozen pathology/image foundation embeddings when available in the `eq-mac` environment;
-  - simple low-dimensional QC/coarse ROI features as a sanity baseline;
-  - optional embedding-plus-QC hybrids.
+- Add a capped phase-1 learned-feature candidate screen that fits only:
+  - `current_glomeruli_encoder` embeddings from `embeddings/roi_embeddings.csv`;
+  - `simple_roi_qc` low-dimensional non-mechanistic ROI/mask/stain/quality features;
+  - `current_glomeruli_encoder_plus_simple_roi_qc`.
+- Audit optional local backbone/foundation providers, but keep them audit-only in phase 1 unless a later explicit OpenSpec decision promotes them to fitted candidates.
 - Add calibrated ordinal/stage-index/burden heads on learned ROI embeddings using subject-heldout validation and grouped conformal uncertainty.
 - Add subject/cohort summary artifacts that clearly separate subject/cohort burden summaries from per-image operational predictions.
+- Add cohort-confounding diagnostics so learned ROI results cannot be promoted when they mainly separate cohort/stain/acquisition lanes rather than score/burden signal.
 - Add learned-model evidence artifacts: nearest neighbors, high-error examples, uncertainty examples, embedding-space diagnostics, and optional saliency/attention visualizations labeled as heuristic model-support evidence.
 - Add documentation and report gating so README/docs-ready claims are allowed only if the selected track passes validation, uncertainty, numerical, and claim-boundary gates.
 - No compatibility shim: existing deterministic morphology artifacts remain historical/QC artifacts; the new workflow writes a new grouped output branch under `burden_model/learned_roi/`.
@@ -64,6 +65,12 @@ The deterministic morphology-feature pass showed that hand-engineered closed-sli
 - Learned ROI output branch is fixed as `burden_model/learned_roi/`.
 - Existing deterministic morphology features remain in `burden_model/feature_sets/` and `burden_model/evidence/morphology_feature_review/` as QC/evidence, not as promoted biological closed-lumen features.
 - The first selected target remains predictive grade-equivalent endotheliosis burden, not causal/mechanistic inference and not true tissue percent endotheliosis.
+- Phase-1 fitted candidates are fixed to `current_glomeruli_encoder`, `simple_roi_qc`, and `current_glomeruli_encoder_plus_simple_roi_qc`; optional `torchvision`, `timm`, DINO/ViT, UNI, CONCH, or other foundation providers are audit-only in this change.
+- Image-track README/docs readiness requires all of: empirical prediction-set coverage `>= 0.88` overall, coverage `>= 0.80` for each observed-score stratum with at least 30 rows, average prediction-set size `<= 4.0`, no cohort-specific coverage below `0.80`, no nonfinite predictions, no unresolved numerical-instability warnings, and no cohort-confounding blocker.
+- Subject/cohort-track README/docs readiness requires all of: one row per `subject_id`, subject-heldout validation, grouped bootstrap intervals, no nonfinite predictions, no unresolved numerical-instability warnings, no cohort-confounding blocker, and explicit wording that subject/cohort readiness does not imply operationally precise per-image predictions.
+- Candidate selection SHALL report both ordinal/grade-scale metrics and stage-index metrics; it SHALL NOT select a candidate solely from the 0-100 stage-index recoding.
+- Implementation SHALL iterate within the fixed phase-1 scope until the learned ROI workflow either satisfies the explicit readiness gates or produces complete failure evidence showing which gates remain unmet.
+- Iteration SHALL be limited to implementation defects, calibration/reporting corrections, and required artifact completeness. It SHALL NOT expand fitted providers, weaken validation gates, add compatibility paths, introduce new biological claims, or tune against held-out results without a new explicit OpenSpec decision.
 
 ## Open Questions
 

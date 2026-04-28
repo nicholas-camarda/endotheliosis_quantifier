@@ -48,6 +48,7 @@ from eq.quantification.labelstudio_scores import (
     discover_label_studio_annotation_source,
     recover_label_studio_score_table,
 )
+from eq.quantification.learned_roi import evaluate_learned_roi_quantification
 from eq.quantification.migration import generate_mapping_template, inventory_raw_project
 from eq.quantification.ordinal import (
     NUMERICAL_INSTABILITY_PATTERNS,
@@ -1456,6 +1457,18 @@ def generate_combined_quantification_review(
         and burden_artifacts['morphology_candidate_metrics'].stat().st_size > 0
         else pd.DataFrame()
     )
+    learned_roi_summary = (
+        _read_json_if_exists(burden_artifacts['learned_roi_candidate_summary'])
+        if burden_artifacts.get('learned_roi_candidate_summary')
+        else {}
+    )
+    learned_roi_metrics = (
+        pd.read_csv(burden_artifacts['learned_roi_candidate_metrics'])
+        if burden_artifacts.get('learned_roi_candidate_metrics')
+        and burden_artifacts['learned_roi_candidate_metrics'].exists()
+        and burden_artifacts['learned_roi_candidate_metrics'].stat().st_size > 0
+        else pd.DataFrame()
+    )
 
     support_status = str(burden_metrics.get('support_gate_status', 'unknown'))
     numerical_status = str(burden_metrics.get('numerical_stability_status', 'unknown'))
@@ -1493,6 +1506,13 @@ def generate_combined_quantification_review(
     morphology_best_subject = (
         morphology_candidate_summary.get('best_subject_level_candidate', {}) or {}
     )
+    learned_roi_image_readiness = learned_roi_summary.get('per_image_readiness', {})
+    learned_roi_subject_readiness = learned_roi_summary.get(
+        'subject_cohort_readiness', {}
+    )
+    learned_roi_ready = bool(learned_roi_summary.get('readme_docs_ready', False))
+    learned_roi_track = str(learned_roi_summary.get('readme_docs_ready_track', ''))
+    learned_roi_blockers = learned_roi_summary.get('blockers', [])
 
     cohort_table_rows = []
     for _, row in cohort_metrics_for_results.iterrows():
@@ -1542,6 +1562,24 @@ def generate_combined_quantification_review(
     if not morphology_rows:
         morphology_rows.append(
             '<tr><td colspan="6">No morphology candidate screen available.</td></tr>'
+        )
+
+    learned_roi_rows = []
+    for _, row in learned_roi_metrics.iterrows():
+        learned_roi_rows.append(
+            '<tr>'
+            f'<td>{escape(str(row.get("candidate_id", "")))}</td>'
+            f'<td>{escape(str(row.get("target_level", "")))}</td>'
+            f'<td>{escape(str(row.get("feature_set", "")))}</td>'
+            f'<td>{escape(str(row.get("validation_grouping", "")))}</td>'
+            f'<td>{_format_optional_float(row.get("stage_index_mae"))}</td>'
+            f'<td>{_format_optional_float(row.get("grade_scale_mae"))}</td>'
+            f'<td>{escape(str(row.get("candidate_status", "")))}</td>'
+            '</tr>'
+        )
+    if not learned_roi_rows:
+        learned_roi_rows.append(
+            '<tr><td colspan="7">No learned ROI candidate screen available.</td></tr>'
         )
 
     support_rows = []
@@ -1764,6 +1802,16 @@ def generate_combined_quantification_review(
                 f'Stage-index MAE {_format_optional_float(morphology_best_subject.get("stage_index_mae"))}'
             ),
         },
+        {
+            'metric': 'learned_roi_readme_docs_ready',
+            'value': learned_roi_ready,
+            'interpretation': f'Selected learned ROI track: {learned_roi_track or "none"}',
+        },
+        {
+            'metric': 'learned_roi_blockers',
+            'value': ' | '.join(map(str, learned_roi_blockers)),
+            'interpretation': 'Explicit learned ROI readiness blockers',
+        },
     ]
     pd.DataFrame(summary_rows).to_csv(results_summary_csv, index=False)
 
@@ -1812,6 +1860,15 @@ def generate_combined_quantification_review(
 - Best subject-level morphology candidate: `{morphology_best_subject.get('candidate_id', '')}` with stage-index MAE `{_format_optional_float(morphology_best_subject.get('stage_index_mae'))}`.
 - Feature review: `../burden_model/evidence/morphology_feature_review/feature_review.html`
 
+## Learned ROI Screen
+
+- README/docs-ready: `{learned_roi_ready}`
+- Ready track: `{learned_roi_track or 'none'}`
+- Per-image readiness: `{learned_roi_image_readiness.get('status', '')}`
+- Subject/cohort readiness: `{learned_roi_subject_readiness.get('status', '')}`
+- Blockers: `{', '.join(map(str, learned_roi_blockers)) or 'none'}`
+- Evidence review: `../burden_model/learned_roi/evidence/learned_roi_review.html`
+
 ## Documentation Recommendation
 
 Use these results in README/docs only when `README/docs-ready` is `True`. The generated snippet is written every run, but it is not approval for reuse when the readiness flag is false.
@@ -1823,6 +1880,12 @@ Use these results in README/docs only when `README/docs-ready` is `True`. The ge
 
 The current full-cohort quantification run reports an endotheliosis burden index as a predictive ordinal stage-burden score, not a pixel-level percent. Operational status: `{operational_status}`. README/docs-ready: `{docs_ready}`. Stage-index MAE: `{_format_optional_float(overall.get('stage_index_mae'))}`; prediction-set coverage: `{_format_optional_float(overall.get('prediction_set_coverage'))}` versus nominal target `{_format_optional_float(nominal_coverage)}`. Cohort composition notes: `{', '.join(map(str, burden_metrics.get('cohort_composition_notes', []))) or 'none'}`. Add a link to the published quantification review artifact before sharing.
 """
+    if learned_roi_ready:
+        snippet += (
+            '\nLearned ROI result: '
+            f'`{learned_roi_track}` track is README/docs-ready under the learned ROI gates. '
+            'This remains a predictive grade-equivalent burden estimate, not tissue percent or mechanism.\n'
+        )
     readme_snippet_path.write_text(snippet, encoding='utf-8')
 
     html = f"""
@@ -1890,8 +1953,15 @@ The current full-cohort quantification run reports an endotheliosis burden index
       <p>The morphology screen is exploratory until the operator review confirms the feature detections. Feature rows: {escape(str(morphology_diagnostics.get('row_count', '')))}; feature count: {escape(str(morphology_diagnostics.get('feature_count', '')))}.</p>
       <p><a href="../burden_model/evidence/morphology_feature_review/feature_review.html">Open morphology feature review</a></p>
       <table><thead><tr><th>Candidate</th><th>Target level</th><th>Feature set</th><th>Validation</th><th>Stage-index MAE</th><th>Status</th></tr></thead><tbody>{''.join(morphology_rows)}</tbody></table>
+      <h2>Learned ROI Quantification</h2>
+      <p><strong>README/docs-ready:</strong> {learned_roi_ready}; <strong>selected track:</strong> {escape(learned_roi_track or 'none')}.</p>
+      <p><strong>Per-image readiness:</strong> {escape(str(learned_roi_image_readiness.get('status', '')))}; <strong>subject/cohort readiness:</strong> {escape(str(learned_roi_subject_readiness.get('status', '')))}.</p>
+      <p><strong>Blockers:</strong> {escape(', '.join(map(str, learned_roi_blockers)) or 'none')}</p>
+      <p><strong>Cohort diagnostic status:</strong> {escape(str(learned_roi_summary.get('cohort_diagnostics_status', '')))}</p>
+      <p><a href="../burden_model/learned_roi/evidence/learned_roi_review.html">Open learned ROI evidence review</a></p>
+      <table><thead><tr><th>Candidate</th><th>Target level</th><th>Feature set</th><th>Validation</th><th>Stage-index MAE</th><th>Grade-scale MAE</th><th>Status</th></tr></thead><tbody>{''.join(learned_roi_rows)}</tbody></table>
       <h2>Artifact Links</h2>
-      <p>Primary artifacts: <code>burden_model/primary_model/burden_predictions.csv</code> for held-out grouped validation, <code>burden_model/primary_model/final_model_predictions.csv</code> for the final full-cohort fitted model, <code>burden_model/primary_model/burden_metrics.json</code>, <code>burden_model/calibration/uncertainty_calibration.json</code>, <code>burden_model/evidence/nearest_examples.csv</code>, <code>burden_model/candidates/precision_candidate_summary.json</code>, <code>burden_model/candidates/morphology_candidate_summary.json</code>, <code>burden_model/feature_sets/morphology_features.csv</code>, <code>ordinal_model/ordinal_metrics.json</code>, and <code>ordinal_model/ordinal_predictions.csv</code>.</p>
+      <p>Primary artifacts: <code>burden_model/primary_model/burden_predictions.csv</code> for held-out grouped validation, <code>burden_model/primary_model/final_model_predictions.csv</code> for the final full-cohort fitted model, <code>burden_model/primary_model/burden_metrics.json</code>, <code>burden_model/calibration/uncertainty_calibration.json</code>, <code>burden_model/evidence/nearest_examples.csv</code>, <code>burden_model/candidates/precision_candidate_summary.json</code>, <code>burden_model/candidates/morphology_candidate_summary.json</code>, <code>burden_model/feature_sets/morphology_features.csv</code>, <code>burden_model/learned_roi/candidates/learned_roi_candidate_summary.json</code>, <code>burden_model/learned_roi/diagnostics/cohort_confounding_diagnostics.json</code>, <code>ordinal_model/ordinal_metrics.json</code>, and <code>ordinal_model/ordinal_predictions.csv</code>.</p>
       <h2>Final Full-Cohort Summaries</h2>
       <table><thead><tr><th>Cohort</th><th>Rows</th><th>Subjects</th><th>Subject-weighted burden</th><th>Stage-index MAE</th></tr></thead><tbody>{''.join(cohort_table_rows)}</tbody></table>
       <h2>Threshold Support</h2>
@@ -2217,6 +2287,18 @@ def evaluate_embedding_table(
         'Burden evaluation complete: predictions=%s, metrics=%s',
         burden_artifacts['burden_predictions'],
         burden_artifacts['burden_metrics'],
+    )
+    logger.info(
+        'Evaluating learned ROI phase-1 candidates -> %s',
+        parent_output / 'burden_model' / 'learned_roi',
+    )
+    learned_roi_artifacts = evaluate_learned_roi_quantification(
+        embedding_df, parent_output / 'burden_model', n_splits=n_splits
+    )
+    burden_artifacts.update(learned_roi_artifacts)
+    logger.info(
+        'Learned ROI evaluation complete: summary=%s',
+        learned_roi_artifacts['learned_roi_candidate_summary'],
     )
     logger.info(
         'Generating combined quantification review -> %s',

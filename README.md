@@ -36,7 +36,7 @@ The YAML is the control surface. In the common case, you should not need to stit
 | Scored cohort registry | `$EQ_RUNTIME_ROOT/raw_data/cohorts/manifest.csv` |
 | Current quantification supervision | Image-level grades joined to image/mask pairs in the active scored cohort workflow |
 | Quantification ROI semantics | Full multi-component union ROI |
-| Quantification outputs | Frozen segmentation-encoder embeddings, exploratory burden-index predictions, comparator outputs, subject/cohort summaries, and combined review artifacts |
+| Quantification outputs | Frozen segmentation-encoder embeddings, exploratory burden-index predictions, learned ROI candidate screens, comparator outputs, subject/cohort summaries, and combined review artifacts |
 
 ## Environment Contract
 
@@ -258,15 +258,18 @@ eq quant-endo \
 
 To quantify with a different candidate, use that candidate's `.pkl` path.
 
-The current maintained quantification path uses image-level grades joined to each image or mask pair. ROI extraction uses the full multi-component mask bounding box with context padding, then builds frozen segmentation-backbone embeddings. The primary model output is an exploratory endotheliosis burden index on a `0-100` ordinal stage scale, with direct stage-index regression and ordinal/multiclass outputs retained as comparators.
+The current maintained quantification path uses image-level grades joined to each image or mask pair. ROI extraction uses the full multi-component mask bounding box with context padding, then builds frozen segmentation-backbone embeddings. The primary model output is an exploratory endotheliosis burden index on a `0-100` ordinal stage scale, with learned ROI candidate screens, direct stage-index regression, and ordinal/multiclass outputs retained as comparators.
 
 The current burden-index model is not README/docs-ready as an operational model claim. It is useful for review and method development, but the latest full-cohort run still has broad per-image prediction sets, slight undercoverage against the nominal prediction-set target, and finite-output backend matrix warnings. Subject-level ROI aggregation is the strongest current follow-up direction for cohort summaries, while per-image prediction remains a separate calibration and feature-modeling problem.
 
 Endotheliosis is graded by assessing the relative amount of open versus collapsed capillary or arteriole lumina within the glomerulus. The maintained quantification path writes deterministic morphology features for open/pale lumina, collapsed or slit-like structures, ridge/line signals, erythrocyte-like patent-lumen confounding, and ROI quality. These morphology features are candidate evidence, not a deployed mechanistic model; the generated feature-review HTML and operator adjudication template must be inspected before using them for a shareable claim.
 
+The learned ROI branch is a capped phase-1 screen under `burden_model/learned_roi/`. It fits only the current glomeruli encoder embeddings, simple ROI QC features, and their hybrid. Optional backbone or foundation providers are audited but not fitted. A learned ROI result is shareable only if its generated candidate summary passes the explicit uncertainty, numerical-stability, ordinal/grade-scale, and cohort-confounding gates.
+
 Current quantification implementation surfaces:
 
 - Primary burden-index estimator surface: `src/eq/quantification/burden.py`
+- Learned ROI candidate surface: `src/eq/quantification/learned_roi.py`
 - Ordinal comparator surface: `src/eq/quantification/ordinal.py`
 - Orchestration caller: `src/eq/quantification/pipeline.py` via `evaluate_embedding_table()` and the contract-first quantification entrypoints
 - CLI entrypoint: `eq quant-endo`
@@ -277,7 +280,7 @@ Current quantification implementation surfaces:
 - `labelstudio_scores/` with recovered per-image grades and duplicate-resolution audit tables
 - `roi_crops/` with union-ROI crops over the full multi-component mask
 - `embeddings/` with frozen segmentation-encoder embeddings
-- `burden_model/` with grouped `primary_model/`, `validation/`, `calibration/`, `summaries/`, `evidence/`, `candidates/`, `diagnostics/`, and `feature_sets/` subfolders for exploratory burden predictions, support gates, uncertainty calibration, cohort summaries, nearest examples, candidate screens, morphology features, and review diagnostics
+- `burden_model/` with grouped `primary_model/`, `validation/`, `calibration/`, `summaries/`, `evidence/`, `candidates/`, `diagnostics/`, `feature_sets/`, and `learned_roi/` subfolders for exploratory burden predictions, support gates, uncertainty calibration, cohort summaries, nearest examples, candidate screens, morphology features, learned ROI screens, and review diagnostics
 - `ordinal_model/` with comparator predictions, probabilities, metrics, confusion matrix, and `review_report/ordinal_review.html`
 - `quantification_review/` with combined HTML review, reviewer examples, concrete result summaries, and a README/docs snippet from the current run; reuse the snippet only when the reported readiness flag and uncertainty checks pass
 

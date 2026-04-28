@@ -9,6 +9,7 @@ from .cohorts import (
 )
 from .dataset import build_scored_example_table, load_standardized_metadata
 from .embeddings import extract_encoder_embeddings_from_rois
+from .learned_roi import evaluate_learned_roi_quantification
 from .migration import (
     generate_mapping_template,
     inventory_raw_project,
@@ -35,6 +36,7 @@ __all__ = [
     'validate_unified_manifest',
     'extract_rois_for_scored_examples',
     'extract_encoder_embeddings_from_rois',
+    'evaluate_learned_roi_quantification',
     'CanonicalOrdinalClassifier',
     'run_grouped_ordinal_experiment',
     'prepare_quantification_contract',

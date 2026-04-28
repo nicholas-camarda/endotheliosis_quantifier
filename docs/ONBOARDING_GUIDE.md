@@ -309,12 +309,13 @@ This writes:
 - `burden_model/feature_sets/` and `burden_model/diagnostics/` morphology feature artifacts for open lumina, collapsed/slit-like structures, RBC-like patent-lumen confounding, and ROI quality
 - `burden_model/candidates/` candidate-screen artifacts such as `signal_comparator_metrics.csv`, `subject_level_candidate_predictions.csv`, `precision_candidate_summary.json`, `morphology_candidate_metrics.csv`, and `morphology_candidate_summary.json`; these are review artifacts, not deployed models
 - `burden_model/evidence/morphology_feature_review/` with the visual feature review page, selected cases, overlay assets, and operator adjudication template
+- `burden_model/learned_roi/` with the capped learned ROI phase-1 screen, provider audit, learned feature table, candidate metrics, calibration summary, cohort-confounding diagnostics, nearest examples, and learned ROI evidence review
 - `ordinal_model/` artifacts with ordinal comparator predictions, probabilities, metrics, confusion matrix, and the comparator-specific HTML review
 - `quantification_review/` artifacts with the combined burden/comparator HTML review, reviewer examples, concrete results summaries, and a README/docs snippet generated from the current run
 
 The burden score is a predictive ordinal stage-burden index from image-level grades. It is not a pixel-level tissue-area percent and should be interpreted with the generated support, calibration, and uncertainty artifacts.
 
-The current full-cohort burden result is exploratory rather than a deployed model claim. The generated `quantification_review/readme_results_snippet.md` is not automatically shareable; reuse it only when the review report marks the selected track as README/docs-ready. Current candidate screens keep subject/cohort burden, per-image burden, and morphology-aware feature evidence separate so feature QA can be reviewed before any public claim.
+The current full-cohort burden result is exploratory rather than a deployed model claim. The generated `quantification_review/readme_results_snippet.md` is not automatically shareable; reuse it only when the review report marks the selected track as README/docs-ready. Current candidate screens keep subject/cohort burden, per-image burden, morphology-aware feature evidence, and learned ROI evidence separate so feature QA, uncertainty, and cohort-confounding gates can be reviewed before any public claim.
 
 ## A Good Mental Model For The Repo
 

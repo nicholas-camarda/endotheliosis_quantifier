@@ -553,10 +553,14 @@ What exists today:
 - grouped cumulative-threshold burden-index prediction
 - direct stage-index regression and ordinal/multiclass comparator outputs
 - prediction exports with threshold probabilities, burden index, prediction sets, uncertainty intervals, nearest scored examples, and comparator probabilities
+- capped learned ROI candidate screens using current glomeruli encoder embeddings, simple ROI QC features, and their hybrid
+- learned ROI provider audit, calibration summary, cohort-confounding diagnostics, nearest examples, and evidence review artifacts
 - a combined HTML review artifact with selected example cases, cohort summaries, threshold support, and claim-boundary text
 - candidate-screen artifacts including `signal_comparator_metrics.csv`, `subject_level_candidate_predictions.csv`, and `precision_candidate_summary.json`; these are not deployed models
 - morphology-aware feature artifacts for open/pale lumina, collapsed or slit-like structures, ridge/line responses, erythrocyte-like patent-lumen confounding, ROI quality, visual feature review, and operator adjudication
 - the older openness heuristic in [`src/eq/evaluation/quantification_metrics.py`](../src/eq/evaluation/quantification_metrics.py), best treated as an audit feature rather than the primary learned model
+
+The learned ROI branch lives under [`src/eq/quantification/learned_roi.py`](../src/eq/quantification/learned_roi.py). Its current phase-1 scope is intentionally capped: it fits only the existing glomeruli encoder features, simple ROI QC features, and their hybrid. Optional backbone or foundation providers are audited but not fitted in this branch. Candidate selection reports ordinal/grade-scale metrics alongside the 0-100 stage-index recoding and is blocked by uncertainty, numerical-stability, and cohort-confounding gates when those checks fail.
 
 ### What Does Not Yet Exist As A Matured Workflow
 
@@ -610,8 +614,9 @@ Use the dedicated training modules for heavy model training.
 
 As of April 26, 2026 on `master`, the main known gaps are:
 
-- the maintained learned quantification path includes morphology-aware candidate features, but those features still require operator review and refreshed readiness evidence before becoming a shareable subject/cohort burden claim
+- the maintained learned quantification path includes morphology-aware candidate features and capped learned ROI candidate screens, but these outputs still require readiness evidence before becoming a shareable subject/cohort burden claim
 - uncertainty outputs must be interpreted through the generated calibration and prediction-set artifacts; the current full-cohort run undercovers the nominal 0.90 prediction-set target and has broad average prediction sets
+- learned ROI outputs must be interpreted through `burden_model/learned_roi/candidates/learned_roi_candidate_summary.json`, `burden_model/learned_roi/calibration/learned_roi_calibration.json`, and `burden_model/learned_roi/diagnostics/cohort_confounding_diagnostics.json`
 - backend matrix-operation warnings remain recorded for several candidate screens, although outputs are finite
 - candidate screens are review artifacts, not deployed models
 - interpretation in the HTML review report is predictive support evidence rather than attribution-faithful mechanism

@@ -214,10 +214,34 @@ output/quantification_results/<cohort_id>/
 │   │   └── morphology_candidate_summary.json
 │   ├── diagnostics/
 │   │   └── morphology_feature_diagnostics.json
-│   └── feature_sets/
-│       ├── morphology_features.csv
-│       ├── morphology_feature_metadata.json
-│       └── subject_morphology_features.csv
+│   ├── feature_sets/
+│   │   ├── morphology_features.csv
+│   │   ├── morphology_feature_metadata.json
+│   │   └── subject_morphology_features.csv
+│   └── learned_roi/
+│       ├── feature_sets/
+│       │   ├── learned_roi_features.csv
+│       │   └── learned_roi_feature_metadata.json
+│       ├── candidates/
+│       │   ├── learned_roi_candidate_metrics.csv
+│       │   └── learned_roi_candidate_summary.json
+│       ├── validation/
+│       │   ├── learned_roi_predictions.csv
+│       │   └── learned_roi_subject_predictions.csv
+│       ├── calibration/
+│       │   └── learned_roi_calibration.json
+│       ├── summaries/
+│       │   └── learned_roi_subject_summary_intervals.json
+│       ├── diagnostics/
+│       │   ├── provider_audit.json
+│       │   ├── learned_roi_feature_diagnostics.json
+│       │   └── cohort_confounding_diagnostics.json
+│       └── evidence/
+│           ├── learned_roi_review.html
+│           ├── learned_roi_review_examples.csv
+│           ├── learned_roi_nearest_examples.csv
+│           ├── learned_roi_attribution_status.json
+│           └── assets/
 ├── ordinal_model/
 │   ├── ordinal_predictions.csv
 │   ├── ordinal_metrics.json
@@ -236,6 +260,8 @@ output/quantification_results/<cohort_id>/
 ```
 
 `burden_model/primary_model/burden_model.joblib` is the serialized exploratory burden model artifact. Candidate-screen files under `burden_model/candidates/` are comparison and planning artifacts, not separately deployed models. Use `burden_model/primary_model/burden_predictions.csv` for held-out validation evidence and `burden_model/primary_model/final_model_predictions.csv` for final full-cohort fitted summaries. Morphology features under `burden_model/feature_sets/` are deterministic review features; inspect `burden_model/evidence/morphology_feature_review/feature_review.html` and the operator adjudication output before treating them as biologically reliable evidence.
+
+`burden_model/learned_roi/` contains the capped learned-ROI candidate screen. Phase 1 fits only the current glomeruli encoder embeddings, simple ROI QC features, and their hybrid. Optional backbone or foundation providers are recorded in `diagnostics/provider_audit.json` as audit-only, unavailable, or failed; they are not fitted candidates. Use `candidates/learned_roi_candidate_summary.json`, `calibration/learned_roi_calibration.json`, and `diagnostics/cohort_confounding_diagnostics.json` to determine whether any learned ROI track is README/docs-ready. If readiness gates fail, the learned ROI outputs are failure evidence and review artifacts, not a promoted quantification claim.
 
 - `test_output/`
   Temporary files created by tests or debugging scripts.
