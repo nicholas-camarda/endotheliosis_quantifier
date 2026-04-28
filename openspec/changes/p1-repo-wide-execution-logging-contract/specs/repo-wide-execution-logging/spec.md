@@ -25,11 +25,22 @@ Supported top-level execution surfaces SHALL attach durable runtime log capture 
 - **WHEN** a supported direct module entrypoint such as `python -m eq.training.train_mitochondria` or `python -m eq.training.compare_glomeruli_candidates` starts
 - **THEN** the run writes a durable log under `$EQ_RUNTIME_ROOT/logs/direct/<surface>/<run_id>/<timestamp>.log`
 - **AND** the log records the stable direct surface identifier, command line, runtime root, dry-run status when applicable, and log path before substantive work begins
+- **AND** the run ID is derived from `--run-id`, config `run.name`, output/model stem, or generated timestamp in that order
 
 #### Scenario: Handler cleanup after execution
 - **WHEN** a supported top-level execution surface completes or fails
 - **THEN** any temporary file handlers attached by the execution logging context are removed
 - **AND** a later test or command does not receive duplicate log records from the previous run
+
+#### Scenario: Generic CLI subcommand is classified
+- **WHEN** implementation inventories live `eq` subcommands in `src/eq/__main__.py`
+- **THEN** every subcommand is classified as automatic runtime logging, explicit `--log-file` only, function-event-only, low-level helper, retired, or unsupported
+- **AND** the docs distinguish automatic runtime logs from explicit `eq --log-file` capture for subcommands that are not automatic runtime-log surfaces
+
+#### Scenario: Logging setup preserves execution handlers
+- **WHEN** base console logging setup and execution durable logging are both active
+- **THEN** console setup does not erase an active execution-log handler
+- **AND** imported high-level functions do not call `setup_logging(...)`
 
 ### Requirement: Subprocess workers are captured by the parent execution log
 Workflow runners that launch subprocess workers SHALL tee worker stdout and stderr into the parent durable execution log while preserving console visibility.
@@ -44,6 +55,11 @@ Workflow runners that launch subprocess workers SHALL tee worker stdout and stde
 - **THEN** the parent durable log records the command, return code, captured output, failure status, and log path
 - **AND** the workflow raises the subprocess failure rather than silently continuing
 
+#### Scenario: Candidate availability failure is intentionally nonfatal
+- **WHEN** candidate-comparison training intentionally records a failed candidate as unavailable rather than failing the entire comparison workflow
+- **THEN** the durable log and comparison artifacts record the failing command or function, return code or exception, unavailable status, and promotion-decision impact
+- **AND** this nonfatal path is tested separately from generic subprocess hard-failure behavior
+
 ### Requirement: Runtime log placement stays outside the Git checkout
 Execution logs SHALL be written under the configured runtime root and SHALL NOT create repo-root runtime directories.
 
@@ -52,12 +68,17 @@ Execution logs SHALL be written under the configured runtime root and SHALL NOT 
 - **THEN** execution logs are written under that runtime root
 - **AND** the repository checkout does not gain root-level `logs/`, `output/`, `models/`, `raw_data/`, `derived_data/`, or generated runtime directories from logging setup
 
+#### Scenario: Log path helper uses canonical path contract
+- **WHEN** execution log paths are resolved
+- **THEN** the implementation uses the canonical logs root from `src/eq/utils/paths.py`
+- **AND** direct surface names reject path separators, parent-directory segments, and unsafe path fragments
+
 ### Requirement: Logging contract tests cover the supported ecosystem
 The repository SHALL maintain tests that exercise logging behavior across the supported execution ecosystem rather than only testing `eq run-config`.
 
 #### Scenario: Execution surface matrix is tested
 - **WHEN** the logging contract test suite runs
-- **THEN** it covers `eq run-config`, direct workflow modules, direct training modules, direct candidate-comparison module execution, direct quantification workflow execution, imported high-level functions, subprocess success, subprocess failure, and handler cleanup
+- **THEN** it covers all six committed `eq run-config` workflows, direct workflow modules, direct training modules, direct candidate-comparison module execution, direct quantification workflow execution, imported high-level functions, subprocess success, subprocess hard failure, intentional nonfatal candidate unavailability, path-safety rejection, setup-order safety, and handler cleanup
 - **AND** it uses dry-runs, monkeypatching, synthetic fixtures, or temporary runtime roots so the contract suite does not require long training runs or private runtime artifacts
 
 #### Scenario: Logging validation is part of change completion

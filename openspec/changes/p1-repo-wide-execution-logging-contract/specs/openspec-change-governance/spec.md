@@ -15,4 +15,13 @@ OpenSpec changes that add or modify supported execution surfaces SHALL explicitl
 
 #### Scenario: Explicitness checker protects the logging decision
 - **WHEN** repository governance checks are run for a change that modifies execution surfaces
-- **THEN** the checks can require a logging-contract note in proposal, design, tasks, or specs before the change is treated as apply-ready
+- **THEN** the checks SHALL require a logging-contract note in proposal, design, tasks, or specs before the change is treated as apply-ready
+
+#### Scenario: Docs impact is declared for execution logging changes
+- **WHEN** an OpenSpec change adds or modifies durable log roots, automatic runtime-log behavior, direct module execution, workflow config execution, or generic CLI logging behavior
+- **THEN** the change states which public or operational docs are affected, including `README.md`, `docs/OUTPUT_STRUCTURE.md`, `docs/ONBOARDING_GUIDE.md`, `docs/TECHNICAL_LAB_NOTEBOOK.md`, or `docs/SEGMENTATION_ENGINEERING_GUIDE.md`
+- **AND** it updates those docs or explicitly records why no docs change is required
+
+#### Scenario: Governance validation covers execution-surface drift
+- **WHEN** the repo-local explicitness or governance checker evaluates a change that mentions an execution surface
+- **THEN** it fails if the change omits logging-contract participation, logging validation, or docs-impact classification
