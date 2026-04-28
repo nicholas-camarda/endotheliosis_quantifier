@@ -1,6 +1,7 @@
 # OS / editor
 .DS_Store
 .cursor/
+.github/
 .history/
 .vscode/
 .ipynb_checkpoints/
