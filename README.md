@@ -23,6 +23,8 @@ eq run-config --config configs/glomeruli_finetuning_config.yaml
 
 The YAML is the control surface. In the common case, you should not need to stitch the workflow together manually from separate shell commands.
 
+`eq run-config` writes durable workflow logs under `$EQ_RUNTIME_ROOT/logs/run_config/<run_id>/`. Supported direct module entrypoints such as training, candidate comparison, transport audit, high-resolution concordance, and quantification workflows write durable logs under `$EQ_RUNTIME_ROOT/logs/direct/<surface>/<run_id>/`. Generic `eq` utility subcommands use explicit `eq --log-file <path>` capture when you want a file for those commands.
+
 ## Operating Contract
 
 | Area | Current contract |
@@ -162,6 +164,8 @@ eq run-config --config configs/glomeruli_candidate_comparison.yaml
 ```
 
 That command reads `configs/glomeruli_candidate_comparison.yaml`, refreshes the cohort manifest, trains or loads the mitochondria base needed for glomeruli transfer, trains the no-mitochondria-base comparator, writes trained models under `$EQ_RUNTIME_ROOT/models/segmentation/`, writes comparison evidence under `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/`, and tees the workflow output to `$EQ_RUNTIME_ROOT/logs/run_config/<run_id>/`.
+
+The same workflow functions emit logger events when called from direct module entrypoints. Direct supported module runs write to `$EQ_RUNTIME_ROOT/logs/direct/<surface>/<run_id>/`; imported functions emit events to the caller's configured logger and do not create log files by themselves.
 
 Dry-run the resolved commands before launching training:
 

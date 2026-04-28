@@ -4,7 +4,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "check_openspec_explicitness.py"
 
@@ -136,3 +135,55 @@ Example.
     result = _run_checker(change_dir)
     assert result.returncode == 1
     assert "vague_placeholder" in result.stderr
+
+
+def test_checker_fails_execution_surface_change_without_logging_and_docs_notes(tmp_path: Path):
+    change_dir = _write_change(
+        tmp_path,
+        proposal="""## Why
+
+Update `src/eq/run_config.py` for a new workflow.
+
+## Explicit Decisions
+
+- Touch `src/eq/run_config.py`.
+""",
+        design="""## Context
+
+Execution change.
+
+## Explicit Decisions
+
+- Keep `eq run-config`.
+""",
+    )
+    result = _run_checker(change_dir)
+    assert result.returncode == 1
+    assert "missing_logging_contract_note" in result.stderr
+    assert "missing_docs_impact_note" in result.stderr
+
+
+def test_checker_accepts_execution_surface_change_with_logging_and_docs_notes(tmp_path: Path):
+    change_dir = _write_change(
+        tmp_path,
+        proposal="""## Why
+
+Update `src/eq/run_config.py` for a new workflow.
+
+## Explicit Decisions
+
+- Touch `src/eq/run_config.py`.
+- logging-contract: classify the new workflow as `entrypoint_capture` and validate its runtime log.
+- docs-impact: update operator docs for the new runtime log path.
+""",
+        design="""## Context
+
+Execution change.
+
+## Explicit Decisions
+
+- Keep `eq run-config`.
+""",
+    )
+    result = _run_checker(change_dir)
+    assert result.returncode == 0, result.stderr

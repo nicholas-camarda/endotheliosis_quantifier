@@ -5,12 +5,12 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
+import logging
 import os
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any
 
 import yaml
 
@@ -21,6 +21,13 @@ from eq.data_management.negative_glomeruli_crops import (
 from eq.training.compare_glomeruli_candidates import (
     resize_screening_decision_from_rows,
 )
+from eq.utils.execution_logging import (
+    direct_execution_log_context,
+    run_logged_subprocess,
+    runtime_root_environment,
+)
+
+LOGGER = logging.getLogger("eq.training.run_glomeruli_candidate_comparison_workflow")
 
 
 def _load_config(config_path: Path) -> dict[str, Any]:
@@ -52,17 +59,9 @@ def _runtime_path(runtime_root: Path, raw_path: str) -> Path:
     return runtime_root / path
 
 
-def _emit(message: str, log_handle: TextIO | None = None) -> None:
+def _emit(message: str) -> None:
+    LOGGER.info("%s", message)
     print(message, flush=True)
-    if log_handle is not None:
-        log_handle.write(f"{message}\n")
-        log_handle.flush()
-
-
-def _run_config_log_path(runtime_root: Path, run_id: str, *, dry_run: bool) -> Path:
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    suffix = "_dry_run" if dry_run else ""
-    return runtime_root / "logs" / "run_config" / run_id / f"{timestamp}{suffix}.log"
 
 
 def _run(
@@ -70,25 +69,8 @@ def _run(
     env: dict[str, str],
     *,
     dry_run: bool,
-    log_handle: TextIO | None = None,
 ) -> None:
-    _emit(" ".join(command), log_handle)
-    if dry_run:
-        return
-    process = subprocess.Popen(
-        command,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        _emit(line.rstrip("\n"), log_handle)
-    return_code = process.wait()
-    if return_code:
-        raise subprocess.CalledProcessError(return_code, command)
+    run_logged_subprocess(command, env=env, dry_run=dry_run, logger=LOGGER)
 
 
 def _read_csv_rows(path: Path) -> list[dict[str, str]]:
@@ -277,17 +259,33 @@ def run_glomeruli_candidate_comparison_workflow(
     if not training_device:
         raise ValueError("run.training_device must be set explicitly, for example `mps` on macOS.")
 
-    log_path = _run_config_log_path(runtime_root, run_id, dry_run=dry_run)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable,
+        "-m",
+        "eq.training.run_glomeruli_candidate_comparison_workflow",
+        "--config",
+        str(config_path),
+    ]
+    if dry_run:
+        command.append("--dry-run")
 
-    with log_path.open("w", encoding="utf-8") as log_handle:
-        _emit(f"RUN_CONFIG_LOG={log_path}", log_handle)
-        _emit(f"CONFIG={config_path}", log_handle)
-        _emit(f"WORKFLOW={config['workflow']}", log_handle)
-        _emit(f"RUN_ID={run_id}", log_handle)
-        _emit(f"RUNTIME_ROOT={runtime_root}", log_handle)
+    with runtime_root_environment(runtime_root), direct_execution_log_context(
+        surface="glomeruli_candidate_comparison",
+        config_run_name=run_id,
+        runtime_root=runtime_root,
+        dry_run=dry_run,
+        config_path=config_path,
+        command=command,
+        workflow="glomeruli_candidate_comparison",
+        logger_name="eq",
+    ) as log_context:
+        _emit(f"EXECUTION_LOG={log_context.log_path}")
+        _emit(f"CONFIG={config_path}")
+        _emit(f"WORKFLOW={config['workflow']}")
+        _emit(f"RUN_ID={run_id}")
+        _emit(f"RUNTIME_ROOT={runtime_root}")
 
-        _run([python, "-m", "eq", "cohort-manifest"], env, dry_run=dry_run, log_handle=log_handle)
+        _run([python, "-m", "eq", "cohort-manifest"], env, dry_run=dry_run)
 
         if bool(mito.get("enabled", True)):
             _run(
@@ -314,13 +312,12 @@ def run_glomeruli_candidate_comparison_workflow(
                 ],
                 env,
                 dry_run=dry_run,
-                log_handle=log_handle,
             )
 
         mito_base_model = None
         if train_candidates:
             mito_base_model = _runtime_path(runtime_root, "DRY_RUN_MITO_BASE.pkl") if dry_run else _latest_pkl(runtime_root, config)
-        _emit(f"MITO_BASE_MODEL={mito_base_model}", log_handle)
+        _emit(f"MITO_BASE_MODEL={mito_base_model}")
 
         negative_manifest_path: Path | None = None
         negative_sampler_weight = 0.0
@@ -337,7 +334,7 @@ def run_glomeruli_candidate_comparison_workflow(
                     / f"{curation_id}.csv"
                 )
                 negative_sampler_weight = float(mask_cfg.get("sampler_weight", 0.0))
-                _emit(f"NEGATIVE_CROP_MANIFEST={negative_manifest_path}", log_handle)
+                _emit(f"NEGATIVE_CROP_MANIFEST={negative_manifest_path}")
                 if not dry_run:
                     audit = generate_mask_derived_background_manifest(
                         data_root=_runtime_path(runtime_root, paths["glomeruli_data_dir"]),
@@ -348,7 +345,7 @@ def run_glomeruli_candidate_comparison_workflow(
                         min_foreground_pixels=int(mask_cfg.get("min_foreground_pixels", 0)),
                         seed=int(config["run"]["seed"]),
                     )
-                    _emit(f"NEGATIVE_CROP_AUDIT={audit}", log_handle)
+                    _emit(f"NEGATIVE_CROP_AUDIT={audit}")
             if bool(curated_cfg.get("enabled", False)):
                 manifest_value = curated_cfg.get("manifest_path")
                 if not manifest_value:
@@ -358,7 +355,7 @@ def run_glomeruli_candidate_comparison_workflow(
                     )
                 negative_manifest_path = _runtime_path(runtime_root, str(manifest_value))
                 negative_sampler_weight = float(curated_cfg.get("sampler_weight", negative_sampler_weight))
-                _emit(f"CURATED_NEGATIVE_CROP_MANIFEST={negative_manifest_path}", log_handle)
+                _emit(f"CURATED_NEGATIVE_CROP_MANIFEST={negative_manifest_path}")
                 if not dry_run:
                     validate_negative_crop_manifest(negative_manifest_path)
 
@@ -489,14 +486,14 @@ def run_glomeruli_candidate_comparison_workflow(
                     runtime_status = "completed"
                     failure_reason = ""
                     try:
-                        _run(command, env, dry_run=dry_run, log_handle=log_handle)
+                        _run(command, env, dry_run=dry_run)
                         if dry_run:
                             runtime_status = "dry_run"
                             failure_reason = "dry_run_no_artifacts_generated"
                     except subprocess.CalledProcessError as exc:
                         runtime_status = "failed"
                         failure_reason = f"returncode={exc.returncode}"
-                        _emit(f"RESIZE_SCREEN_ATTEMPT_FAILED run_id={attempt_run_id} {failure_reason}", log_handle)
+                        _emit(f"RESIZE_SCREEN_ATTEMPT_FAILED run_id={attempt_run_id} {failure_reason}")
                         if not bool(resize_screening.get("record_failures", True)):
                             raise
                     attempt_status[attempt_run_id] = runtime_status
@@ -507,7 +504,7 @@ def run_glomeruli_candidate_comparison_workflow(
                             attempt=attempt,
                             runtime_status=runtime_status,
                             failure_reason=failure_reason,
-                            log_path=log_path,
+                            log_path=log_context.log_path,
                         )
                     )
                 decision_row = resize_screening_decision_from_rows(
@@ -521,13 +518,13 @@ def run_glomeruli_candidate_comparison_workflow(
                         "run_id": "resize_screen_decision",
                         "candidate_family": "all",
                         "runtime_status": "completed",
-                        "log_path": str(log_path),
+                        "log_path": str(log_context.log_path),
                         "output_dir": str(summary_dir),
                     }
                 )
                 summary_rows = attempt_rows + [decision_row]
                 _write_csv_rows(summary_rows, summary_path)
-                _emit(f"RESIZE_SCREENING_SUMMARY={summary_path}", log_handle)
+                _emit(f"RESIZE_SCREENING_SUMMARY={summary_path}")
                 if bool(resize_screening.get("update_reference_with_summary", True)) and not dry_run:
                     reference_attempt = next(
                         (dict(row) for row in attempts if isinstance(row, dict) and str(row.get("run_id")) == reference_run_id),
@@ -548,7 +545,6 @@ def run_glomeruli_candidate_comparison_workflow(
                         ),
                         env,
                         dry_run=dry_run,
-                        log_handle=log_handle,
                     )
                 return summary_path
 
@@ -562,7 +558,6 @@ def run_glomeruli_candidate_comparison_workflow(
                 command,
                 env,
                 dry_run=dry_run,
-                log_handle=log_handle,
             )
 
     return mito_base_model

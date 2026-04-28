@@ -1,12 +1,11 @@
+import numpy as np
+from PIL import Image
+
+from eq.data_management.standard_getters import get_y_full
 from eq.utils.paths import get_runtime_mitochondria_data_path
 
 # Build dataloader WITHOUT the MaskPreprocessTransform
 data_dir = get_runtime_mitochondria_data_path() / "training"
-
-# Let's check the raw mask files first
-from eq.data_management.standard_getters import get_y_full
-from PIL import Image
-import numpy as np
 
 # Get a sample image path
 images_dir = data_dir / "images"

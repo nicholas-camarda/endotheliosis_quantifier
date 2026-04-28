@@ -12,6 +12,7 @@ Provides unified training infrastructure for mitochondria and glomeruli models.
 
 from eq.core.constants import DEFAULT_EPOCHS, DEFAULT_LEARNING_RATE
 
+
 # Create wrapper functions with expected names
 def train_mitochondria(data_dir, model_dir, epochs=None, batch_size=None, **kwargs):
     """
@@ -92,8 +93,8 @@ def validate_training_data(data_dir):
 
 def save_training_results(results, output_dir):
     """Save training results."""
-    from pathlib import Path
     import pickle
+    from pathlib import Path
     
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)

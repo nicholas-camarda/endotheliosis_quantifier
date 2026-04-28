@@ -8,11 +8,12 @@ This module exposes current full-image preprocessing and extraction helpers.
 # Import processing functionality
 from .image_mask_preprocessing import extract_large_images
 from .preprocessing import (  # Core preprocessing functions
-    resize_image_standard,
-    resize_image_large,
-    preprocess_image_for_model,
     normalize_image_array,
+    preprocess_image_for_model,
+    resize_image_large,
+    resize_image_standard,
 )
+
 # Note: annotation_processor removed - use PNG exports from Label Studio instead
 
 __all__ = [

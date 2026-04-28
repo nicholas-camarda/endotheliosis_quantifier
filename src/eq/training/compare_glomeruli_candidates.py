@@ -7,8 +7,8 @@ import argparse
 import csv
 import html
 import json
+import os
 import re
-import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -57,7 +57,11 @@ from eq.training.segmentation_validation_audit import (
     write_csv_rows,
     write_documentation_claim_audit,
 )
-from eq.utils.logger import get_logger
+from eq.utils.execution_logging import (
+    direct_execution_log_context,
+    run_logged_subprocess,
+)
+from eq.utils.logger import get_logger, setup_logging
 from eq.utils.paths import (
     get_runtime_models_path,
     get_runtime_segmentation_evaluation_path,
@@ -1305,7 +1309,7 @@ def _discover_model_path(family_dir: Path) -> Path:
 def _run_training_command(command: list[str], family: str, role: str, model_root: Path, seed: int) -> CandidateRuntime:
     try:
         logger.info("Running candidate training command: %s", " ".join(command))
-        subprocess.run(command, check=True)
+        run_logged_subprocess(command, logger=logger)
         family_dir = model_root / family
         return CandidateRuntime(
             family=family,
@@ -2847,7 +2851,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
-    compare_glomeruli_candidates(args)
+    setup_logging(verbose=True)
+    if not args.run_id:
+        args.run_id = _generated_run_id(args.seed)
+    runtime_root = os.environ.get("EQ_RUNTIME_ROOT")
+    command = [sys.executable, "-m", "eq.training.compare_glomeruli_candidates", *sys.argv[1:]]
+    with direct_execution_log_context(
+        surface="compare_glomeruli_candidates",
+        explicit_run_id=args.run_id,
+        runtime_root=runtime_root,
+        dry_run=False,
+        command=command,
+        workflow="glomeruli_candidate_comparison",
+        logger_name="eq",
+    ) as log_context:
+        logger.info("RUN_ID=%s", args.run_id)
+        logger.info("OUTPUT_DIR=%s", Path(args.output_dir).expanduser() / args.run_id)
+        logger.info("MODEL_DIR=%s", Path(args.model_dir).expanduser())
+        logger.info("TRANSFER_MODEL_PATH=%s", args.transfer_model_path)
+        logger.info("SCRATCH_MODEL_PATH=%s", args.scratch_model_path)
+        logger.info("EXECUTION_LOG=%s", log_context.log_path)
+        compare_glomeruli_candidates(args)
 
 
 if __name__ == "__main__":

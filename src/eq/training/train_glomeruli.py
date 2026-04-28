@@ -21,6 +21,14 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
 
 from fastai.vision.all import *
+from fastai.vision.all import (
+    Dice,
+    JaccardCoeff,
+    Learner,
+    load_learner,
+    resnet34,
+    unet_learner,
+)
 
 # BCEWithLogitsLossFlat import removed - using FastAI v2 automatic loss selection
 from eq.core.constants import (
@@ -47,6 +55,7 @@ from eq.training.segmentation_validation_audit import (
     build_glomeruli_training_provenance,
 )
 from eq.training.transfer_learning import transfer_learn_glomeruli
+from eq.utils.execution_logging import direct_execution_log_context
 from eq.utils.hardware_detection import get_segmentation_training_batch_size
 from eq.utils.logger import get_logger
 from eq.utils.paths import resolve_runtime_path
@@ -429,9 +438,8 @@ def find_best_mitochondria_model() -> Optional[str]:
     Returns:
         str: Path to best mitochondria model, or None if not found
     """
-    from eq.utils.logger import setup_logging
-    logger = setup_logging(verbose=True)
-    
+    logger = get_logger("eq.training.train_glomeruli")
+
     # Common mitochondria model locations
     search_paths = [
         "models/segmentation/mitochondria",
@@ -470,7 +478,7 @@ def find_best_mitochondria_model() -> Optional[str]:
                     if epoch_match:
                         epochs = int(epoch_match.group(1))
                         score += epochs  # More epochs = better model
-                except:
+                except Exception:
                     pass
             
             if score > best_score:
@@ -564,82 +572,93 @@ def main():
         # Set up logging first
         from eq.utils.logger import setup_logging
         logger = setup_logging(verbose=True)
-        logger.info("🚀 Starting glomeruli model training...")
-        logger.info(f"📁 Data directory: {args.data_dir}")
-        logger.info(f"📁 Model directory: {args.model_dir}")
-        logger.info(f"🧾 Model name: {args.model_name}")
-        logger.info(f"⚙️  Epochs: {args.epochs}, Batch size: {args.batch_size}")
+        command = [sys.executable, "-m", "eq.training.train_glomeruli", *sys.argv[1:]]
+        workflow = "segmentation_glomeruli_transfer" if args.base_model else "segmentation_glomeruli_scratch"
+        with direct_execution_log_context(
+            surface="train_glomeruli",
+            output_stem=args.model_name,
+            dry_run=False,
+            config_path=config_path,
+            command=command,
+            workflow=workflow,
+            logger_name="eq",
+        ):
+            logger.info("🚀 Starting glomeruli model training...")
+            logger.info(f"📁 Data directory: {args.data_dir}")
+            logger.info(f"📁 Model directory: {args.model_dir}")
+            logger.info(f"🧾 Model name: {args.model_name}")
+            logger.info(f"⚙️  Epochs: {args.epochs}, Batch size: {args.batch_size}")
 
-        if args.from_scratch and args.base_model:
-            raise ValueError("Choose either --from-scratch or --base-model, not both.")
+            if args.from_scratch and args.base_model:
+                raise ValueError("Choose either --from-scratch or --base-model, not both.")
 
-        if args.from_scratch:
-            logger.info("🔧 FROM SCRATCH: explicit scratch training requested")
-            args.base_model = None
-        elif args.base_model:
-            logger.info("🔄 TRANSFER LEARNING: explicit base model provided")
-            logger.info(f"🔄 Using base model: {args.base_model}")
-        elif args.allow_auto_base_model:
-            auto_detected_model = find_best_mitochondria_model()
-            if not auto_detected_model:
+            if args.from_scratch:
+                logger.info("🔧 FROM SCRATCH: explicit scratch training requested")
+                args.base_model = None
+            elif args.base_model:
+                logger.info("🔄 TRANSFER LEARNING: explicit base model provided")
+                logger.info(f"🔄 Using base model: {args.base_model}")
+            elif args.allow_auto_base_model:
+                auto_detected_model = find_best_mitochondria_model()
+                if not auto_detected_model:
+                    raise ValueError(
+                        "No supported mitochondria base artifact was auto-detected. "
+                        "Provide --base-model explicitly or choose --from-scratch."
+                    )
+                args.base_model = auto_detected_model
+                logger.info("🔄 TRANSFER LEARNING: using auto-detected base model")
+                logger.info(f"🔄 Using base model: {args.base_model}")
+            else:
                 raise ValueError(
-                    "No supported mitochondria base artifact was auto-detected. "
-                    "Provide --base-model explicitly or choose --from-scratch."
+                    "Glomeruli training requires an explicit family selection. "
+                    "Provide --base-model for transfer learning or --from-scratch for a scratch candidate. "
+                    "Use --allow-auto-base-model only when you intentionally want auto-detection."
                 )
-            args.base_model = auto_detected_model
-            logger.info("🔄 TRANSFER LEARNING: using auto-detected base model")
-            logger.info(f"🔄 Using base model: {args.base_model}")
-        else:
-            raise ValueError(
-                "Glomeruli training requires an explicit family selection. "
-                "Provide --base-model for transfer learning or --from-scratch for a scratch candidate. "
-                "Use --allow-auto-base-model only when you intentionally want auto-detection."
-            )
 
-        if args.base_model:
-            model = train_glomeruli_with_transfer_learning(
-                data_dir=args.data_dir,
-                output_dir=args.model_dir,
-                model_name=args.model_name,
-                base_model_path=args.base_model,
-                batch_size=args.batch_size,
-                epochs=args.epochs,
-                learning_rate=args.learning_rate,
-                image_size=args.image_size,
-                loss_name=args.loss or None,
-                crop_size=args.crop_size,
-                # Skip lr_find if user asked to, or use provided LR directly
-                use_lr_find=(not args.skip_lr_find),
-                seed=args.seed,
-                split_manifest_path=args.split_manifest,
-                negative_crop_manifest_path=args.negative_crop_manifest,
-                negative_crop_sampler_weight=args.negative_crop_sampler_weight,
-                augmentation_variant=args.augmentation_variant,
-                device=args.device,
-            )
-        else:
-            model = train_glomeruli_with_datablock(
-                data_dir=args.data_dir,
-                output_dir=args.model_dir,
-                model_name=args.model_name,
-                base_model_path=args.base_model,
-                batch_size=args.batch_size,
-                epochs=args.epochs,
-                learning_rate=args.learning_rate,
-                image_size=args.image_size,
-                crop_size=args.crop_size,
-                config_path=config_path,
-                seed=args.seed,
-                split_manifest_path=args.split_manifest,
-                negative_crop_manifest_path=args.negative_crop_manifest,
-                negative_crop_sampler_weight=args.negative_crop_sampler_weight,
-                augmentation_variant=args.augmentation_variant,
-                device=args.device,
-                loss_name=args.loss or None,
-            )
-        
-        logger.info("🎉 Glomeruli training completed successfully!")
-        print(f"✅ Model saved to: {args.model_dir}/glomeruli_model")
+            if args.base_model:
+                model = train_glomeruli_with_transfer_learning(
+                    data_dir=args.data_dir,
+                    output_dir=args.model_dir,
+                    model_name=args.model_name,
+                    base_model_path=args.base_model,
+                    batch_size=args.batch_size,
+                    epochs=args.epochs,
+                    learning_rate=args.learning_rate,
+                    image_size=args.image_size,
+                    loss_name=args.loss or None,
+                    crop_size=args.crop_size,
+                    # Skip lr_find if user asked to, or use provided LR directly
+                    use_lr_find=(not args.skip_lr_find),
+                    seed=args.seed,
+                    split_manifest_path=args.split_manifest,
+                    negative_crop_manifest_path=args.negative_crop_manifest,
+                    negative_crop_sampler_weight=args.negative_crop_sampler_weight,
+                    augmentation_variant=args.augmentation_variant,
+                    device=args.device,
+                )
+            else:
+                model = train_glomeruli_with_datablock(
+                    data_dir=args.data_dir,
+                    output_dir=args.model_dir,
+                    model_name=args.model_name,
+                    base_model_path=args.base_model,
+                    batch_size=args.batch_size,
+                    epochs=args.epochs,
+                    learning_rate=args.learning_rate,
+                    image_size=args.image_size,
+                    crop_size=args.crop_size,
+                    config_path=config_path,
+                    seed=args.seed,
+                    split_manifest_path=args.split_manifest,
+                    negative_crop_manifest_path=args.negative_crop_manifest,
+                    negative_crop_sampler_weight=args.negative_crop_sampler_weight,
+                    augmentation_variant=args.augmentation_variant,
+                    device=args.device,
+                    loss_name=args.loss or None,
+                )
+            
+            logger.info("🎉 Glomeruli training completed successfully!")
+            print(f"✅ Model saved to: {args.model_dir}/glomeruli_model")
         
     except Exception as e:
         logger.error(f"❌ Training failed: {e}")

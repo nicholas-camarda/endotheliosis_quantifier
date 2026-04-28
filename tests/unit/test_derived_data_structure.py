@@ -2,7 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from eq.utils.paths import get_active_runtime_root, get_output_path, get_runtime_mitochondria_data_path
+from eq.utils.paths import (
+    get_active_runtime_root,
+    get_output_path,
+    get_runtime_mitochondria_data_path,
+)
 
 
 def _get_derived_data_root() -> Path:

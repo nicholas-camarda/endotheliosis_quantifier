@@ -7,7 +7,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -75,6 +74,9 @@ def test_cli_run_config_dry_runs_all_committed_configs():
         result = run_cli('run-config', '--config', f'configs/{config_name}', '--dry-run')
         assert result.returncode == 0, result.stderr
         assert '/eq-mac/bin/python' in result.stdout
+        assert 'LOG_PATH=' in result.stdout
+        assert 'logs/run_config' in result.stdout
+        assert 'EXECUTION_STATUS=completed' in result.stdout
 
 
 def test_cli_run_config_rejects_retired_mixed_workflow(tmp_path):

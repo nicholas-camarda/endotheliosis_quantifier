@@ -9,6 +9,7 @@ from fastai.vision.all import Dice, resnet34, unet_learner
 from eq.data_management.datablock_loader import build_segmentation_dls_dynamic_patching
 from eq.utils.paths import get_runtime_cohort_path
 
+
 def main():
     """Train glomeruli model from scratch to prove pipeline works."""
     print("🚀 Starting glomeruli training from scratch...")

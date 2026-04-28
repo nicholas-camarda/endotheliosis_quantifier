@@ -18,15 +18,15 @@ import cv2
 import numpy as np
 import pytest
 
+from eq.core.constants import DEFAULT_IMAGE_SIZE, LARGE_IMAGE_SIZE
+from eq.data_management.datablock_loader import build_segmentation_dls_dynamic_patching
 from eq.processing.preprocessing import (
     normalize_image_array,
-    preprocess_image_for_model,
     prepare_image_for_inference,
+    preprocess_image_for_model,
     resize_image_large,
     resize_image_standard,
 )
-from eq.data_management.datablock_loader import build_segmentation_dls_dynamic_patching
-from eq.core.constants import DEFAULT_IMAGE_SIZE, LARGE_IMAGE_SIZE
 
 
 class TestDataProcessingComponents:
@@ -88,7 +88,7 @@ class TestDataProcessingComponents:
 
     def test_image_preprocessing_functions(self, sample_image_paths):
         """Test core preprocessing functions."""
-        print(f"\nTesting image preprocessing functions...")
+        print("\nTesting image preprocessing functions...")
         
         for img_path in sample_image_paths:
             try:
@@ -117,7 +117,7 @@ class TestDataProcessingComponents:
 
     def test_mask_loading_and_validation(self, sample_mask_paths):
         """Test mask loading and validation."""
-        print(f"\nTesting mask loading and validation...")
+        print("\nTesting mask loading and validation...")
         
         for mask_path in sample_mask_paths:
             try:
@@ -141,7 +141,7 @@ class TestDataProcessingComponents:
 
     def test_data_loader_initialization(self, temp_dir):
         """Test that supported dynamic full-image data loader can be initialized."""
-        print(f"\nTesting data loader initialization...")
+        print("\nTesting data loader initialization...")
         
         try:
             root = Path(temp_dir)
@@ -170,7 +170,7 @@ class TestDataProcessingComponents:
 
     def test_normalization_functions(self):
         """Test image normalization functions."""
-        print(f"\nTesting normalization functions...")
+        print("\nTesting normalization functions...")
         
         # Create test image array
         test_img = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
@@ -193,7 +193,7 @@ class TestDataProcessingComponents:
 
     def test_inference_preparation(self, sample_image_paths):
         """Test image preparation for inference."""
-        print(f"\nTesting inference preparation...")
+        print("\nTesting inference preparation...")
         
         for img_path in sample_image_paths:
             try:
@@ -217,7 +217,7 @@ class TestRealDataValidation:
 
     def test_real_data_availability(self):
         """Test that real project data is available."""
-        print(f"\nTesting real data availability...")
+        print("\nTesting real data availability...")
         
         # Check if project data exists using centralized path management
         from eq.utils.config_manager import ConfigManager
@@ -264,7 +264,7 @@ class TestRealDataValidation:
 
     def test_real_data_loading(self):
         """Test loading actual project data."""
-        print(f"\nTesting real data loading...")
+        print("\nTesting real data loading...")
         
         # Use centralized path management and discover actual project structure
         from eq.utils.config_manager import ConfigManager

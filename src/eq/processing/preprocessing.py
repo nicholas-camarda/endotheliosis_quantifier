@@ -8,7 +8,7 @@ Uses standard, principled approaches for binary glomeruli segmentation.
 """
 
 from pathlib import Path
-from typing import Tuple, Union, Optional, Any
+from typing import Any, Optional, Tuple, Union
 
 import numpy as np
 

@@ -12,7 +12,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from eq.utils.hardware_detection import get_device_recommendation, get_hardware_capabilities
+from eq.utils.hardware_detection import (
+    get_device_recommendation,
+    get_hardware_capabilities,
+)
 
 logger = logging.getLogger(__name__)
 

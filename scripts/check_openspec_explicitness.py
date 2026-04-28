@@ -22,6 +22,15 @@ VAGUE_PATTERNS = (
     re.compile(r"\bnew config\b", re.IGNORECASE),
     re.compile(r"\bnew module\b", re.IGNORECASE),
 )
+EXECUTION_SURFACE_PATTERNS = (
+    re.compile(r"\bsrc/eq/__main__\.py\b"),
+    re.compile(r"\bsrc/eq/run_config\.py\b"),
+    re.compile(r"\beq run-config\b"),
+    re.compile(r"\btraining entrypoint\b", re.IGNORECASE),
+    re.compile(r"\bdirect module\b", re.IGNORECASE),
+    re.compile(r"\bworkflow runner\b", re.IGNORECASE),
+    re.compile(r"\bsubprocess worker\b", re.IGNORECASE),
+)
 
 
 @dataclass
@@ -170,6 +179,48 @@ def _check_vague_patterns(path: Path, lines: list[str]) -> list[Finding]:
     return findings
 
 
+def _check_execution_surface_governance(change_dir: Path) -> list[Finding]:
+    findings: list[Finding] = []
+    texts: list[tuple[Path, str]] = []
+    for rel_path in ("proposal.md", "design.md", "tasks.md"):
+        path = change_dir / rel_path
+        if path.exists():
+            texts.append((path, path.read_text(encoding="utf-8")))
+    combined = "\n".join(text for _, text in texts)
+    if not any(pattern.search(combined) for pattern in EXECUTION_SURFACE_PATTERNS):
+        return findings
+
+    lowered = combined.lower()
+    anchor_path = texts[0][0] if texts else change_dir
+    if "logging-contract" not in lowered:
+        findings.append(
+            Finding(
+                level="error",
+                kind="missing_logging_contract_note",
+                path=anchor_path,
+                lineno=1,
+                message=(
+                    "Changes touching execution surfaces must include a "
+                    "`logging-contract` note that classifies durable logging behavior."
+                ),
+            )
+        )
+    if "docs-impact" not in lowered:
+        findings.append(
+            Finding(
+                level="error",
+                kind="missing_docs_impact_note",
+                path=anchor_path,
+                lineno=1,
+                message=(
+                    "Changes touching execution surfaces must include a "
+                    "`docs-impact` note explaining documentation updates or why none are needed."
+                ),
+            )
+        )
+    return findings
+
+
 def collect_findings(change_dir: Path) -> list[Finding]:
     findings: list[Finding] = []
     for rel_path in ("proposal.md", "design.md"):
@@ -189,6 +240,7 @@ def collect_findings(change_dir: Path) -> list[Finding]:
         findings.extend(_check_explicit_decisions(path, lines))
         findings.extend(_check_open_questions(path, lines))
         findings.extend(_check_vague_patterns(path, lines))
+    findings.extend(_check_execution_surface_governance(change_dir))
     return findings
 
 

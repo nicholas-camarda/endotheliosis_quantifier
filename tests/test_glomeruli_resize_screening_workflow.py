@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from eq.training.run_glomeruli_candidate_comparison_workflow import (
+    LOGGER,
     run_glomeruli_candidate_comparison_workflow,
 )
 
@@ -105,13 +106,18 @@ def test_resize_screening_workflow_records_failed_primary_and_runs_fallback(tmp_
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
     commands: list[list[str]] = []
 
-    def fake_run(command, env, *, dry_run, log_handle):
+    def fake_run(command, env, *, dry_run):
         commands.append(command)
+        LOGGER.info("SUBPROCESS_COMMAND=%s", " ".join(command))
         if "eq.training.compare_glomeruli_candidates" not in command:
             return
         run_id = command[command.index("--run-id") + 1]
         if run_id == "p0_resize_screen_512to512":
+            LOGGER.error("SUBPROCESS_RETURN_CODE=137")
+            LOGGER.error("SUBPROCESS_STATUS=failed")
             raise subprocess.CalledProcessError(137, command)
+        LOGGER.info("SUBPROCESS_RETURN_CODE=0")
+        LOGGER.info("SUBPROCESS_STATUS=completed")
         run_output = comparison_root / run_id
         _write_csv(
             run_output / "candidate_summary.csv",
@@ -167,6 +173,13 @@ def test_resize_screening_workflow_records_failed_primary_and_runs_fallback(tmp_
     assert "p0_resize_screen_512to384" in run_ids
     assert any(row["runtime_status"] == "failed" and row["failure_reason"] == "returncode=137" for row in rows)
     assert any(row["row_type"] == "decision" for row in rows)
+    log_paths = {Path(row["log_path"]) for row in rows if row.get("log_path")}
+    assert len(log_paths) == 1
+    log_text = next(iter(log_paths)).read_text(encoding="utf-8")
+    assert "SUBPROCESS_RETURN_CODE=137" in log_text
+    assert "SUBPROCESS_STATUS=failed" in log_text
+    assert "RESIZE_SCREEN_ATTEMPT_FAILED run_id=p0_resize_screen_512to512 returncode=137" in log_text
+    assert "p0_resize_screen_512to384" in log_text
     reference_commands = [
         command
         for command in commands

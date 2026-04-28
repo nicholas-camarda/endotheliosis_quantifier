@@ -4,10 +4,10 @@
 from pathlib import Path
 from typing import Union
 
-from eq.utils.logger import get_logger
-
 # FastAI is required by design
 from fastai.vision.all import Learner, load_learner  # type: ignore
+
+from eq.utils.logger import get_logger
 
 
 def load_mitochondria_model(model_path: str) -> Learner:

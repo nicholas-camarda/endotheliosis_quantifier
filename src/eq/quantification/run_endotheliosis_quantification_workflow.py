@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from datetime import datetime
@@ -13,6 +14,17 @@ from typing import Any
 import yaml
 
 from eq.quantification.pipeline import run_contract_first_quantification
+from eq.utils.execution_logging import (
+    direct_execution_log_context,
+    runtime_root_environment,
+)
+
+LOGGER = logging.getLogger("eq.quantification.run_endotheliosis_quantification_workflow")
+
+
+def _emit(message: str) -> None:
+    LOGGER.info("%s", message)
+    print(message, flush=True)
 
 
 def _load_config(config_path: Path) -> dict[str, Any]:
@@ -129,26 +141,50 @@ def run_endotheliosis_quantification_workflow(
     mapping_file = inputs.get("mapping_file")
     annotation_source = inputs.get("annotation_source")
 
-    print("WORKFLOW=endotheliosis_quantification", flush=True)
-    print(f"PYTHON={python}", flush=True)
-    print(f"DATA_DIR={data_dir}", flush=True)
-    print(f"SEGMENTATION_MODEL={segmentation_model}", flush=True)
-    print(f"OUTPUT_DIR={output_dir}", flush=True)
-    print(f"STOP_AFTER={options.get('stop_after', 'model')}", flush=True)
+    command = [
+        sys.executable,
+        "-m",
+        "eq.quantification.run_endotheliosis_quantification_workflow",
+        "--config",
+        str(config_path),
+    ]
     if dry_run:
-        return {"quantification_dir": output_dir}
+        command.append("--dry-run")
+    with runtime_root_environment(runtime_root), direct_execution_log_context(
+        surface="endotheliosis_quantification",
+        config_run_name=run_id,
+        runtime_root=runtime_root,
+        dry_run=dry_run,
+        config_path=config_path,
+        command=command,
+        workflow="endotheliosis_quantification",
+        logger_name="eq",
+    ) as log_context:
+        _emit(f"EXECUTION_LOG={log_context.log_path}")
+        _emit("WORKFLOW=endotheliosis_quantification")
+        _emit(f"PYTHON={python}")
+        _emit(f"DATA_DIR={data_dir}")
+        _emit(f"SEGMENTATION_MODEL={segmentation_model}")
+        _emit(f"OUTPUT_DIR={output_dir}")
+        _emit(f"STOP_AFTER={options.get('stop_after', 'model')}")
+        if dry_run:
+            return {"quantification_dir": output_dir}
 
-    return run_endotheliosis_quantification_inputs(
-        data_dir=data_dir,
-        segmentation_model=segmentation_model,
-        output_dir=output_dir,
-        mapping_file=_runtime_path(runtime_root, mapping_file) if mapping_file else None,
-        annotation_source=annotation_source,
-        score_source=str(options.get("score_source", "auto")),
-        apply_migration=bool(options.get("apply_migration", False)),
-        stop_after=str(options.get("stop_after", "model")),
-        provenance={"run_id": run_id, "config_path": str(config_path)},
-    )
+        return run_endotheliosis_quantification_inputs(
+            data_dir=data_dir,
+            segmentation_model=segmentation_model,
+            output_dir=output_dir,
+            mapping_file=_runtime_path(runtime_root, mapping_file) if mapping_file else None,
+            annotation_source=annotation_source,
+            score_source=str(options.get("score_source", "auto")),
+            apply_migration=bool(options.get("apply_migration", False)),
+            stop_after=str(options.get("stop_after", "model")),
+            provenance={
+                "run_id": run_id,
+                "config_path": str(config_path),
+                "log_path": str(log_context.log_path),
+            },
+        )
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

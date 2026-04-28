@@ -151,6 +151,8 @@ If a visualization path applies additional contrast stretching, treat that as a 
 - Test-time augmentation can improve validation-time robustness.
 - Simple morphology can reduce small false-positive islands and fill tiny holes.
 - Any post-processing step should be validated quantitatively, not only visually.
+- Any new or changed training, comparison, workflow, or subprocess execution surface must declare its execution logging classification and validation: `entrypoint_capture`, `global_log_file_only`, `subprocess_worker`, `high_level_function_events_only`, `low_level_helper_no_durable_logging`, or `retired_or_unsupported`.
+- Workflow entrypoints should write durable runtime logs under `$EQ_RUNTIME_ROOT/logs/run_config/<run_id>/` or `$EQ_RUNTIME_ROOT/logs/direct/<surface>/<run_id>/`; generic `eq` utility commands use explicit `eq --log-file <path>` capture.
 
 ## Common Failure Modes
 

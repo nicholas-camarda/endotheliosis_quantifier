@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from datetime import datetime
@@ -18,6 +19,17 @@ from eq.quantification.cohorts import (
     validate_segmentation_transport_inputs,
     write_segmentation_transport_audit,
 )
+from eq.utils.execution_logging import (
+    direct_execution_log_context,
+    runtime_root_environment,
+)
+
+LOGGER = logging.getLogger("eq.evaluation.run_glomeruli_transport_audit_workflow")
+
+
+def _emit(message: str) -> None:
+    LOGGER.info("%s", message)
+    print(message, flush=True)
 
 
 def _load_config(config_path: Path) -> dict[str, Any]:
@@ -87,63 +99,84 @@ def run_glomeruli_transport_audit_workflow(
         outputs.get("predictions_dir", f"output/predictions/glomeruli_transport_audit/{run_id}"),
     )
 
-    print(f"WORKFLOW=glomeruli_transport_audit", flush=True)
-    print(f"PYTHON={python}", flush=True)
-    print(f"SEGMENTATION_ARTIFACT={segmentation_artifact}", flush=True)
-    print(f"MANIFEST={manifest_path}", flush=True)
-    print(f"SEGMENTATION_OUTPUTS={segmentation_outputs_path}", flush=True)
-    print(f"EVALUATION_DIR={evaluation_dir}", flush=True)
-    print(f"PREDICTIONS_DIR={predictions_dir}", flush=True)
+    command = [
+        sys.executable,
+        "-m",
+        "eq.evaluation.run_glomeruli_transport_audit_workflow",
+        "--config",
+        str(config_path),
+    ]
     if dry_run:
+        command.append("--dry-run")
+    with runtime_root_environment(runtime_root), direct_execution_log_context(
+        surface="glomeruli_transport_audit",
+        config_run_name=run_id,
+        runtime_root=runtime_root,
+        dry_run=dry_run,
+        config_path=config_path,
+        command=command,
+        workflow="glomeruli_transport_audit",
+        logger_name="eq",
+    ) as log_context:
+        _emit(f"EXECUTION_LOG={log_context.log_path}")
+        _emit("WORKFLOW=glomeruli_transport_audit")
+        _emit(f"PYTHON={python}")
+        _emit(f"SEGMENTATION_ARTIFACT={segmentation_artifact}")
+        _emit(f"MANIFEST={manifest_path}")
+        _emit(f"SEGMENTATION_OUTPUTS={segmentation_outputs_path}")
+        _emit(f"EVALUATION_DIR={evaluation_dir}")
+        _emit(f"PREDICTIONS_DIR={predictions_dir}")
+        if dry_run:
+            return {
+                "evaluation_dir": evaluation_dir,
+                "predictions_dir": predictions_dir,
+            }
+
+        for label, path in {
+            "segmentation_artifact": segmentation_artifact,
+            "manifest_path": manifest_path,
+            "segmentation_outputs": segmentation_outputs_path,
+        }.items():
+            if not path.exists():
+                raise FileNotFoundError(f"Required transport-audit {label} does not exist: {path}")
+
+        evaluation_dir.mkdir(parents=True, exist_ok=True)
+        predictions_dir.mkdir(parents=True, exist_ok=True)
+        manifest = load_runtime_cohort_manifest(manifest_path)
+        cohort_id = str(inputs.get("cohort_id") or "").strip()
+        if cohort_id:
+            manifest = manifest[manifest["cohort_id"].astype(str) == cohort_id].copy()
+        segmentation_outputs = pd.read_csv(segmentation_outputs_path)
+        reviewed = validate_segmentation_transport_inputs(manifest, segmentation_outputs)
+        reviewed_path = evaluation_dir / "transport_validated_manifest.csv"
+        reviewed.to_csv(reviewed_path, index=False)
+        audit_path = write_segmentation_transport_audit(
+            reviewed,
+            evaluation_dir,
+            segmentation_artifact=str(segmentation_artifact),
+            reviewed_rows=reviewed,
+            transport_status="complete",
+        )
+        provenance_path = evaluation_dir / "workflow_provenance.json"
+        provenance = {
+            "workflow": "glomeruli_transport_audit",
+            "run_id": run_id,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "config_path": str(config_path),
+            "segmentation_artifact": str(segmentation_artifact),
+            "manifest_path": str(manifest_path),
+            "segmentation_outputs": str(segmentation_outputs_path),
+            "evaluation_dir": str(evaluation_dir),
+            "predictions_dir": str(predictions_dir),
+            "log_path": str(log_context.log_path),
+        }
+        provenance_path.write_text(json.dumps(provenance, indent=2), encoding="utf-8")
         return {
-            "evaluation_dir": evaluation_dir,
+            "audit": audit_path,
+            "validated_manifest": reviewed_path,
+            "provenance": provenance_path,
             "predictions_dir": predictions_dir,
         }
-
-    for label, path in {
-        "segmentation_artifact": segmentation_artifact,
-        "manifest_path": manifest_path,
-        "segmentation_outputs": segmentation_outputs_path,
-    }.items():
-        if not path.exists():
-            raise FileNotFoundError(f"Required transport-audit {label} does not exist: {path}")
-
-    evaluation_dir.mkdir(parents=True, exist_ok=True)
-    predictions_dir.mkdir(parents=True, exist_ok=True)
-    manifest = load_runtime_cohort_manifest(manifest_path)
-    cohort_id = str(inputs.get("cohort_id") or "").strip()
-    if cohort_id:
-        manifest = manifest[manifest["cohort_id"].astype(str) == cohort_id].copy()
-    segmentation_outputs = pd.read_csv(segmentation_outputs_path)
-    reviewed = validate_segmentation_transport_inputs(manifest, segmentation_outputs)
-    reviewed_path = evaluation_dir / "transport_validated_manifest.csv"
-    reviewed.to_csv(reviewed_path, index=False)
-    audit_path = write_segmentation_transport_audit(
-        reviewed,
-        evaluation_dir,
-        segmentation_artifact=str(segmentation_artifact),
-        reviewed_rows=reviewed,
-        transport_status="complete",
-    )
-    provenance_path = evaluation_dir / "workflow_provenance.json"
-    provenance = {
-        "workflow": "glomeruli_transport_audit",
-        "run_id": run_id,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "config_path": str(config_path),
-        "segmentation_artifact": str(segmentation_artifact),
-        "manifest_path": str(manifest_path),
-        "segmentation_outputs": str(segmentation_outputs_path),
-        "evaluation_dir": str(evaluation_dir),
-        "predictions_dir": str(predictions_dir),
-    }
-    provenance_path.write_text(json.dumps(provenance, indent=2), encoding="utf-8")
-    return {
-        "audit": audit_path,
-        "validated_manifest": reviewed_path,
-        "provenance": provenance_path,
-        "predictions_dir": predictions_dir,
-    }
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

@@ -18,29 +18,37 @@ from typing import Optional
 
 from fastai.callback.all import *
 from fastai.vision.all import *
+from fastai.vision.all import Dice, JaccardCoeff, resnet34, unet_learner
 
-from eq.utils.logger import get_logger
-from eq.utils.run_io import (
-    save_splits, attach_best_model_callback, save_plots, 
-    save_training_history, save_run_metadata, export_final_model
-)
 from eq.core.constants import (
-    DEFAULT_IMAGE_SIZE, 
-    DEFAULT_EPOCHS, 
+    DEFAULT_EPOCHS,
+    DEFAULT_IMAGE_SIZE,
     DEFAULT_LEARNING_RATE,
-    DEFAULT_MITOCHONDRIA_MODEL_DIR,
-    DEFAULT_POSITIVE_FOCUS_P,
     DEFAULT_MIN_POS_PIXELS,
+    DEFAULT_MITOCHONDRIA_MODEL_DIR,
     DEFAULT_POS_CROP_ATTEMPTS,
+    DEFAULT_POSITIVE_FOCUS_P,
 )
 from eq.data_management.datablock_loader import (
     TRAINING_MODE_DYNAMIC_FULL_IMAGE,
     build_segmentation_dls_dynamic_patching,
     validate_supported_segmentation_training_root,
 )
+from eq.training.segmentation_validation_audit import (
+    build_mitochondria_training_provenance,
+)
+from eq.utils.execution_logging import direct_execution_log_context
 from eq.utils.hardware_detection import get_segmentation_training_batch_size
+from eq.utils.logger import get_logger
 from eq.utils.paths import resolve_runtime_path
-from eq.training.segmentation_validation_audit import build_mitochondria_training_provenance
+from eq.utils.run_io import (
+    attach_best_model_callback,
+    export_final_model,
+    save_plots,
+    save_run_metadata,
+    save_splits,
+    save_training_history,
+)
 
 MITOCHONDRIA_ENCODER_INITIALIZATION = "imagenet_pretrained_resnet34"
 
@@ -316,35 +324,45 @@ def main():
     try:
         from eq.utils.logger import setup_logging
         logger = setup_logging(verbose=True)
-        args.batch_size = get_segmentation_training_batch_size(
-            "mitochondria",
-            image_size=args.image_size,
-            requested_batch_size=args.batch_size,
-        )
-        logger.info("🚀 Starting mitochondria model training...")
-        logger.info(f"📁 Data directory: {args.data_dir}")
-        logger.info(f"📁 Model directory: {args.model_dir}")
-        logger.info(f"🧾 Model name: {args.model_name}")
-        logger.info(f"⚙️  Epochs: {args.epochs}, Batch size: {args.batch_size}")
-        logger.info(f"🎯 Learning rate: {args.learning_rate}")
-        logger.info(f"📐 Image size: {args.image_size}")
-        logger.info(f"🔄 Training mode: {TRAINING_MODE_DYNAMIC_FULL_IMAGE}")
-        
-        # Train the model using DataBlock approach
-        model, model_path = train_mitochondria_with_datablock(
-            data_dir=args.data_dir,
-            output_dir=args.model_dir,
-            model_name=args.model_name,
-            batch_size=args.batch_size,
-            epochs=args.epochs,
-            learning_rate=args.learning_rate,
-            image_size=args.image_size,
+        command = [sys.executable, "-m", "eq.training.train_mitochondria", *sys.argv[1:]]
+        with direct_execution_log_context(
+            surface="train_mitochondria",
+            output_stem=args.model_name,
+            dry_run=False,
             config_path=config_path,
-            device=args.device,
-        )
-        
-        logger.info("🎉 Mitochondria training completed successfully!")
-        print(f"✅ Model saved to: {model_path}")
+            command=command,
+            workflow="segmentation_mitochondria_pretraining",
+            logger_name="eq",
+        ):
+            args.batch_size = get_segmentation_training_batch_size(
+                "mitochondria",
+                image_size=args.image_size,
+                requested_batch_size=args.batch_size,
+            )
+            logger.info("🚀 Starting mitochondria model training...")
+            logger.info(f"📁 Data directory: {args.data_dir}")
+            logger.info(f"📁 Model directory: {args.model_dir}")
+            logger.info(f"🧾 Model name: {args.model_name}")
+            logger.info(f"⚙️  Epochs: {args.epochs}, Batch size: {args.batch_size}")
+            logger.info(f"🎯 Learning rate: {args.learning_rate}")
+            logger.info(f"📐 Image size: {args.image_size}")
+            logger.info(f"🔄 Training mode: {TRAINING_MODE_DYNAMIC_FULL_IMAGE}")
+            
+            # Train the model using DataBlock approach
+            model, model_path = train_mitochondria_with_datablock(
+                data_dir=args.data_dir,
+                output_dir=args.model_dir,
+                model_name=args.model_name,
+                batch_size=args.batch_size,
+                epochs=args.epochs,
+                learning_rate=args.learning_rate,
+                image_size=args.image_size,
+                config_path=config_path,
+                device=args.device,
+            )
+            
+            logger.info("🎉 Mitochondria training completed successfully!")
+            print(f"✅ Model saved to: {model_path}")
         
     except Exception as e:
         logger.error(f"❌ Training failed: {e}")

@@ -16,38 +16,6 @@ CONSOLIDATED ARCHITECTURE:
 """
 
 # Data loading functions (consolidated into datablock_loader)
-from .datablock_loader import (
-    build_segmentation_datablock_dynamic_patching,
-    build_segmentation_dls_dynamic_patching,
-    validate_supported_segmentation_training_root,
-)
-
-# Model loading functions (consolidated from model_loader.py and model_loading.py)
-from .model_loading import (
-    get_model_info,
-    validate_model_compatibility,
-    load_model_safely,
-    load_mitochondria_model,
-    load_glomeruli_model,
-)
-
-# FastAI v2 DataBlock loader (canonical) - already imported above
-
-# Configuration - moved to datablock_loader
-
-# Output management
-from .output_manager import (
-    OutputManager,
-    create_output_directories,
-)
-
-# Dataset organization - moved to utils
-
-# Metadata processing
-from .metadata_processor import (
-    MetadataProcessor,
-    process_metadata_file,
-)
 from .backup_utils import create_backup_snapshot
 from .canonical_contract import (
     apply_migration_plan,
@@ -56,14 +24,43 @@ from .canonical_contract import (
 )
 from .canonical_naming import (
     ParsedSubjectImageId,
-    parse_subject_image_stem,
-    parse_image_path,
-    parse_mask_path,
     canonical_image_name,
     canonical_mask_name,
+    parse_image_path,
+    parse_mask_path,
+    parse_subject_image_stem,
     subject_prefix_from_subject_image_id,
 )
+from .datablock_loader import (
+    build_segmentation_datablock_dynamic_patching,
+    build_segmentation_dls_dynamic_patching,
+    validate_supported_segmentation_training_root,
+)
+
+# Dataset organization - moved to utils
+# Metadata processing
+from .metadata_processor import (
+    MetadataProcessor,
+    process_metadata_file,
+)
+
+# Model loading functions (consolidated from model_loader.py and model_loading.py)
+from .model_loading import (
+    get_model_info,
+    load_glomeruli_model,
+    load_mitochondria_model,
+    load_model_safely,
+    validate_model_compatibility,
+)
 from .organize_lucchi_dataset import organize_lucchi_dataset
+
+# FastAI v2 DataBlock loader (canonical) - already imported above
+# Configuration - moved to datablock_loader
+# Output management
+from .output_manager import (
+    OutputManager,
+    create_output_directories,
+)
 
 # Train/val/test splitting - handled automatically by FastAI v2 RandomSplitter
 

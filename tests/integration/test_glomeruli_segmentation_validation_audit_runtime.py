@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-from eq.utils.paths import get_active_runtime_root
 from eq.training.segmentation_validation_audit import (
     PROMOTION_ELIGIBLE,
     audit_manifest_rows,
@@ -21,6 +20,7 @@ from eq.training.segmentation_validation_audit import (
     audit_split_overlap,
     documentation_claim_audit,
 )
+from eq.utils.paths import get_active_runtime_root
 
 
 def _runtime_root() -> Path:

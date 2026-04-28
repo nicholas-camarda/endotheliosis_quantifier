@@ -3,8 +3,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
-
 from fastai.vision.all import resnet18, unet_learner
+
 from eq.data_management.datablock_loader import build_segmentation_dls_dynamic_patching
 
 

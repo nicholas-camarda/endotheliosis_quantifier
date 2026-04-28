@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Quantification metrics for endotheliosis assessment."""
 
+from dataclasses import dataclass
+from typing import Optional, Union
+
 import cv2
 import numpy as np
-from typing import Union, Optional
-from dataclasses import dataclass
 
 
 @dataclass

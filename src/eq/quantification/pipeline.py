@@ -2461,26 +2461,38 @@ def run_contract_first_quantification(
     """Prepare the quantification contract and run the embedding-first scorer."""
     logger = get_logger('eq.quantification.pipeline')
     project_dir = Path(project_dir)
+    segmentation_model_path = Path(segmentation_model_path)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        'Starting contract-first quantification: project_dir=%s, segmentation_model=%s, output_dir=%s, score_source=%s, stop_after=%s',
+        project_dir,
+        segmentation_model_path,
+        output_dir,
+        score_source,
+        stop_after,
+    )
 
     if score_source not in {'auto', 'labelstudio', 'spreadsheet'}:
         raise ValueError(f'Unsupported score_source: {score_source}')
 
     manifest_path = project_dir / 'manifest.csv'
     if manifest_path.exists() and score_source == 'auto' and annotation_source is None:
+        logger.info('Manifest-backed quantification detected: manifest=%s', manifest_path)
         return run_manifest_quantification(
             manifest_root=project_dir,
-            segmentation_model_path=Path(segmentation_model_path),
+            segmentation_model_path=segmentation_model_path,
             output_dir=output_dir,
             stop_after=stop_after,
         )
 
     inventory_path = output_dir / 'raw_inventory.csv'
     inventory_raw_project(project_dir).to_csv(inventory_path, index=False)
+    logger.info('Raw project inventory written: %s', inventory_path)
     mapping_template_path = generate_mapping_template(
         project_dir, output_dir / 'legacy_to_canonical_mapping_template.csv'
     )
+    logger.info('Mapping template written: %s', mapping_template_path)
 
     if (
         annotation_source is None
@@ -2505,6 +2517,12 @@ def run_contract_first_quantification(
             output_dir=output_dir / 'labelstudio_scores',
         )
         score_table = pd.read_csv(score_outputs['scores'])
+        logger.info(
+            'Recovered Label Studio scores: rows=%d, scores=%s, summary=%s',
+            len(score_table),
+            score_outputs['scores'],
+            score_outputs['summary'],
+        )
         validation_summary = json.loads(
             score_outputs['summary'].read_text(encoding='utf-8')
         )
@@ -2518,6 +2536,7 @@ def run_contract_first_quantification(
             score_table=score_table,
             output_dir=output_dir / 'scored_examples',
         )
+        logger.info('Scored examples ready: rows=%d', len(scored_table))
         if stop_after == 'contract':
             return {
                 'raw_inventory': inventory_path,
@@ -2533,6 +2552,7 @@ def run_contract_first_quantification(
         roi_table = extract_image_level_roi_crops(
             scored_table, output_dir / 'roi_crops'
         )
+        logger.info('ROI crops ready: rows=%d', len(roi_table))
         if stop_after == 'roi':
             return {
                 'raw_inventory': inventory_path,
@@ -2545,9 +2565,10 @@ def run_contract_first_quantification(
 
         embedding_table = extract_embedding_table(
             roi_table=roi_table,
-            segmentation_model_path=Path(segmentation_model_path),
+            segmentation_model_path=segmentation_model_path,
             output_dir=output_dir / 'embeddings',
         )
+        logger.info('Embedding table ready: rows=%d, columns=%d', len(embedding_table), len(embedding_table.columns))
         if stop_after == 'embeddings':
             return {
                 'raw_inventory': inventory_path,
@@ -2576,6 +2597,7 @@ def run_contract_first_quantification(
 
     metadata_file = project_dir / 'metadata' / 'subject_metadata.xlsx'
     if not metadata_file.exists():
+        logger.error('Metadata file not found: %s', metadata_file)
         raise FileNotFoundError(f'Metadata file not found: {metadata_file}')
 
     metadata_output_dir = output_dir / 'metadata'
@@ -2583,6 +2605,7 @@ def run_contract_first_quantification(
     metadata_df = processor.process_glomeruli_scoring_matrix(
         metadata_file, output_path=metadata_output_dir / 'standardized_metadata.csv'
     )
+    logger.info('Metadata standardized: rows=%d, output=%s', len(metadata_df), metadata_output_dir / 'standardized_metadata.csv')
 
     migration_plan = build_migration_plan(
         project_dir, metadata_df, mapping_file=mapping_file
@@ -2601,6 +2624,7 @@ def run_contract_first_quantification(
     validation_path = save_contract_report(
         validation_report, output_dir / 'canonical_contract_validation.json'
     )
+    logger.info('Canonical contract validation status=%s report=%s', validation_report['overall_status'], validation_path)
 
     if validation_report['overall_status'] != 'PASS':
         unresolved = migration_plan[
@@ -2630,6 +2654,7 @@ def run_contract_first_quantification(
     scored_table = build_scored_example_table(
         project_dir, metadata_df, output_dir / 'scored_examples'
     )
+    logger.info('Scored examples ready: rows=%d', len(scored_table))
     if stop_after == 'contract':
         return {
             'raw_inventory': inventory_path,
@@ -2641,6 +2666,7 @@ def run_contract_first_quantification(
         }
 
     roi_table = extract_roi_crops(scored_table, output_dir / 'roi_crops')
+    logger.info('ROI crops ready: rows=%d', len(roi_table))
     if stop_after == 'roi':
         return {
             'raw_inventory': inventory_path,
@@ -2653,9 +2679,10 @@ def run_contract_first_quantification(
 
     embedding_table = extract_embedding_table(
         roi_table=roi_table,
-        segmentation_model_path=Path(segmentation_model_path),
+        segmentation_model_path=segmentation_model_path,
         output_dir=output_dir / 'embeddings',
     )
+    logger.info('Embedding table ready: rows=%d, columns=%d', len(embedding_table), len(embedding_table.columns))
     if stop_after == 'embeddings':
         return {
             'raw_inventory': inventory_path,

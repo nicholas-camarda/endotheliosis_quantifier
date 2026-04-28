@@ -14,6 +14,14 @@ from typing import Optional, Union
 import matplotlib.pyplot as plt
 import torch
 from fastai.vision.all import *
+from fastai.vision.all import (
+    Dice,
+    JaccardCoeff,
+    Learner,
+    load_learner,
+    resnet34,
+    unet_learner,
+)
 
 # BCEWithLogitsLossFlat import removed - using FastAI v2 automatic loss selection
 from eq.data_management.datablock_loader import (
@@ -449,9 +457,7 @@ def transfer_learn_glomeruli(
     Returns:
         Learner: Trained glomeruli model
     """
-    # Set up logging for transfer learning
-    from eq.utils.logger import setup_logging
-    logger = setup_logging(verbose=True)
+    logger = get_logger("eq.training.transfer_learning")
     logger.info("Starting transfer learning from mitochondria to glomeruli")
     set_transfer_learning_seed(seed)
     

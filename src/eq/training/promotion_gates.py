@@ -10,7 +10,6 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 import numpy as np
 from PIL import Image
 
-
 CropBox = Tuple[int, int, int, int]
 
 

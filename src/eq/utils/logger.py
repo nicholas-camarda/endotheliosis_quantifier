@@ -31,16 +31,24 @@ def setup_logging(
         else:
             format_string = "%(asctime)s - %(levelname)s - %(message)s"
     
-    # Clear root logger handlers to prevent duplicates
+    # Clear handlers managed by this setup call while preserving external
+    # capture handlers and active execution-log handlers.
     root_logger = logging.getLogger()
-    root_logger.handlers.clear()
+    root_logger.handlers = [
+        handler
+        for handler in root_logger.handlers
+        if not getattr(handler, "_eq_managed_handler", False)
+    ]
     
     # Create logger
     logger = logging.getLogger("eq")
     logger.setLevel(level)
     
-    # Clear any existing handlers
-    logger.handlers.clear()
+    logger.handlers = [
+        handler
+        for handler in logger.handlers
+        if not getattr(handler, "_eq_managed_handler", False)
+    ]
     
     # Prevent propagation to root logger to avoid duplicates
     logger.propagate = False
@@ -52,6 +60,7 @@ def setup_logging(
     console_handler = ColoredStreamHandler(sys.stdout)
     console_handler.setLevel(level)
     console_handler.setFormatter(formatter)
+    console_handler._eq_managed_handler = True  # type: ignore[attr-defined]
     logger.addHandler(console_handler)
     
     # Create file handler if log_file is specified
@@ -60,6 +69,7 @@ def setup_logging(
         file_handler = logging.FileHandler(log_file)
         file_handler.setLevel(level)
         file_handler.setFormatter(formatter)
+        file_handler._eq_managed_handler = True  # type: ignore[attr-defined]
         logger.addHandler(file_handler)
     
     return logger
@@ -185,7 +195,7 @@ def log_model_info(model, name: str, logger: Optional[logging.Logger] = None):
             summary_list = []
             model.summary(print_fn=lambda x: summary_list.append(x))
             logger.debug(f"🤖 {name} model summary:\n" + "\n".join(summary_list))
-        except:
+        except Exception:
             pass
     else:
         logger.info(f"🤖 {name} object loaded successfully")

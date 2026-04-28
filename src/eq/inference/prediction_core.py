@@ -21,8 +21,8 @@ import numpy as np
 import torch
 from PIL import Image
 
-from eq.utils.logger import get_logger
 from eq.core.constants import DEFAULT_IMAGE_SIZE
+from eq.utils.logger import get_logger
 
 
 class PredictionCore:

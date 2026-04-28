@@ -9,10 +9,10 @@ and converts them to a standardized, project-agnostic structure.
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, Union, cast, Tuple, List
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 from eq.data_management.canonical_naming import (
     classify_naming_conventions,
@@ -163,9 +163,9 @@ def validate_subject_naming(
     # Generate summary warnings
     if len(validation_results['naming_conventions_detected']) > 1:
         warning_msg = (
-            f"⚠️  MIXED NAMING CONVENTIONS DETECTED!\n"
-            f"   Found both new format (SUBJECT-IMAGE) and legacy format (SUBJECT_ImageIMAGE)\n"
-            f"   Consider standardizing to new format: SUBJECT_ID-IMAGE_NUMBER.ext"
+            "⚠️  MIXED NAMING CONVENTIONS DETECTED!\n"
+            "   Found both new format (SUBJECT-IMAGE) and legacy format (SUBJECT_ImageIMAGE)\n"
+            "   Consider standardizing to new format: SUBJECT_ID-IMAGE_NUMBER.ext"
         )
         validation_results['warnings'].append(warning_msg)
         logger.warning(warning_msg)

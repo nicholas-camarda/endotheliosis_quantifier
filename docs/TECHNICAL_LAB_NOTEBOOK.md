@@ -73,6 +73,8 @@ Path defaults are defined in [`src/eq/utils/paths.py`](../src/eq/utils/paths.py)
 - cache: `$EQ_RUNTIME_ROOT/derived_data/cache`
 - models: `$EQ_RUNTIME_ROOT/models`
 - logs: `$EQ_RUNTIME_ROOT/logs`
+- run-config logs: `$EQ_RUNTIME_ROOT/logs/run_config/<run_id>/`
+- supported direct module logs: `$EQ_RUNTIME_ROOT/logs/direct/<surface>/<run_id>/`
 - runtime root: `EQ_RUNTIME_ROOT` or the active runtime root selected by `src/eq/utils/paths.py`
 - runtime cohort manifest: `$EQ_RUNTIME_ROOT/raw_data/cohorts/manifest.csv`
 - runtime outputs: `$EQ_RUNTIME_ROOT/output`
@@ -431,6 +433,7 @@ Important nuance:
 - the README YAML-first workflow is the recommended workflow documentation
 - the `train_glomeruli.py` module resolves a machine-aware default batch size and currently starts at `12` on the powerful Apple Silicon MPS machine class when using `512x512` crops
 - `eq run-config --config configs/glomeruli_candidate_comparison.yaml` is the normal candidate-comparison control surface
+- direct supported module entrypoints write durable logs under `$EQ_RUNTIME_ROOT/logs/direct/<surface>/<run_id>/`; imported functions emit logger events to the caller's configured logging
 - transfer training with `--base-model` must load that artifact and copy compatible weights; `--from-scratch` means no mitochondria/base artifact and currently uses an ImageNet-pretrained ResNet34 encoder
 - the direct training module CLI remains useful for targeted runs outside the full YAML workflow
 

@@ -83,7 +83,8 @@ The repository SHALL maintain tests that exercise logging behavior across the su
 
 #### Scenario: Logging validation is part of change completion
 - **WHEN** the logging change is marked complete
-- **THEN** validation includes `python -m pytest -q tests/test_execution_logging_contract.py`, relevant existing CLI/workflow tests, `python3 scripts/check_openspec_explicitness.py openspec/changes/p1-repo-wide-execution-logging-contract`, and `env OPENSPEC_TELEMETRY=0 openspec validate p1-repo-wide-execution-logging-contract --strict`
+- **THEN** validation includes `python -m pytest -q tests/test_execution_logging_contract.py`, relevant existing CLI/workflow tests, `python3 scripts/check_openspec_explicitness.py openspec/changes/p1-repo-wide-execution-logging-contract`, `python -m ruff check .`, and `env OPENSPEC_TELEMETRY=0 openspec validate p1-repo-wide-execution-logging-contract --strict`
+- **AND** repo-wide lint failures are fixed as part of completion rather than left as a known blocker to future logging-contract regression checks
 
 ### Requirement: Logs contain operationally useful milestones without changing scientific claims
 Execution logs SHALL help an operator determine what ran, what inputs and outputs were used, where time was spent, what decisions were made, and why a run failed, without treating execution success as scientific validation.

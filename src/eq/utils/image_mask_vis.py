@@ -7,10 +7,12 @@ to help with debugging and data exploration.
 """
 
 from pathlib import Path
-from typing import Optional, Union, Tuple
-import numpy as np
+from typing import Optional, Tuple, Union
+
 import matplotlib.pyplot as plt
+import numpy as np
 from PIL import Image
+
 from eq.utils.logger import get_logger
 
 
@@ -129,7 +131,7 @@ def visualize_image_mask_pair(
     mask_arr = np.array(mask)
     
     if show_stats:
-        logger.info(f"Image-Mask pair statistics:")
+        logger.info("Image-Mask pair statistics:")
         logger.info(f"  Image: {img_arr.shape}, {img_arr.dtype}, min/max: {img_arr.min()}/{img_arr.max()}")
         logger.info(f"  Mask: {mask_arr.shape}, {mask_arr.dtype}, min/max: {mask_arr.min()}/{mask_arr.max()}")
         positive_pixels = (mask_arr > 0).sum()

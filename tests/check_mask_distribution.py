@@ -5,6 +5,7 @@ Check the distribution of empty vs non-empty masks in the dataset.
 
 import sys
 from pathlib import Path
+
 import numpy as np
 
 from eq.utils.paths import get_runtime_cohort_path
@@ -15,8 +16,9 @@ sys.path.append(str(Path(__file__).parent / "src"))
 print("Checking mask distribution in glomerulus (preeclampsia) dataset...")
 
 try:
-    from eq.data_management.standard_getters import get_y_full
     from fastai.vision.all import get_image_files
+
+    from eq.data_management.standard_getters import get_y_full
     
     # Check the raw data for full images
     data_root = get_runtime_cohort_path("lauren_preeclampsia")
@@ -59,13 +61,13 @@ try:
     
     total_samples = empty_count + non_empty_count
     
-    print(f"\n--- DISTRIBUTION SUMMARY ---")
+    print("\n--- DISTRIBUTION SUMMARY ---")
     print(f"Empty masks: {empty_count} ({empty_count/total_samples:.1%})")
     print(f"Non-empty masks: {non_empty_count} ({non_empty_count/total_samples:.1%})")
     
     if positive_ratios:
         ratios_array = np.array(positive_ratios)
-        print(f"\nPositive pixel ratio statistics:")
+        print("\nPositive pixel ratio statistics:")
         print(f"  Mean: {ratios_array.mean():.3f}")
         print(f"  Median: {np.median(ratios_array):.3f}")
         print(f"  Std: {ratios_array.std():.3f}")
@@ -73,7 +75,7 @@ try:
         print(f"  Max: {ratios_array.max():.3f}")
         
         # Distribution analysis
-        print(f"\nDistribution of positive ratios:")
+        print("\nDistribution of positive ratios:")
         print(f"  0% (empty): {(ratios_array == 0).sum()} masks")
         print(f"  0-1%: {((ratios_array > 0) & (ratios_array <= 0.01)).sum()} masks")
         print(f"  1-5%: {((ratios_array > 0.01) & (ratios_array <= 0.05)).sum()} masks")
@@ -81,7 +83,7 @@ try:
         print(f"  10%+: {(ratios_array > 0.1).sum()} masks")
     
     # Determine if balanced sampling is needed
-    print(f"\n--- BALANCED SAMPLING ASSESSMENT ---")
+    print("\n--- BALANCED SAMPLING ASSESSMENT ---")
     empty_ratio = empty_count / total_samples
     
     if empty_ratio > 0.8:
@@ -102,7 +104,7 @@ try:
         n_classes = 2
         class_counts = [empty_count, non_empty_count]
         weights = [total_samples / (n_classes * count) for count in class_counts]
-        print(f"\nIf using balanced sampling, class weights would be:")
+        print("\nIf using balanced sampling, class weights would be:")
         print(f"  Empty masks: {weights[0]:.3f}")
         print(f"  Non-empty masks: {weights[1]:.3f}")
         print(f"  Weight ratio (non-empty/empty): {weights[1]/weights[0]:.3f}")

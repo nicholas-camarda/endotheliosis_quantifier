@@ -4,14 +4,21 @@ from __future__ import annotations
 
 import argparse
 import glob
+import logging
 import os
-import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from eq.utils.execution_logging import (
+    execution_log_context,
+    make_execution_log_context,
+    run_logged_subprocess,
+    runtime_root_environment,
+)
 
 SUPPORTED_WORKFLOWS = {
     "endotheliosis_quantification",
@@ -26,6 +33,7 @@ RETIRED_WORKFLOWS = {
     "full_segmentation_retrain",
     "segmentation_fixedloader_full_retrain",
 }
+LOGGER = logging.getLogger("eq.run_config")
 
 
 def load_workflow_config(config_path: Path) -> dict[str, Any]:
@@ -55,41 +63,64 @@ def run_config(config_path: Path, *, dry_run: bool = False) -> None:
     """Run a supported workflow config."""
     config = load_workflow_config(config_path)
     workflow = str(config["workflow"])
-    if workflow == "glomeruli_candidate_comparison":
-        from eq.training.run_glomeruli_candidate_comparison_workflow import (
-            run_glomeruli_candidate_comparison_workflow,
-        )
+    runtime_root = _runtime_root(config)
+    run_cfg = config.get("run", {})
+    if not isinstance(run_cfg, dict):
+        run_cfg = {}
+    run_name = str(run_cfg.get("name") or workflow)
+    command = [sys.executable, "-m", "eq", "run-config", "--config", str(config_path)]
+    if dry_run:
+        command.append("--dry-run")
 
-        run_glomeruli_candidate_comparison_workflow(config_path, dry_run=dry_run)
-        return
-    if workflow == "glomeruli_transport_audit":
-        from eq.evaluation.run_glomeruli_transport_audit_workflow import (
-            run_glomeruli_transport_audit_workflow,
+    with runtime_root_environment(runtime_root):
+        context = make_execution_log_context(
+            surface="run_config",
+            mode="run_config",
+            config_run_name=run_name,
+            runtime_root=runtime_root,
+            dry_run=dry_run,
+            config_path=config_path,
+            command=command,
         )
+        with execution_log_context(context, logger_name="eq", workflow=workflow):
+            LOGGER.info("WORKFLOW_ID=%s", workflow)
+            LOGGER.info("CONFIG_PATH=%s", config_path)
+            LOGGER.info("RUNTIME_ROOT=%s", runtime_root)
+            if workflow == "glomeruli_candidate_comparison":
+                from eq.training.run_glomeruli_candidate_comparison_workflow import (
+                    run_glomeruli_candidate_comparison_workflow,
+                )
 
-        run_glomeruli_transport_audit_workflow(config_path, dry_run=dry_run)
-        return
-    if workflow == "highres_glomeruli_concordance":
-        from eq.evaluation.run_highres_glomeruli_concordance_workflow import (
-            run_highres_glomeruli_concordance_workflow,
-        )
+                run_glomeruli_candidate_comparison_workflow(config_path, dry_run=dry_run)
+                return
+            if workflow == "glomeruli_transport_audit":
+                from eq.evaluation.run_glomeruli_transport_audit_workflow import (
+                    run_glomeruli_transport_audit_workflow,
+                )
 
-        run_highres_glomeruli_concordance_workflow(config_path, dry_run=dry_run)
-        return
-    if workflow == "endotheliosis_quantification":
-        from eq.quantification.run_endotheliosis_quantification_workflow import (
-            run_endotheliosis_quantification_workflow,
-        )
+                run_glomeruli_transport_audit_workflow(config_path, dry_run=dry_run)
+                return
+            if workflow == "highres_glomeruli_concordance":
+                from eq.evaluation.run_highres_glomeruli_concordance_workflow import (
+                    run_highres_glomeruli_concordance_workflow,
+                )
 
-        run_endotheliosis_quantification_workflow(config_path, dry_run=dry_run)
-        return
-    if workflow == "segmentation_mitochondria_pretraining":
-        run_mitochondria_pretraining_config(config, dry_run=dry_run)
-        return
-    if workflow == "segmentation_glomeruli_transfer":
-        run_glomeruli_transfer_config(config, dry_run=dry_run)
-        return
-    raise AssertionError(f"Unhandled supported workflow: {workflow}")
+                run_highres_glomeruli_concordance_workflow(config_path, dry_run=dry_run)
+                return
+            if workflow == "endotheliosis_quantification":
+                from eq.quantification.run_endotheliosis_quantification_workflow import (
+                    run_endotheliosis_quantification_workflow,
+                )
+
+                run_endotheliosis_quantification_workflow(config_path, dry_run=dry_run)
+                return
+            if workflow == "segmentation_mitochondria_pretraining":
+                run_mitochondria_pretraining_config(config, dry_run=dry_run)
+                return
+            if workflow == "segmentation_glomeruli_transfer":
+                run_glomeruli_transfer_config(config, dry_run=dry_run)
+                return
+            raise AssertionError(f"Unhandled supported workflow: {workflow}")
 
 
 def _runtime_root(config: dict[str, Any]) -> Path:
@@ -129,10 +160,14 @@ def _python(config: dict[str, Any]) -> str:
 
 
 def _run(command: list[str], env: dict[str, str], *, dry_run: bool) -> None:
-    print(" ".join(command), flush=True)
-    if dry_run:
-        return
-    subprocess.run(command, check=True, env=env)
+    started = time.time()
+    LOGGER.info("COMMAND=%s", " ".join(command))
+    try:
+        run_logged_subprocess(command, env=env, dry_run=dry_run, logger=LOGGER)
+    except Exception:
+        LOGGER.exception("COMMAND_STATUS=failed ELAPSED_SECONDS=%.3f", time.time() - started)
+        raise
+    LOGGER.info("COMMAND_STATUS=completed ELAPSED_SECONDS=%.3f", time.time() - started)
 
 
 def _model_input_size(model_cfg: dict[str, Any], default: int = 256) -> int:

@@ -42,4 +42,7 @@ Direct module and function execution currently produces less durable operational
 - Function responsibility: supported high-level functions emit logger events and do not configure global handlers or independently create durable log files.
 - Entrypoint responsibility: `eq` CLI, `eq run-config`, and direct module `main()` functions attach durable handlers only for surfaces classified for automatic runtime logging, tee subprocess output when launching workers, and remove temporary handlers on completion or failure.
 - Generic `eq` subcommands that remain explicit `--log-file` only must be named in the execution-surface inventory and documented so they are not mistaken for automatic runtime-log surfaces.
+- logging-contract: this change classifies every touched execution surface in `execution-surface-inventory.md` and validates the durable logging behavior with focused tests.
+- docs-impact: operator docs must describe `logs/run_config`, `logs/direct`, imported function-event logging, and the separate explicit `eq --log-file` path.
+- lint-scope: completion includes making `ruff check .` pass repo-wide by applying mechanical import sorting, replacing bare exception handlers, making FastAI names explicit where star imports hid them from lint, and removing duplicate runtime path helper definitions.
 - Governance propagation: `openspec-change-governance` will require future execution-surface changes to include a logging-contract note and validation command.
