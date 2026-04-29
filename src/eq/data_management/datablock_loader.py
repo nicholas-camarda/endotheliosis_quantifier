@@ -28,6 +28,7 @@ from fastai.vision.all import (
     get_image_files,
     imagenet_stats,
 )
+from PIL import Image
 
 from eq.core.constants import (
     DEFAULT_FLIP_VERT,
@@ -172,11 +173,12 @@ def _runtime_root_for_cohort_registry_root(root: Path) -> Path:
     return root.parents[1]
 
 
-def _manifest_pair_record(image_path: Path, mask_path: Path) -> dict[str, Any]:
+def _manifest_pair_record(image_path: Path, mask_path: Path, *, manifest_row: str | None = None) -> dict[str, Any]:
     return {
         "__eq_manifest_pair_record__": True,
         "source_image_path": str(image_path),
         "source_mask_path": str(mask_path),
+        "manifest_row": manifest_row,
     }
 
 
@@ -196,6 +198,22 @@ def training_item_mask_path(item: Any) -> Path:
     from eq.data_management.standard_getters import get_y_full as _get_y_full
 
     return _get_y_full(item)
+
+
+def _validate_readable_image(path: Path, *, role: str, row_label: str, image_path: Path, mask_path: Path) -> None:
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Manifest-backed training row {row_label} has missing {role}: "
+            f"image_path={image_path}; mask_path={mask_path}"
+        )
+    try:
+        with Image.open(path) as handle:
+            handle.verify()
+    except Exception as exc:
+        raise ValueError(
+            f"Manifest-backed training row {row_label} has unreadable {role}: "
+            f"image_path={image_path}; mask_path={mask_path}"
+        ) from exc
 
 
 def _manifest_admitted_cohort_images(root: Path) -> Optional[List[Any]]:
@@ -225,21 +243,27 @@ def _manifest_admitted_cohort_images(root: Path) -> Optional[List[Any]]:
     if cohort_name is not None:
         cohort_rows = cohort_rows[cohort_rows["cohort_id"].astype(str) == cohort_name]
     items: list[dict[str, Any]] = []
-    missing: list[str] = []
-    for row in cohort_rows.to_dict(orient="records"):
+    for row_index, row in cohort_rows.iterrows():
+        row_dict = row.to_dict()
+        row_id = str(row_dict.get("manifest_row_id") or row_dict.get("row_id") or row_index)
+        row_label = f"{row_id}"
         image_path = runtime_root / str(row["image_path"])
         mask_path = runtime_root / str(row["mask_path"])
-        if not image_path.exists():
-            missing.append(str(image_path))
-        if not mask_path.exists():
-            missing.append(str(mask_path))
-        items.append(_manifest_pair_record(image_path, mask_path))
-    if missing:
-        examples = ", ".join(missing[:5])
-        raise FileNotFoundError(
-            f"Manifest-backed training root has {len(missing)} missing explicit image/mask path(s). "
-            f"Examples: {examples}"
+        _validate_readable_image(
+            image_path,
+            role="image",
+            row_label=row_label,
+            image_path=image_path,
+            mask_path=mask_path,
         )
+        _validate_readable_image(
+            mask_path,
+            role="mask",
+            row_label=row_label,
+            image_path=image_path,
+            mask_path=mask_path,
+        )
+        items.append(_manifest_pair_record(image_path, mask_path, manifest_row=row_label))
     return items
 
 
@@ -511,6 +535,7 @@ def build_segmentation_datablock_dynamic_patching(
     negative_crop_manifest_path: Optional[Union[str, Path]] = None,
     negative_crop_sampler_weight: float = 0.0,
     augmentation_variant: str = "fastai_default",
+    split_seed: int = 42,
 ):
     """
     Create a DataBlock for binary segmentation with dynamic patching.
@@ -533,7 +558,7 @@ def build_segmentation_datablock_dynamic_patching(
         codes = [0, 1]
     
     if splitter is None:
-        splitter = RandomSplitter(valid_pct=DEFAULT_VAL_RATIO, seed=42)
+        splitter = RandomSplitter(valid_pct=DEFAULT_VAL_RATIO, seed=int(split_seed))
 
     negative_records: list[dict[str, Any]] = []
     if negative_crop_manifest_path:
@@ -634,6 +659,7 @@ def build_segmentation_dls_dynamic_patching(
     negative_crop_sampler_weight: float = 0.0,
     augmentation_variant: str = "fastai_default",
     device: Optional[Union[str, torch.device]] = None,
+    split_seed: int = 42,
 ):
     """
     Create DataLoaders for binary segmentation with dynamic patching.
@@ -693,6 +719,7 @@ def build_segmentation_dls_dynamic_patching(
         negative_crop_manifest_path=negative_crop_manifest_path,
         negative_crop_sampler_weight=negative_crop_sampler_weight,
         augmentation_variant=augmentation_variant,
+        split_seed=split_seed,
     )
     
     # Create DataLoaders on the required accelerator.  This is part of the

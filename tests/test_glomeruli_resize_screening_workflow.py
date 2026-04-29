@@ -1,30 +1,15 @@
-import csv
-import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 from eq.training.run_glomeruli_candidate_comparison_workflow import (
-    LOGGER,
     run_glomeruli_candidate_comparison_workflow,
 )
 
 
-def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames: list[str] = []
-    for row in rows:
-        for key in row:
-            if key not in fieldnames:
-                fieldnames.append(key)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def test_resize_screening_workflow_records_failed_primary_and_runs_fallback(tmp_path, monkeypatch):
+def test_resize_screening_fallback_config_is_rejected(tmp_path, monkeypatch):
     runtime_root = tmp_path / "runtime"
     config_path = tmp_path / "resize_screen.yaml"
     comparison_root = runtime_root / "output" / "segmentation_evaluation" / "glomeruli_candidate_comparison"
@@ -104,86 +89,13 @@ def test_resize_screening_workflow_records_failed_primary_and_runs_fallback(tmp_
         },
     }
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
-    commands: list[list[str]] = []
-
     def fake_run(command, env, *, dry_run):
-        commands.append(command)
-        LOGGER.info("SUBPROCESS_COMMAND=%s", " ".join(command))
-        if "eq.training.compare_glomeruli_candidates" not in command:
-            return
-        run_id = command[command.index("--run-id") + 1]
-        if run_id == "p0_resize_screen_512to512":
-            LOGGER.error("SUBPROCESS_RETURN_CODE=137")
-            LOGGER.error("SUBPROCESS_STATUS=failed")
-            raise subprocess.CalledProcessError(137, command)
-        LOGGER.info("SUBPROCESS_RETURN_CODE=0")
-        LOGGER.info("SUBPROCESS_STATUS=completed")
-        run_output = comparison_root / run_id
-        _write_csv(
-            run_output / "candidate_summary.csv",
-            [
-                {
-                    "family": "transfer",
-                    "threshold_policy_status": "validation_derived_threshold",
-                    "threshold": "0.25",
-                    "category_gate_status": "promotion_eligible",
-                    "category_gate_failed_count": "0",
-                    "background_false_positive_foreground_fraction": "0.001",
-                    "dice": "0.8",
-                    "jaccard": "0.7",
-                    "precision": "0.8",
-                    "recall": "0.8",
-                }
-            ],
-        )
-        _write_csv(
-            run_output / "candidate_predictions.csv",
-            [
-                {
-                    "family": "transfer",
-                    "category": "positive",
-                    "dice": "0.8",
-                    "recall": "0.8",
-                    "precision": "0.8",
-                    "truth_foreground_fraction": "0.2",
-                    "prediction_foreground_fraction": "0.2",
-                },
-                {
-                    "family": "transfer",
-                    "category": "boundary",
-                    "dice": "0.8",
-                    "recall": "0.8",
-                    "precision": "0.8",
-                    "truth_foreground_fraction": "0.2",
-                    "prediction_foreground_fraction": "0.2",
-                },
-            ],
-        )
+        raise AssertionError(f"resize fallback config should fail before subprocess launch: {command}")
 
     monkeypatch.setattr(
         "eq.training.run_glomeruli_candidate_comparison_workflow._run",
         fake_run,
     )
 
-    summary_path = run_glomeruli_candidate_comparison_workflow(config_path)
-
-    rows = list(csv.DictReader(summary_path.open(newline="", encoding="utf-8")))
-    run_ids = {row["run_id"] for row in rows}
-    assert "p0_resize_screen_512to512" in run_ids
-    assert "p0_resize_screen_512to384" in run_ids
-    assert any(row["runtime_status"] == "failed" and row["failure_reason"] == "returncode=137" for row in rows)
-    assert any(row["row_type"] == "decision" for row in rows)
-    log_paths = {Path(row["log_path"]) for row in rows if row.get("log_path")}
-    assert len(log_paths) == 1
-    log_text = next(iter(log_paths)).read_text(encoding="utf-8")
-    assert "SUBPROCESS_RETURN_CODE=137" in log_text
-    assert "SUBPROCESS_STATUS=failed" in log_text
-    assert "RESIZE_SCREEN_ATTEMPT_FAILED run_id=p0_resize_screen_512to512 returncode=137" in log_text
-    assert "p0_resize_screen_512to384" in log_text
-    reference_commands = [
-        command
-        for command in commands
-        if "eq.training.compare_glomeruli_candidates" in command
-        and command[command.index("--run-id") + 1] == "p0_resize_screen_current_512to256"
-    ]
-    assert any("--resize-screening-summary" in command for command in reference_commands)
+    with pytest.raises(ValueError, match="fallback_run_id"):
+        run_glomeruli_candidate_comparison_workflow(config_path)

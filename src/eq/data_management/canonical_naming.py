@@ -9,8 +9,12 @@ from typing import Iterable, Optional
 
 from eq.core.constants import IMAGE_EXTENSIONS, MASK_EXTENSIONS
 
-CANONICAL_SUBJECT_IMAGE_RE = re.compile(r'^(?P<subject_prefix>T\d+)-(?P<image_index>\d+)$')
-LEGACY_SUBJECT_IMAGE_RE = re.compile(r'^(?P<subject_prefix>T\d+)_Image(?P<legacy_index>\d+)$')
+CANONICAL_SUBJECT_IMAGE_RE = re.compile(
+    r'^(?P<subject_prefix>[A-Za-z0-9]+)-(?P<image_index>[1-9]\d*)$'
+)
+LEGACY_SUBJECT_IMAGE_RE = re.compile(
+    r'^(?P<subject_prefix>[A-Za-z0-9]+)_Image(?P<legacy_index>\d+)$'
+)
 
 
 @dataclass(frozen=True)
@@ -40,7 +44,7 @@ def is_supported_mask_extension(path: Path) -> bool:
 
 def parse_subject_image_stem(stem: str, allow_legacy: bool = True) -> Optional[ParsedSubjectImageId]:
     """Parse a raw image stem into a normalized subject-image identifier."""
-    canonical_match = CANONICAL_SUBJECT_IMAGE_RE.match(stem)
+    canonical_match = CANONICAL_SUBJECT_IMAGE_RE.fullmatch(stem)
     if canonical_match:
         subject_prefix = canonical_match.group('subject_prefix')
         image_index = int(canonical_match.group('image_index'))
@@ -53,7 +57,7 @@ def parse_subject_image_stem(stem: str, allow_legacy: bool = True) -> Optional[P
         )
 
     if allow_legacy:
-        legacy_match = LEGACY_SUBJECT_IMAGE_RE.match(stem)
+        legacy_match = LEGACY_SUBJECT_IMAGE_RE.fullmatch(stem)
         if legacy_match:
             subject_prefix = legacy_match.group('subject_prefix')
             legacy_index = int(legacy_match.group('legacy_index'))

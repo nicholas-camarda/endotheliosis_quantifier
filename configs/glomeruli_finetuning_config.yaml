@@ -8,9 +8,8 @@
 #   base and then compare transfer versus no-mitochondria-base candidates.
 #
 # Required precondition:
-#   A mitochondria .pkl matching pretrained_model.artifact_glob must already
-#   exist under EQ_RUNTIME_ROOT. If it does not exist, the runner fails instead
-#   of silently doing scratch/no-base training.
+#   The exact mitochondria .pkl at pretrained_model.artifact_path must already
+#   exist under EQ_RUNTIME_ROOT.
 
 workflow: segmentation_glomeruli_transfer
 
@@ -28,10 +27,8 @@ name: "glomeruli_finetuning"
 description: "Train one glomeruli transfer candidate from a mitochondria base model"
 
 pretrained_model:
-  # The runner selects the latest matching .pkl and passes it as --base-model.
-  # This is intentionally explicit: transfer must load a real supported base
-  # artifact or fail before training.
-  artifact_glob: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model-pretrain_e50_b24_lr1e-3_sz256/*.pkl"
+  # Exact supported base artifact passed as --base-model.
+  artifact_path: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model-pretrain_e50_b24_lr1e-3_sz256/mito_dynamic_unet_seg_model-pretrain_e50_b24_lr1e-3_sz256.pkl"
   description: "Mitochondria-pretrained U-Net model"
   freeze_encoder: false
 

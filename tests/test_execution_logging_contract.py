@@ -286,7 +286,11 @@ def test_direct_workflow_dry_runs_create_direct_logs(
                 "learning_rate": 1e-3,
                 "image_size": 256,
             },
-            "glomeruli_transfer": {"model_name": "transfer", "epochs": 1},
+            "glomeruli_transfer": {
+                "model_name": "transfer",
+                "epochs": 1,
+                "base_model_artifact_path": "models/segmentation/mitochondria/base.pkl",
+            },
             "glomeruli_scratch": {"model_name": "scratch", "epochs": 1},
             "candidate_training": {
                 "batch_size": 1,

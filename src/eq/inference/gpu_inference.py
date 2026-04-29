@@ -110,7 +110,7 @@ class GPUGlomeruliInference:
         from eq.inference.prediction_core import create_prediction_core
 
         core = create_prediction_core(self.expected_size)
-        img_tensor = core.preprocess_image(image)
+        img_tensor = core.preprocess_image_imagenet_normalized(image)
 
         # Move to GPU
         img_tensor = img_tensor.to(self.device)
@@ -160,9 +160,9 @@ class GPUGlomeruliInference:
                 else:
                     pred_mask = torch.sigmoid(raw_output)
 
-                # Create binary prediction with adaptive thresholding
-                # Use a lower threshold since your models are underconfident
-                threshold = 0.01  # Much lower than 0.5
+                from eq.inference.prediction_core import DEFAULT_PREDICTION_THRESHOLD
+
+                threshold = DEFAULT_PREDICTION_THRESHOLD
                 pred_binary = (pred_mask > threshold).float()
 
                 results.append((raw_output, pred_mask, pred_binary))
@@ -170,18 +170,22 @@ class GPUGlomeruliInference:
         return results
 
     def predict_single(
-        self, image: Image.Image, threshold: float = 0.01
+        self, image: Image.Image, threshold: float | None = None
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Predict on a single image.
 
         Args:
             image: PIL Image to predict on
-            threshold: Threshold for binary prediction (default: 0.01 for underconfident models)
+            threshold: Explicit threshold for binary prediction. Defaults to the shared prediction threshold.
 
         Returns:
             Tuple of (raw_output, probabilities, binary_prediction)
         """
+        from eq.inference.prediction_core import DEFAULT_PREDICTION_THRESHOLD
+
+        if threshold is None:
+            threshold = DEFAULT_PREDICTION_THRESHOLD
         # Preprocess image
         img_tensor = self.preprocess_image(image)
 

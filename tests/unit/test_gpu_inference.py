@@ -1,10 +1,16 @@
 import time
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import torch
+from PIL import Image
 
 from eq.inference.gpu_inference import GPUGlomeruliInference
+from eq.inference.prediction_core import (
+    DEFAULT_PREDICTION_THRESHOLD,
+    create_prediction_core,
+)
 
 
 def make_inference() -> GPUGlomeruliInference:
@@ -62,6 +68,40 @@ def test_explicit_cuda_requires_cuda_availability(monkeypatch):
 
     with pytest.raises(ValueError, match='CUDA was requested'):
         inference._select_device('cuda')
+
+
+def test_gpu_preprocess_uses_shared_imagenet_normalization(monkeypatch):
+    inference = make_inference()
+    inference.expected_size = 4
+    inference.device = 'cpu'
+    image = Image.fromarray(np.ones((4, 4, 3), dtype=np.uint8) * 128)
+
+    monkeypatch.setattr(torch.Tensor, 'to', lambda self, *args, **kwargs: self)
+
+    expected = create_prediction_core(4).preprocess_image_imagenet_normalized(image)
+    observed = inference.preprocess_image(image)
+
+    assert torch.allclose(observed, expected)
+
+
+def test_predict_single_defaults_to_shared_threshold(monkeypatch):
+    inference = make_inference()
+    inference.expected_size = 2
+    inference.device = 'cpu'
+    inference.learn = MagicMock()
+    inference.learn.model = lambda tensor: torch.zeros((1, 1, 2, 2))
+    image = Image.fromarray(np.zeros((2, 2, 3), dtype=np.uint8))
+
+    monkeypatch.setattr(torch.Tensor, 'to', lambda self, *args, **kwargs: self)
+
+    _, pred_mask, default_binary = inference.predict_single(image)
+    _, _, explicit_binary = inference.predict_single(
+        image, threshold=DEFAULT_PREDICTION_THRESHOLD - 0.01
+    )
+
+    assert pred_mask.eq(DEFAULT_PREDICTION_THRESHOLD).all()
+    assert default_binary.sum().item() == 0
+    assert explicit_binary.sum().item() == 4
 
 
 def test_benchmark_mps_does_not_call_cuda_runtime(monkeypatch):

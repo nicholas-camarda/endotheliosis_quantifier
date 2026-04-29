@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import glob
 import logging
 import os
 import subprocess
@@ -195,33 +194,33 @@ def _resize_screen_attempt_rows(
     return result_rows or [{**base, "candidate_family": "all", "failure_reason": "completed_but_candidate_summary_empty"}]
 
 
-def _lr_token(learning_rate: Any) -> str:
-    return f"{float(learning_rate):.0e}".replace("-0", "-")
+def _exact_artifact_path(runtime_root: Path, raw_path: Any, *, dry_run: bool) -> Path:
+    text = str(raw_path or "").strip()
+    if not text:
+        raise ValueError("An exact artifact path is required for this supported handoff.")
+    if any(token in text for token in ("*", "?", "[")) or text.startswith("latest_"):
+        raise ValueError(f"Exact artifact path required; unsupported selector: {text}")
+    path = _runtime_path(runtime_root, text)
+    if not dry_run and not path.exists():
+        raise FileNotFoundError(f"Configured artifact path does not exist: {path}")
+    if not dry_run and not path.is_file():
+        raise ValueError(f"Configured artifact path is not a file: {path}")
+    return path
 
 
-def _mito_run_pattern(config: dict[str, Any]) -> str:
-    mito = config["mitochondria"]
-    return (
-        f"{mito['model_name']}-"
-        f"pretrain_e{mito['epochs']}_"
-        f"b{mito['batch_size']}_"
-        f"lr{_lr_token(mito['learning_rate'])}_"
-        f"sz{mito['image_size']}"
-    )
-
-
-def _latest_pkl(runtime_root: Path, config: dict[str, Any]) -> Path:
-    model_dir = _runtime_path(runtime_root, str(config["paths"]["mito_model_dir"]))
-    run_pattern = _mito_run_pattern(config)
-    matches = sorted(
-        Path(path)
-        for path in glob.glob(str(model_dir / f"{run_pattern}" / "*.pkl"))
-    )
-    if not matches:
-        raise FileNotFoundError(
-            f"No mitochondria base artifact found for {run_pattern} under {model_dir}"
-        )
-    return matches[-1]
+def _validate_resize_screening_config(resize_screening: dict[str, Any]) -> None:
+    if not bool(resize_screening.get("enabled", False)):
+        return
+    if resize_screening.get("fallback_run_id"):
+        raise ValueError("resize_screening.fallback_run_id is not supported; use a separate explicit workflow config.")
+    attempts = resize_screening.get("attempts")
+    if not isinstance(attempts, list) or not attempts:
+        raise ValueError("resize_screening.attempts must be a non-empty list when resize screening is enabled.")
+    for attempt in attempts:
+        if not isinstance(attempt, dict):
+            raise ValueError("Each resize_screening.attempts item must be a mapping.")
+        if str(attempt.get("run_if") or "always") == "primary_failed":
+            raise ValueError("resize_screening run_if: primary_failed is not supported; use a separate explicit workflow config.")
 
 
 def run_glomeruli_candidate_comparison_workflow(
@@ -245,6 +244,7 @@ def run_glomeruli_candidate_comparison_workflow(
     negative_cfg = config.get("negative_background_supervision") or {}
     augmentation_audit = config.get("augmentation_audit") or {}
     train_candidates = bool(comparison.get("train_candidates", True))
+    _validate_resize_screening_config(config.get("resize_screening") or {})
 
     env = os.environ.copy()
     env["EQ_RUNTIME_ROOT"] = str(runtime_root)
@@ -316,7 +316,11 @@ def run_glomeruli_candidate_comparison_workflow(
 
         mito_base_model = None
         if train_candidates:
-            mito_base_model = _runtime_path(runtime_root, "DRY_RUN_MITO_BASE.pkl") if dry_run else _latest_pkl(runtime_root, config)
+            mito_base_model = _exact_artifact_path(
+                runtime_root,
+                transfer.get("base_model_artifact_path") or transfer.get("base_model"),
+                dry_run=dry_run,
+            )
         _emit(f"MITO_BASE_MODEL={mito_base_model}")
 
         negative_manifest_path: Path | None = None
@@ -451,26 +455,19 @@ def run_glomeruli_candidate_comparison_workflow(
             resize_screening = config.get("resize_screening") or {}
             if bool(resize_screening.get("enabled", False)):
                 attempts = resize_screening.get("attempts")
-                if not isinstance(attempts, list) or not attempts:
-                    raise ValueError("resize_screening.attempts must be a non-empty list when resize screening is enabled.")
                 comparison_output_root = _runtime_path(runtime_root, paths["comparison_output_dir"])
                 summary_run_id = str(resize_screening.get("summary_run_id") or "p0_resize_screening_summary")
                 summary_dir = comparison_output_root / summary_run_id
                 summary_path = summary_dir / "resize_policy_screening_summary.csv"
                 reference_run_id = str(resize_screening.get("reference_run_id") or "p0_resize_screen_current_512to256")
                 primary_run_id = str(resize_screening.get("primary_run_id") or "p0_resize_screen_512to512")
-                fallback_run_id = str(resize_screening.get("fallback_run_id") or "p0_resize_screen_512to384")
                 attempt_rows: list[dict[str, Any]] = []
                 attempt_status: dict[str, str] = {}
                 for raw_attempt in attempts:
-                    if not isinstance(raw_attempt, dict):
-                        raise ValueError("Each resize_screening.attempts item must be a mapping.")
                     attempt = dict(raw_attempt)
                     attempt_run_id = str(attempt["run_id"])
                     run_if = str(attempt.get("run_if") or "always")
-                    if run_if == "primary_failed" and attempt_status.get(primary_run_id) != "failed":
-                        continue
-                    if run_if not in {"always", "primary_failed"}:
+                    if run_if != "always":
                         raise ValueError(f"Unsupported resize_screening run_if value for {attempt_run_id}: {run_if}")
                     attempt.setdefault("crop_size", candidate_training["crop_size"])
                     attempt.setdefault("image_size", candidate_training["image_size"])
@@ -511,7 +508,6 @@ def run_glomeruli_candidate_comparison_workflow(
                     attempt_rows,
                     reference_run_id=reference_run_id,
                     primary_run_id=primary_run_id,
-                    fallback_run_id=fallback_run_id,
                 )
                 decision_row.update(
                     {

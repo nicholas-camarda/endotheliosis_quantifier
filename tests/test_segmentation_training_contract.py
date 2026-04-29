@@ -230,13 +230,38 @@ def test_cohort_registry_training_root_uses_all_admitted_masked_rows(tmp_path: P
             "__eq_manifest_pair_record__": True,
             "source_image_path": str(cohorts_root / "lauren_preeclampsia/images/lauren.jpg"),
             "source_mask_path": str(cohorts_root / "lauren_preeclampsia/masks/lauren_mask.png"),
+            "manifest_row": "0",
         },
         {
             "__eq_manifest_pair_record__": True,
             "source_image_path": str(cohorts_root / "vegfri_dox/images/dox.jpg"),
             "source_mask_path": str(cohorts_root / "vegfri_dox/masks/dox_mask.png"),
+            "manifest_row": "1",
         },
     ]
+
+
+def test_manifest_backed_root_fails_when_explicit_image_path_is_missing(tmp_path: Path):
+    runtime_root = tmp_path / "runtime"
+    cohorts_root = runtime_root / "raw_data" / "cohorts"
+    alternate_mask_dir = cohorts_root / "vegfri_dox" / "masks"
+    alternate_mask_dir.mkdir(parents=True)
+    Image.fromarray(np.zeros((8, 8), dtype=np.uint8)).save(alternate_mask_dir / "approved_mask.png")
+    pd.DataFrame(
+        [
+            {
+                "manifest_row_id": "vegfri_dox__000001",
+                "cohort_id": "vegfri_dox",
+                "lane_assignment": "manual_mask_external",
+                "admission_status": "admitted",
+                "image_path": "raw_data/cohorts/vegfri_dox/images/approved.jpg",
+                "mask_path": "raw_data/cohorts/vegfri_dox/masks/approved_mask.png",
+            }
+        ]
+    ).to_csv(cohorts_root / "manifest.csv", index=False)
+
+    with pytest.raises(FileNotFoundError, match="vegfri_dox__000001.*image_path=.*approved.jpg.*mask_path=.*approved_mask.png"):
+        get_items_full_images(cohorts_root)
 
 
 def test_manifest_backed_root_fails_when_explicit_mask_path_is_missing(tmp_path: Path):
@@ -249,6 +274,7 @@ def test_manifest_backed_root_fails_when_explicit_mask_path_is_missing(tmp_path:
     pd.DataFrame(
         [
             {
+                "manifest_row_id": "vegfri_dox__000001",
                 "cohort_id": "vegfri_dox",
                 "lane_assignment": "manual_mask_external",
                 "admission_status": "admitted",
@@ -258,8 +284,106 @@ def test_manifest_backed_root_fails_when_explicit_mask_path_is_missing(tmp_path:
         ]
     ).to_csv(cohorts_root / "manifest.csv", index=False)
 
-    with pytest.raises(FileNotFoundError, match="missing explicit image/mask path"):
+    with pytest.raises(FileNotFoundError, match="vegfri_dox__000001.*image_path=.*approved.jpg.*mask_path=.*approved_mask.png"):
         get_items_full_images(cohorts_root)
+
+
+def test_manifest_backed_root_rejects_alternate_same_stem_mask(tmp_path: Path):
+    runtime_root = tmp_path / "runtime"
+    cohorts_root = runtime_root / "raw_data" / "cohorts"
+    image_dir = cohorts_root / "vegfri_dox" / "images" / "M1"
+    alternate_mask_dir = cohorts_root / "vegfri_dox" / "masks"
+    image_dir.mkdir(parents=True)
+    alternate_mask_dir.mkdir(parents=True)
+    Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(image_dir / "approved.jpg")
+    Image.fromarray(np.zeros((8, 8), dtype=np.uint8)).save(alternate_mask_dir / "approved_mask.png")
+    pd.DataFrame(
+        [
+            {
+                "manifest_row_id": "vegfri_dox__000001",
+                "cohort_id": "vegfri_dox",
+                "lane_assignment": "manual_mask_external",
+                "admission_status": "admitted",
+                "image_path": "raw_data/cohorts/vegfri_dox/images/M1/approved.jpg",
+                "mask_path": "raw_data/cohorts/vegfri_dox/masks/M1/approved_mask.png",
+            }
+        ]
+    ).to_csv(cohorts_root / "manifest.csv", index=False)
+
+    with pytest.raises(FileNotFoundError, match="masks/M1/approved_mask.png"):
+        get_items_full_images(cohorts_root)
+
+
+def test_get_y_full_rejects_images_outside_images_directory(tmp_path: Path):
+    image_path = tmp_path / "raw_data" / "project" / "approved.jpg"
+    mask_dir = tmp_path / "raw_data" / "masks"
+    image_path.parent.mkdir(parents=True)
+    mask_dir.mkdir(parents=True)
+    Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(image_path)
+    Image.fromarray(np.zeros((8, 8), dtype=np.uint8)).save(mask_dir / "approved_mask.png")
+
+    with pytest.raises(FileNotFoundError, match="Expected image path under"):
+        get_y_full(image_path)
+
+
+def test_get_y_full_rejects_root_level_same_stem_mask_for_subdirectory_image(tmp_path: Path):
+    image_dir = tmp_path / "images" / "M1"
+    mask_dir = tmp_path / "masks"
+    image_dir.mkdir(parents=True)
+    mask_dir.mkdir(parents=True)
+    image_path = image_dir / "approved.jpg"
+    Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(image_path)
+    Image.fromarray(np.zeros((8, 8), dtype=np.uint8)).save(mask_dir / "approved_mask.png")
+
+    with pytest.raises(FileNotFoundError, match="masks/M1"):
+        get_y_full(image_path)
+
+
+def test_dynamic_patching_uses_explicit_split_seed(monkeypatch):
+    captured = {}
+
+    def fake_random_splitter(*, valid_pct, seed):
+        captured["valid_pct"] = valid_pct
+        captured["seed"] = seed
+
+        def splitter(items):
+            return list(range(len(items) - 1)), [len(items) - 1]
+
+        return splitter
+
+    monkeypatch.setattr(datablock_loader, "RandomSplitter", fake_random_splitter)
+
+    datablock_loader.build_segmentation_datablock_dynamic_patching(split_seed=84)
+
+    assert captured == {"valid_pct": 0.2, "seed": 84}
+
+
+def test_explicit_split_manifest_precedence_over_split_seed(tmp_path: Path, monkeypatch):
+    _make_full_image_root(tmp_path)
+    for stem in ("a", "b"):
+        Image.fromarray(np.zeros((16, 16, 3), dtype=np.uint8)).save(tmp_path / "images" / f"{stem}.jpg")
+        Image.fromarray(np.zeros((16, 16), dtype=np.uint8)).save(tmp_path / "masks" / f"{stem}_mask.png")
+
+    def fail_random_splitter(*, valid_pct, seed):
+        raise AssertionError(f"RandomSplitter should not be constructed: {valid_pct=} {seed=}")
+
+    explicit_splitter = datablock_loader.fixed_splitter_from_paths(
+        train_images=[tmp_path / "images" / "a.jpg"],
+        valid_images=[tmp_path / "images" / "b.jpg"],
+    )
+    monkeypatch.setattr(datablock_loader, "RandomSplitter", fail_random_splitter)
+
+    dls = build_segmentation_dls_dynamic_patching(
+        tmp_path,
+        bs=1,
+        num_workers=0,
+        crop_size=8,
+        splitter=explicit_splitter,
+        split_seed=99,
+    )
+
+    assert [training_item_image_path(item) for item in dls.train_ds.items] == [tmp_path / "images" / "a.jpg"]
+    assert [training_item_image_path(item) for item in dls.valid_ds.items] == [tmp_path / "images" / "b.jpg"]
 
 
 def test_dynamic_dls_fails_clearly_when_no_valid_pairs_exist(tmp_path: Path):

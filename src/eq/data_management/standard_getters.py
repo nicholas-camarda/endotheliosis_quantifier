@@ -10,20 +10,6 @@ FileNotFoundError if not found.
 """
 
 from pathlib import Path
-from typing import List
-
-from eq.utils.logger import get_logger
-
-
-def _mask_matches_image_stem(mask_path: Path, image_stem: str) -> bool:
-    """Check mask/image pairing by exact normalized stem match."""
-    mask_stem = mask_path.stem
-    candidates = {
-        mask_stem,
-        mask_stem.removesuffix("_mask"),
-        mask_stem.removeprefix("mask_"),
-    }
-    return image_stem in candidates
 
 
 def get_y_full(x):
@@ -37,33 +23,31 @@ def get_y_full(x):
     Naming patterns tried (preserving subdirectories when present):
       - `<stem>_mask<ext>`
       - `mask_<stem><ext>`
-      - exact normalized-stem match within the supported mask directory.
 
     Returns a Path or raises FileNotFoundError if no mask is found.
     """
-    log = get_logger("eq.standard_getters")
     img_path = Path(x)
 
-    # Find dataset root by locating the 'images' directory and stepping up one level
-    p = img_path
-    data_root = None
-    for _ in range(5):
-        if p.name == 'images':
-            data_root = p.parent
+    images_index = None
+    for index, part in enumerate(img_path.parts):
+        if part == "images":
+            images_index = index
             break
-        p = p.parent
-    if data_root is None:
-        # Direct paired roots use the usual Txx -> images -> root layout.
-        data_root = img_path.parent.parent.parent
-    masks_root = data_root / "masks"
+    if images_index is None:
+        raise FileNotFoundError(
+            f"No mask found for {img_path}. Expected image path under `<data_root>/images/...`."
+        )
 
-    cand_dirs: List[Path] = [masks_root]
-    # Attempt to mirror substructure under images/
+    data_root = Path(*img_path.parts[:images_index])
+    images_root = data_root / "images"
+    masks_root = data_root / "masks"
     try:
-        rel = img_path.parent.relative_to(data_root / "images")
-        cand_dirs += [masks_root / rel]
-    except Exception:
-        pass
+        rel_parent = img_path.parent.relative_to(images_root)
+    except ValueError as exc:
+        raise FileNotFoundError(
+            f"No mask found for {img_path}. Expected image path under `{images_root}`."
+        ) from exc
+    mask_dir = masks_root / rel_parent
 
     stem = img_path.stem
     names = [
@@ -86,21 +70,13 @@ def get_y_full(x):
             seen.add(e)
 
     tried = []
-    for d in cand_dirs:
-        for nm in names:
-            for ext in exts:
-                p = d / f"{nm}{ext}"
-                tried.append(p)
-                if p.exists():
-                    return p
-
-    # Exact normalized-stem search inside the supported mask directory.
-    for d in cand_dirs:
-        if d.exists():
-            for candidate in d.iterdir():
-                if candidate.is_file() and _mask_matches_image_stem(candidate, stem):
-                    return candidate
+    for nm in names:
+        for ext in exts:
+            p = mask_dir / f"{nm}{ext}"
+            tried.append(p)
+            if p.exists():
+                return p
 
     raise FileNotFoundError(
-        f"❌ No mask found for {img_path.name}. Looked under 'masks/' with common patterns."
+        f"No mask found for {img_path}. Looked only under mirrored mask directory {mask_dir}."
     )

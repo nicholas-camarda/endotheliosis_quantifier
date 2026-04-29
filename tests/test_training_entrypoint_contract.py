@@ -1,4 +1,5 @@
 import importlib
+import inspect
 import json
 from pathlib import Path
 
@@ -445,3 +446,9 @@ def test_training_entrypoints_reject_static_patch_roots_before_model_constructio
             glomeruli_data_dir=static_root,
             output_dir=tmp_path / "transfer_models",
         )
+
+
+def test_train_glomeruli_parser_has_no_auto_base_flag():
+    source = inspect.getsource(train_glomeruli.main)
+    assert "--allow-auto-base-model" not in source
+    assert "find_best_mitochondria_model" not in source

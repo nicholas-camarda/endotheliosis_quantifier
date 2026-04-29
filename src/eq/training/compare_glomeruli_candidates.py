@@ -904,29 +904,26 @@ def _merge_split_sidecar(
     return merged
 
 
-def _build_fallback_provenance(runtime: CandidateRuntime) -> Dict[str, Any]:
-    provenance: Dict[str, Any] = {
-        "family": runtime.family,
-        "comparison_role": runtime.role,
-        "artifact_path": str(runtime.model_path) if runtime.model_path else None,
-        "artifact_status": "comparison_only_missing_metadata" if runtime.model_path else "unavailable",
-        "scientific_promotion_status": "not_evaluated" if runtime.model_path else "unavailable",
-        "training_mode": "unknown",
-        "seed": runtime.seed,
-    }
-    if runtime.command:
-        provenance["comparison_command"] = runtime.command
-    if runtime.error:
-        provenance["error"] = runtime.error
-    return provenance
-
-
 def _merged_provenance(runtime: CandidateRuntime) -> Dict[str, Any]:
+    if runtime.status != "available" or runtime.model_path is None:
+        provenance: Dict[str, Any] = {
+            "family": runtime.family,
+            "comparison_role": runtime.role,
+            "artifact_path": str(runtime.model_path) if runtime.model_path else None,
+            "artifact_status": "unavailable",
+            "scientific_promotion_status": "unavailable",
+            "seed": runtime.seed,
+        }
+        if runtime.command:
+            provenance["comparison_command"] = runtime.command
+        if runtime.error:
+            provenance["error"] = runtime.error
+        return provenance
     metadata = _read_metadata_if_available(runtime.model_path)
     if not metadata:
-        return _merge_split_sidecar(
-            _build_fallback_provenance(runtime),
-            model_path=runtime.model_path,
+        raise ValueError(
+            "Candidate artifact lacks current supported run metadata: "
+            f"{runtime.model_path}. Regenerate it with the current training exporter."
         )
     provenance = dict(metadata)
     provenance.setdefault("artifact_path", str(runtime.model_path) if runtime.model_path else None)
@@ -1309,28 +1306,17 @@ def _discover_model_path(family_dir: Path) -> Path:
 
 
 def _run_training_command(command: list[str], family: str, role: str, model_root: Path, seed: int) -> CandidateRuntime:
-    try:
-        logger.info("Running candidate training command: %s", " ".join(command))
-        run_logged_subprocess(command, logger=logger)
-        family_dir = model_root / family
-        return CandidateRuntime(
-            family=family,
-            role=role,
-            model_path=_discover_model_path(family_dir),
-            seed=seed,
-            command=command,
-            status="available",
-        )
-    except Exception as exc:
-        return CandidateRuntime(
-            family=family,
-            role=role,
-            model_path=None,
-            seed=seed,
-            command=command,
-            status="unavailable",
-            error=str(exc),
-        )
+    logger.info("Running candidate training command: %s", " ".join(command))
+    run_logged_subprocess(command, logger=logger)
+    family_dir = model_root / family
+    return CandidateRuntime(
+        family=family,
+        role=role,
+        model_path=_discover_model_path(family_dir),
+        seed=seed,
+        command=command,
+        status="available",
+    )
 
 
 def _candidate_command(

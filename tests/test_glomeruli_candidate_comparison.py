@@ -1,4 +1,5 @@
 import json
+import subprocess
 from argparse import Namespace
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from eq.training.compare_glomeruli_candidates import (
     _merged_provenance,
     _predict_crop,
     _resize_sensitivity_from_screening,
+    _run_training_command,
     _save_front_facing_validation_panel,
     _select_front_facing_examples,
     _threshold_policy_from_audit,
@@ -439,6 +441,44 @@ def test_merged_provenance_loads_adjacent_split_sidecar(tmp_path):
     assert provenance["valid_images"] == ["/data/valid_a.jpg"]
     assert provenance["split_sidecar_path"] == str(tmp_path / "candidate_splits.json")
     assert provenance["crop_size"] == 512
+
+
+def test_requested_training_failure_raises_workflow_error(tmp_path, monkeypatch):
+    command = ["python", "-m", "eq.training.train_glomeruli"]
+
+    def fail_subprocess(command_arg, logger):
+        raise subprocess.CalledProcessError(2, command_arg)
+
+    monkeypatch.setattr(
+        "eq.training.compare_glomeruli_candidates.run_logged_subprocess",
+        fail_subprocess,
+    )
+
+    with pytest.raises(subprocess.CalledProcessError):
+        _run_training_command(
+            command,
+            family="transfer",
+            role="candidate",
+            model_root=tmp_path / "models",
+            seed=42,
+        )
+
+
+def test_supported_candidate_missing_metadata_is_rejected(tmp_path):
+    model_path = tmp_path / "candidate.pkl"
+    model_path.write_text("model", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="lacks current supported run metadata"):
+        _merged_provenance(
+            CandidateRuntime(
+                family="transfer",
+                role="candidate",
+                model_path=model_path,
+                seed=42,
+                command=None,
+                status="available",
+            )
+        )
 
 
 def test_compare_glomeruli_candidates_writes_reports_for_tied_candidates(tmp_path, monkeypatch):

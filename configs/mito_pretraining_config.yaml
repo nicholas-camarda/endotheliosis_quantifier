@@ -111,4 +111,4 @@ logging:
 next_step:
   description: "Use the exported mitochondria .pkl as the explicit base model for glomeruli transfer."
   config_file: "configs/glomeruli_finetuning_config.yaml"
-  artifact_glob: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model-pretrain_e50_b24_lr1e-3_sz256/*.pkl"
+  artifact_path: "models/segmentation/mitochondria/mito_dynamic_unet_seg_model-pretrain_e50_b24_lr1e-3_sz256/mito_dynamic_unet_seg_model-pretrain_e50_b24_lr1e-3_sz256.pkl"

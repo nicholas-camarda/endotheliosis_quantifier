@@ -8,6 +8,7 @@ import torch
 from PIL import Image
 
 from eq.training import glomeruli_overcoverage_audit as audit
+from eq.utils.run_io import metadata_path_for_model
 
 
 def _make_training_root(root: Path) -> None:
@@ -48,6 +49,24 @@ class _FakeModel(torch.nn.Module):
         return torch.cat([background, foreground], dim=1)
 
 
+def _write_supported_metadata(model_path: Path, *, family: str) -> None:
+    metadata_path = metadata_path_for_model(model_path)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "artifact_status": "supported_runtime",
+                "scientific_promotion_status": "not_evaluated",
+                "candidate_family": family,
+                "training_mode": "dynamic_full_image_patching",
+                "crop_size": 32,
+                "output_size": 16,
+                "invocation": {"seed": 42},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_parse_thresholds_defaults_and_validation():
     assert audit.parse_thresholds(None) == [0.01, 0.05, 0.1, 0.25, 0.5]
     assert audit.parse_thresholds("0.5,0.01,0.5") == [0.01, 0.5]
@@ -72,6 +91,8 @@ def test_overcoverage_audit_writes_required_artifacts(tmp_path, monkeypatch):
     scratch_model = tmp_path / "scratch.pkl"
     transfer_model.write_text("transfer")
     scratch_model.write_text("scratch")
+    _write_supported_metadata(transfer_model, family="transfer")
+    _write_supported_metadata(scratch_model, family="scratch")
 
     def fake_load_model_safely(path, model_type):
         if Path(path).name == "transfer.pkl":
@@ -131,6 +152,8 @@ def test_load_failure_is_recorded_without_shim(tmp_path, monkeypatch):
     scratch_model = tmp_path / "scratch.pkl"
     transfer_model.write_text("transfer")
     scratch_model.write_text("scratch")
+    _write_supported_metadata(transfer_model, family="transfer")
+    _write_supported_metadata(scratch_model, family="scratch")
 
     def fake_load_model_safely(path, model_type):
         if Path(path).name == "transfer.pkl":

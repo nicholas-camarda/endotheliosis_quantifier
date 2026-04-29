@@ -496,6 +496,7 @@ def test_mitochondria_all_available_pretraining_disables_inference_claim(tmp_pat
         train_items=[train_item, test_item],
         valid_items=[],
         image_size=256,
+        split_seed=42,
         crop_size=256,
         output_size=256,
     )
@@ -515,11 +516,13 @@ def test_glomeruli_training_provenance_records_split_and_resize_contract():
         train_items=["/runtime/raw_data/cohorts/c1/images/a.jpg"],
         valid_items=["/runtime/raw_data/cohorts/c2/images/b.jpg"],
         seed=42,
-        split_seed=42,
+        split_seed=84,
         crop_size=512,
         output_size=256,
         candidate_family="mitochondria_transfer",
         training_mode="dynamic_full_image_patching",
+        splitter_name="explicit_shared_rng_split",
+        split_seed_used_for_membership=False,
         transfer_base_artifact_path="/models/mito.pkl",
         transfer_base_metadata={"mitochondria_training_scope": MITO_SCOPE_ALL_AVAILABLE},
         positive_focus_p=0.6,
@@ -527,7 +530,9 @@ def test_glomeruli_training_provenance_records_split_and_resize_contract():
         pos_crop_attempts=10,
     )
 
-    assert provenance["splitter_name"] == "RandomSplitter"
+    assert provenance["splitter_name"] == "explicit_shared_rng_split"
+    assert provenance["split_seed"] == 84
+    assert provenance["split_seed_used_for_membership"] is False
     assert provenance["train_images"] == ["/runtime/raw_data/cohorts/c1/images/a.jpg"]
     assert provenance["transfer_base_mitochondria_training_scope"] == MITO_SCOPE_ALL_AVAILABLE
     assert provenance["resize_policy"]["crop_to_output_resize_ratio"] == 2.0

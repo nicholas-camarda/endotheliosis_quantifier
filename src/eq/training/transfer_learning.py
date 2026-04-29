@@ -168,6 +168,7 @@ def load_model_for_transfer_learning(
     pos_crop_attempts: int = 10,
     load_encoder_only: bool = True,
     reinit_decoder: bool = True,
+    split_seed: int = 42,
     split_manifest_path: Optional[str] = None,
     negative_crop_manifest_path: Optional[str] = None,
     negative_crop_sampler_weight: float = 0.0,
@@ -210,6 +211,7 @@ def load_model_for_transfer_learning(
         crop_size=(crop_size if crop_size is not None else image_size),
         output_size=image_size,
         splitter=fixed_splitter_from_manifest(split_manifest_path) if split_manifest_path else None,
+        split_seed=split_seed,
         positive_focus_p=positive_focus_p,
         min_pos_pixels=min_pos_pixels,
         pos_crop_attempts=pos_crop_attempts,
@@ -383,6 +385,7 @@ def transfer_learn_glomeruli(
     encoder_only: bool = True,
     reinit_decoder: bool = True,
     seed: int = 42,
+    split_seed: int | None = None,
     split_manifest_path: Optional[str] = None,
     negative_crop_manifest_path: Optional[str] = None,
     negative_crop_sampler_weight: float = 0.0,
@@ -416,6 +419,7 @@ def transfer_learn_glomeruli(
     logger = get_logger("eq.training.transfer_learning")
     logger.info("Starting transfer learning from mitochondria to glomeruli")
     set_transfer_learning_seed(seed)
+    resolved_split_seed = int(seed if split_seed is None else split_seed)
     
     # Calculate stage epochs if not provided
     if stage1_epochs is None:
@@ -483,6 +487,7 @@ def transfer_learn_glomeruli(
         pos_crop_attempts=pos_crop_attempts,
         load_encoder_only=encoder_only,
         reinit_decoder=reinit_decoder,
+        split_seed=resolved_split_seed,
         split_manifest_path=split_manifest_path,
         negative_crop_manifest_path=negative_crop_manifest_path,
         negative_crop_sampler_weight=negative_crop_sampler_weight,
@@ -504,12 +509,13 @@ def transfer_learn_glomeruli(
         train_items=train_items,
         valid_items=valid_items,
         seed=seed,
-        split_seed=42,
+        split_seed=resolved_split_seed,
         crop_size=int(crop_size) if crop_size is not None else int(image_size),
         output_size=int(image_size),
         candidate_family="mitochondria_transfer",
         training_mode=TRAINING_MODE_DYNAMIC_FULL_IMAGE,
         splitter_name="explicit_shared_rng_split" if split_manifest_path else "RandomSplitter",
+        split_seed_used_for_membership=not bool(split_manifest_path),
         transfer_base_artifact_path=base_model_path,
         transfer_base_metadata=transfer_base_metadata,
         positive_focus_p=positive_focus_p,

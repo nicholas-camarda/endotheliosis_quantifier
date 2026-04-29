@@ -7,18 +7,27 @@ import pytest
 import torch
 from PIL import Image
 
-from eq.quantification.labelstudio_scores import recover_label_studio_score_table
+import eq.quantification.pipeline as quant_pipeline
+from eq.quantification.labelstudio_scores import (
+    LabelStudioScoreError,
+    discover_label_studio_annotation_source,
+    extract_label_studio_grade,
+    recover_label_studio_score_table,
+)
 from eq.quantification.ordinal import CanonicalOrdinalClassifier
 from eq.quantification.pipeline import (
     ALLOWED_SCORE_VALUES,
+    ContractPreparationError,
     _apply_score_label_overrides,
     _prepare_encoder_for_forward,
     build_image_level_scored_example_table,
     build_manifest_scored_example_table,
     build_scored_example_table,
     evaluate_embedding_table,
+    extract_embedding_table,
     extract_image_level_roi_crops,
     extract_roi_crops,
+    run_contract_first_quantification,
 )
 
 
@@ -59,7 +68,7 @@ def test_build_scored_table_and_extract_rois(tmp_path: Path):
     assert roi_table['roi_area'].notna().all()
 
 
-def test_recover_labelstudio_scores_prefers_latest_and_backfills_missing_grade(
+def test_labelstudio_latest_missing_grade_fails_closed(
     tmp_path: Path,
 ):
     project_dir = tmp_path / 'project'
@@ -159,9 +168,36 @@ def test_recover_labelstudio_scores_prefers_latest_and_backfills_missing_grade(
     image1 = score_table.loc[score_table['image_name'] == 'T19_Image1.jpg'].iloc[0]
     assert image0['score'] == 1.0
     assert image0['score_resolution'] == 'latest_annotation'
-    assert image1['score'] == 0.0
-    assert image1['score_resolution'] == 'latest_missing_grade_backfilled'
+    assert pd.isna(image1['score'])
+    assert image1['score_status'] == 'missing_score'
+    assert image1['score_resolution'] == 'latest_annotation_missing_grade'
     assert set(score_table['join_status']) == {'ok'}
+
+
+def test_labelstudio_auto_discovery_does_not_search_git_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    project_dir = tmp_path / 'project'
+    project_dir.mkdir()
+
+    def fail_git(*args, **kwargs):
+        raise AssertionError('automatic Label Studio discovery must not call git')
+
+    monkeypatch.setattr('subprocess.run', fail_git)
+    monkeypatch.setattr('subprocess.check_output', fail_git)
+
+    assert discover_label_studio_annotation_source(project_dir) is None
+
+
+def test_labelstudio_shared_grade_extractor_rejects_ambiguous_multi_choice():
+    annotation = {
+        'result': [
+            {'type': 'choices', 'value': {'choices': ['0.5', '1.0']}},
+        ]
+    }
+
+    with pytest.raises(LabelStudioScoreError, match='Ambiguous Label Studio grade'):
+        extract_label_studio_grade(annotation)
 
 
 def test_build_image_level_scored_table_and_extract_rois(tmp_path: Path):
@@ -209,6 +245,93 @@ def test_build_image_level_scored_table_and_extract_rois(tmp_path: Path):
     assert roi_table.loc[0, 'roi_bbox_y1'] == 95
     assert 0.4 < roi_table.loc[0, 'roi_largest_component_area_fraction'] < 0.6
     assert Path(str(roi_table.loc[0, 'roi_image_path'])).exists()
+
+
+def test_image_level_roi_rejects_small_components_without_crop(tmp_path: Path):
+    image_path = tmp_path / 'image.jpg'
+    mask_path = tmp_path / 'mask.jpg'
+    Image.fromarray(np.zeros((32, 32, 3), dtype=np.uint8)).save(image_path)
+    mask = _make_rect_mask((32, 32), [(4, 4, 6, 6)])
+    Image.fromarray(mask).save(mask_path)
+    scored = pd.DataFrame(
+        {
+            'subject_image_id': ['case_1'],
+            'raw_image_path': [str(image_path)],
+            'raw_mask_path': [str(mask_path)],
+            'score': [1.0],
+            'join_status': ['ok'],
+            'score_status': ['ok'],
+        }
+    )
+
+    roi_table = extract_image_level_roi_crops(
+        scored, tmp_path / 'roi', min_component_area=64
+    )
+
+    assert roi_table.loc[0, 'roi_status'] == 'component_below_min_area'
+    assert list((tmp_path / 'roi' / 'images').glob('*')) == []
+    assert list((tmp_path / 'roi' / 'masks').glob('*')) == []
+
+
+def test_image_level_roi_rejects_image_mask_shape_mismatch(tmp_path: Path):
+    image_path = tmp_path / 'image.jpg'
+    mask_path = tmp_path / 'mask.jpg'
+    Image.fromarray(np.zeros((32, 32, 3), dtype=np.uint8)).save(image_path)
+    Image.fromarray(np.ones((16, 16), dtype=np.uint8) * 255).save(mask_path)
+    scored = pd.DataFrame(
+        {
+            'subject_image_id': ['case_1'],
+            'raw_image_path': [str(image_path)],
+            'raw_mask_path': [str(mask_path)],
+            'score': [1.0],
+            'join_status': ['ok'],
+            'score_status': ['ok'],
+        }
+    )
+
+    roi_table = extract_image_level_roi_crops(scored, tmp_path / 'roi')
+
+    assert roi_table.loc[0, 'roi_status'] == 'image_mask_size_mismatch'
+    assert list((tmp_path / 'roi' / 'images').glob('*')) == []
+    assert list((tmp_path / 'roi' / 'masks').glob('*')) == []
+
+
+def test_extract_embedding_table_records_imagenet_preprocessing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    class TinyModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.encoder = torch.nn.Conv2d(3, 2, kernel_size=1)
+
+        def forward(self, tensor):
+            return self.encoder(tensor)
+
+    class TinyLearner:
+        def __init__(self):
+            self.model = TinyModel()
+
+    image_path = tmp_path / 'roi.jpg'
+    Image.fromarray(np.ones((8, 8, 3), dtype=np.uint8) * 128).save(image_path)
+    roi_table = pd.DataFrame(
+        {
+            'subject_image_id': ['case_1'],
+            'roi_status': ['ok'],
+            'roi_image_path': [str(image_path)],
+        }
+    )
+    monkeypatch.setattr(
+        quant_pipeline,
+        'load_model_safely',
+        lambda path, model_type: TinyLearner(),
+    )
+
+    extract_embedding_table(
+        roi_table, tmp_path / 'model.pkl', tmp_path / 'embeddings', expected_size=8
+    )
+
+    metadata = json.loads((tmp_path / 'embeddings' / 'embedding_metadata.json').read_text())
+    assert metadata['preprocessing'] == 'imagenet_normalized_fastai'
 
 
 def test_manifest_scored_examples_use_all_admitted_mask_paired_rows(tmp_path: Path):
@@ -304,6 +427,65 @@ def test_manifest_scored_examples_use_all_admitted_mask_paired_rows(tmp_path: Pa
     assert summary['cohort_counts'] == {'lauren_preeclampsia': 1, 'vegfri_dox': 1}
     assert summary['identity_contract']['validation_group_key'] == 'subject_id'
     assert summary['identity_contract']['duplicate_image_ids'] == []
+
+
+def test_manifest_root_rejects_labelstudio_options_and_writes_no_raw_inventory(
+    tmp_path: Path,
+):
+    cohorts = tmp_path / 'raw_data' / 'cohorts'
+    image_dir = cohorts / 'lauren_preeclampsia' / 'images'
+    mask_dir = cohorts / 'lauren_preeclampsia' / 'masks'
+    image_dir.mkdir(parents=True, exist_ok=True)
+    mask_dir.mkdir(parents=True, exist_ok=True)
+    image_path = image_dir / 't19_image0.jpg'
+    mask_path = mask_dir / 't19_image0_mask.jpg'
+    Image.fromarray(np.zeros((16, 16, 3), dtype=np.uint8)).save(image_path)
+    Image.fromarray(np.ones((16, 16), dtype=np.uint8) * 255).save(mask_path)
+    pd.DataFrame(
+        [
+            {
+                'cohort_id': 'lauren_preeclampsia',
+                'image_path': 'raw_data/cohorts/lauren_preeclampsia/images/t19_image0.jpg',
+                'mask_path': 'raw_data/cohorts/lauren_preeclampsia/masks/t19_image0_mask.jpg',
+                'score': 0.5,
+                'source_image_name': 'T19_Image0.jpg',
+                'source_sample_id': 'T19_Image0',
+                'manifest_row_id': 'lauren_preeclampsia__000001',
+                'join_status': 'joined',
+                'admission_status': 'admitted',
+                'lane_assignment': 'manual_mask_core',
+                'score_status': 'ok',
+            }
+        ]
+    ).to_csv(cohorts / 'manifest.csv', index=False)
+    segmentation_model = tmp_path / 'model.pkl'
+    segmentation_model.write_bytes(b'placeholder')
+    annotation_source = tmp_path / 'annotations.json'
+    annotation_source.write_text('[]', encoding='utf-8')
+
+    with pytest.raises(
+        ContractPreparationError, match='Manifest roots require manifest-mode scoring'
+    ):
+        run_contract_first_quantification(
+            project_dir=cohorts,
+            segmentation_model_path=segmentation_model,
+            output_dir=tmp_path / 'labelstudio_out',
+            annotation_source=annotation_source,
+            score_source='labelstudio',
+            stop_after='contract',
+        )
+
+    outputs = run_contract_first_quantification(
+        project_dir=cohorts,
+        segmentation_model_path=segmentation_model,
+        output_dir=tmp_path / 'manifest_out',
+        score_source='auto',
+        stop_after='contract',
+    )
+
+    assert 'raw_inventory' not in outputs
+    assert not (tmp_path / 'manifest_out' / 'raw_inventory.csv').exists()
+    assert outputs['manifest'] == cohorts / 'manifest.csv'
 
 
 def test_score_label_overrides_replace_scores_and_write_audit(tmp_path: Path):

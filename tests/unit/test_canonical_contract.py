@@ -9,6 +9,9 @@ from eq.data_management.canonical_contract import (
     parse_subject_image_filename,
     validate_project_contract,
 )
+from eq.data_management.canonical_naming import (
+    parse_subject_image_stem as parse_legacy_compatible_stem,
+)
 
 
 def test_parse_subject_image_filename_supports_canonical_and_legacy():
@@ -21,6 +24,18 @@ def test_parse_subject_image_filename_supports_canonical_and_legacy():
     assert parsed_old is not None
     assert parsed_old.naming == 'legacy'
     assert parsed_old.legacy_stem == 'T19_Image99'
+
+
+def test_canonical_parsers_reject_trailing_junk_and_accept_non_t_subjects():
+    contract_parsed = parse_subject_image_filename('M1-2.jpg')
+    naming_parsed = parse_legacy_compatible_stem('M1-2')
+
+    assert contract_parsed is not None
+    assert contract_parsed.subject_prefix == 'M1'
+    assert naming_parsed is not None
+    assert naming_parsed.subject_prefix == 'M1'
+    assert parse_subject_image_filename('M1-2-extra.jpg') is None
+    assert parse_legacy_compatible_stem('M1-2-extra') is None
 
 
 def test_build_migration_plan_uses_mapping_and_apply(tmp_path: Path):

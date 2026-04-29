@@ -8,13 +8,13 @@ as grouped out-of-fold development estimates only.
 from __future__ import annotations
 
 import json
-import pickle
 from dataclasses import dataclass
 from html import escape
 from pathlib import Path
 from typing import Any, Sequence
 
 import cv2
+import joblib
 import numpy as np
 import pandas as pd
 import torch
@@ -43,7 +43,14 @@ from eq.quantification.modeling_contracts import (
     build_artifact_manifest,
     capture_fit_warnings,
     choose_recall_threshold,
+    empty_candidate_metrics_frame,
+    empty_candidate_predictions_frame,
+    hard_blocker_payload,
+    insufficient_data_verdict,
     save_json,
+    save_supported_sklearn_model,
+    source_stratified_target_support,
+    target_estimability,
     to_finite_numeric_matrix,
 )
 from eq.quantification.morphology_features import (
@@ -815,9 +822,41 @@ def _evaluate_severe_candidate(
     thresholds = np.zeros(len(frame), dtype=np.float64)
     fold_rows = []
     warning_records: list[dict[str, str]] = []
+    fold_blockers: list[dict[str, Any]] = []
     for fold in sorted(folds.unique()):
         test_mask = folds == fold
         train_mask = ~test_mask
+        support = target_estimability(
+            y[train_mask],
+            blocker='one_class_training_fold',
+        )
+        if not support.estimable:
+            fold_blockers.append(
+                hard_blocker_payload(
+                    support.blocker,
+                    scope='grouped_training_fold',
+                    details={
+                        'candidate_id': spec.candidate_id,
+                        'fold': int(fold),
+                        'target_kind': spec.target_kind,
+                        'class_counts': support.class_counts,
+                    },
+                )
+            )
+            fold_rows.append(
+                {
+                    'fold': int(fold),
+                    'candidate_id': spec.candidate_id,
+                    'fold_status': 'hard_blocked',
+                    'hard_blocker': support.blocker,
+                    'threshold': np.nan,
+                    'recall': np.nan,
+                    'precision': np.nan,
+                    'false_negatives': np.nan,
+                    'false_positives': np.nan,
+                }
+            )
+            continue
         model = _classifier(spec.model_kind, x.shape[1], 2, spec.regularization_c)
 
         def fit_and_predict() -> tuple[np.ndarray, np.ndarray]:
@@ -852,6 +891,38 @@ def _evaluate_severe_candidate(
                 'false_positives': int(np.sum(~y[test_mask] & fold_pred)),
             }
         )
+    if fold_blockers:
+        predictions = frame[
+            [column for column in IDENTITY_COLUMNS if column in frame]
+        ].copy()
+        predictions['candidate_id'] = spec.candidate_id
+        predictions['fold'] = folds.to_numpy()
+        predictions['observed_severe'] = y
+        predictions['predicted_severe_probability'] = np.nan
+        predictions['selected_threshold'] = np.nan
+        predictions['predicted_severe'] = False
+        blocker_names = sorted({row['blocker'] for row in fold_blockers})
+        metrics = {
+            'candidate_id': spec.candidate_id,
+            'family_id': spec.family_id,
+            'target_kind': spec.target_kind,
+            'feature_family': spec.feature_family,
+            'model_kind': spec.model_kind,
+            'threshold_target': float(spec.threshold_target or 0.8),
+            'feature_count': int(x.shape[1]),
+            'metric_label': GROUPED_DEVELOPMENT_METRIC_LABEL,
+            'regularization_c': float(spec.regularization_c),
+            'mr_computable': bool(spec.mr_computable),
+            'finite_output': False,
+            'candidate_status': 'hard_blocked',
+            'hard_blockers': '|'.join(blocker_names),
+            'hard_blocker_payloads': fold_blockers,
+            'warning_status': 'not_fit_unestimable_fold',
+            'warning_count': 0,
+            'warning_messages': [],
+            'fold_metrics': fold_rows,
+        }
+        return predictions, metrics
     predicted = probabilities >= thresholds
     metrics = {
         'candidate_id': spec.candidate_id,
@@ -900,9 +971,38 @@ def _evaluate_ordinal_candidate(
     predicted = np.empty(len(frame), dtype=object)
     probabilities = np.zeros((len(frame), len(labels)), dtype=np.float64)
     warning_records: list[dict[str, str]] = []
+    fold_blockers: list[dict[str, Any]] = []
+    fold_rows: list[dict[str, Any]] = []
     for fold in sorted(folds.unique()):
         test_mask = folds == fold
         train_mask = ~test_mask
+        support = target_estimability(
+            y[train_mask],
+            blocker='one_class_training_fold',
+        )
+        if not support.estimable:
+            predicted[test_mask] = ''
+            fold_blockers.append(
+                hard_blocker_payload(
+                    support.blocker,
+                    scope='grouped_training_fold',
+                    details={
+                        'candidate_id': spec.candidate_id,
+                        'fold': int(fold),
+                        'target_kind': spec.target_kind,
+                        'class_counts': support.class_counts,
+                    },
+                )
+            )
+            fold_rows.append(
+                {
+                    'fold': int(fold),
+                    'candidate_id': spec.candidate_id,
+                    'fold_status': 'hard_blocked',
+                    'hard_blocker': support.blocker,
+                }
+            )
+            continue
         model = _classifier(
             spec.model_kind, x.shape[1], len(labels), spec.regularization_c
         )
@@ -927,6 +1027,45 @@ def _evaluate_ordinal_candidate(
                 probabilities[test_mask, label_index] = fold_prob[
                     :, class_to_index[label]
                 ]
+        fold_rows.append(
+            {
+                'fold': int(fold),
+                'candidate_id': spec.candidate_id,
+                'fold_status': 'evaluated',
+                'hard_blocker': '',
+            }
+        )
+    if fold_blockers:
+        predictions = frame[
+            [column for column in IDENTITY_COLUMNS if column in frame]
+        ].copy()
+        predictions['candidate_id'] = spec.candidate_id
+        predictions['fold'] = folds.to_numpy()
+        predictions['observed_band'] = y
+        predictions['predicted_band'] = predicted
+        for index, label in enumerate(labels):
+            predictions[f'prob_{label}'] = probabilities[:, index]
+        blocker_names = sorted({row['blocker'] for row in fold_blockers})
+        metrics = {
+            'candidate_id': spec.candidate_id,
+            'family_id': spec.family_id,
+            'target_kind': spec.target_kind,
+            'feature_family': spec.feature_family,
+            'model_kind': spec.model_kind,
+            'feature_count': int(x.shape[1]),
+            'metric_label': GROUPED_DEVELOPMENT_METRIC_LABEL,
+            'regularization_c': float(spec.regularization_c),
+            'mr_computable': bool(spec.mr_computable),
+            'finite_output': False,
+            'candidate_status': 'hard_blocked',
+            'hard_blockers': '|'.join(blocker_names),
+            'hard_blocker_payloads': fold_blockers,
+            'warning_status': 'not_fit_unestimable_fold',
+            'warning_count': 0,
+            'warning_messages': [],
+            'fold_metrics': fold_rows,
+        }
+        return predictions, metrics
     severe_true = y == 'severe' if spec.target_kind == 'three_band' else y == '2_3'
     severe_pred = (
         predicted == 'severe'
@@ -959,6 +1098,7 @@ def _evaluate_ordinal_candidate(
         else 'no_warnings_recorded',
         'warning_count': int(len(warning_records)),
         'warning_messages': warning_records[:10],
+        'fold_metrics': fold_rows,
     }
     predictions = frame[
         [column for column in IDENTITY_COLUMNS if column in frame]
@@ -1157,6 +1297,13 @@ def _evaluate_candidates(
         if len(spec.feature_columns) == 0:
             continue
         if spec.target_kind == 'severe':
+            source_target = frame['adjudicated_severe'].astype(bool)
+        elif spec.target_kind == 'three_band':
+            source_target = frame['three_band']
+        else:
+            source_target = frame['four_band']
+        source_support = source_stratified_target_support(frame, source_target)
+        if spec.target_kind == 'severe':
             predictions, metrics = _evaluate_severe_candidate(frame, fold_series, spec)
         elif spec.target_kind == 'three_band':
             predictions, metrics = _evaluate_ordinal_candidate(
@@ -1166,8 +1313,22 @@ def _evaluate_candidates(
             predictions, metrics = _evaluate_ordinal_candidate(
                 frame, fold_series, spec, FOUR_BAND_LABELS
             )
+        metrics['source_support_status'] = source_support.status
+        metrics['source_support_column'] = source_support.source_column
+        metrics['source_support_payloads'] = [*source_support.diagnostics]
+        if source_support.hard_blockers:
+            existing = [
+                item
+                for item in str(metrics.get('hard_blockers', '')).split('|')
+                if item
+            ]
+            metrics['hard_blockers'] = '|'.join(
+                dict.fromkeys([*existing, *source_support.hard_blockers])
+            )
         metric_rows.append(metrics)
         prediction_frames.append(predictions)
+    if not metric_rows:
+        return empty_candidate_metrics_frame(), empty_candidate_predictions_frame(IDENTITY_COLUMNS)
     return pd.DataFrame(metric_rows), pd.concat(prediction_frames, ignore_index=True)
 
 
@@ -1225,18 +1386,21 @@ def _baseline_metrics(frame: pd.DataFrame) -> list[dict[str, Any]]:
 def _select_product(
     metrics: pd.DataFrame, hard_blockers: Sequence[str]
 ) -> dict[str, Any]:
+    if 'no_estimable_candidate_features' in set(hard_blockers):
+        return insufficient_data_verdict(hard_blockers)
     if metrics.empty:
-        return {
-            'overall_status': 'current_data_insufficient',
-            'selected_candidate_id': '',
-            'selected_family_id': '',
-            'selected_output_type': '',
-            'quantification_gate_passed': False,
-            'severe_safety_gate_passed': False,
-            'mr_tiff_deployment_gate_passed': False,
-            'hard_blockers': list(hard_blockers),
-            'claim_boundary': 'current data insufficient; no external validation',
-        }
+        return insufficient_data_verdict([*hard_blockers, 'no_estimable_candidate_features'])
+    metric_blockers: list[str] = []
+    if 'hard_blockers' in metrics.columns:
+        for value in metrics['hard_blockers'].dropna().astype(str):
+            metric_blockers.extend([item for item in value.split('|') if item])
+    hard_blockers = list(dict.fromkeys([*hard_blockers, *metric_blockers]))
+    modeled_rows = metrics[metrics['family_id'].astype(str) != 'baseline'].copy()
+    if metric_blockers and (
+        modeled_rows.empty
+        or not modeled_rows['finite_output'].fillna(False).astype(bool).any()
+    ):
+        return insufficient_data_verdict(hard_blockers)
     severe_rows = metrics[metrics['target_kind'] == 'severe'].copy()
     severe_rows['severe_gate_passed'] = (
         (severe_rows['recall'].fillna(0.0) >= 0.8)
@@ -1516,8 +1680,7 @@ def _write_final_model_if_supported(
     _, warning_result = capture_fit_warnings(fit_final_model)
     warning_records = warning_result.warning_messages
     paths['model'].mkdir(parents=True, exist_ok=True)
-    with paths['final_model'].open('wb') as handle:
-        pickle.dump(model, handle)
+    save_supported_sklearn_model(model, paths['final_model'])
     metadata = {
         'selected_candidate_id': selected_id,
         'selected_family_id': verdict.get('selected_family_id'),
@@ -2594,8 +2757,7 @@ def _run_dox_scored_no_mask_smoke(
             write_predictions=False,
         )
 
-    with paths['final_model'].open('rb') as handle:
-        final_model = pickle.load(handle)
+    final_model = joblib.load(paths['final_model'])
     x = to_finite_numeric_matrix(ok_frame, feature_columns)
     if hasattr(final_model, 'predict_proba'):
         probabilities = final_model.predict_proba(x)
@@ -2734,6 +2896,10 @@ def evaluate_endotheliosis_grade_model(
 
     specs = _candidate_specs(feature_sets)
     metrics, predictions = _evaluate_candidates(frame, folds, specs)
+    if metrics.empty:
+        hard_blockers = list(
+            dict.fromkeys([*hard_blockers, 'no_estimable_candidate_features'])
+        )
     baseline = pd.DataFrame(_baseline_metrics(frame))
     metrics = pd.concat([baseline, metrics], ignore_index=True, sort=False)
     metrics.to_csv(paths['candidate_metrics'], index=False)

@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
 from PIL import Image
@@ -12,6 +13,7 @@ from eq.quantification.endotheliosis_grade_model import (
     evaluate_endotheliosis_grade_model,
     grade_model_output_paths,
 )
+from eq.quantification.modeling_contracts import source_stratified_target_support
 from eq.quantification.morphology_features import MORPHOLOGY_FEATURE_COLUMNS
 
 
@@ -194,6 +196,66 @@ def test_final_model_metadata_records_label_contract_reference(tmp_path):
 
     metadata = json.loads(paths['final_model_metadata'].read_text(encoding='utf-8'))
     assert metadata['label_contract_reference'] == label_contract
+    assert joblib.load(paths['final_model']) is not None
+
+
+def test_no_estimable_candidate_features_write_insufficient_artifacts(tmp_path):
+    burden_root = tmp_path / 'burden_model'
+    df = _embedding_df(tmp_path).drop(
+        columns=[
+            column
+            for column in _embedding_df(tmp_path).columns
+            if column.startswith('embedding_')
+        ]
+    )
+    for column in [
+        'roi_area',
+        'roi_fill_fraction',
+        'roi_mean_intensity',
+        'roi_openness_score',
+        'roi_component_count',
+        'roi_union_bbox_width',
+        'roi_union_bbox_height',
+        'roi_largest_component_area_fraction',
+    ]:
+        df[column] = 1.0
+
+    artifacts = evaluate_endotheliosis_grade_model(df, burden_root, n_splits=3)
+
+    verdict = json.loads(artifacts['endotheliosis_grade_model_verdict'].read_text())
+    assert verdict['overall_status'] == 'current_data_insufficient'
+    assert 'no_estimable_candidate_features' in verdict['hard_blockers']
+    assert artifacts['endotheliosis_grade_model_candidate_coverage'].exists()
+    blockers = json.loads(
+        (
+            burden_root
+            / 'endotheliosis_grade_model'
+            / 'diagnostics'
+            / 'hard_blockers.json'
+        ).read_text(encoding='utf-8')
+    )
+    assert 'no_estimable_candidate_features' in blockers
+
+
+def test_one_class_grouped_folds_write_hard_blockers(tmp_path):
+    burden_root = tmp_path / 'burden_model'
+    df = _embedding_df(tmp_path)
+    _write_upstream_artifacts(burden_root, df)
+    df['score'] = 0.0
+
+    artifacts = evaluate_endotheliosis_grade_model(df, burden_root, n_splits=3)
+
+    verdict = json.loads(artifacts['endotheliosis_grade_model_verdict'].read_text())
+    assert verdict['overall_status'] == 'current_data_insufficient'
+    assert 'one_class_training_fold' in verdict['hard_blockers']
+    metrics = pd.read_csv(
+        burden_root
+        / 'endotheliosis_grade_model'
+        / 'summary'
+        / 'development_oof_metrics.csv'
+    )
+    blocked = metrics[metrics.get('hard_blockers', '').astype(str).str.contains('one_class_training_fold', na=False)]
+    assert not blocked.empty
 
 
 def test_first_class_family_subtrees_are_not_selector_internal_only(tmp_path):
@@ -373,6 +435,26 @@ def test_embedding_candidates_require_embedding_columns(tmp_path):
     candidate_ids = '|'.join(metrics['candidate_id'].astype(str))
     assert 'embedding_' not in candidate_ids
     assert artifacts['endotheliosis_grade_model_artifact_manifest'].exists()
+
+
+def test_source_concentrated_candidate_evidence_is_diagnosed():
+    frame = pd.DataFrame(
+        {
+            'cohort_id': ['a', 'a', 'a', 'b', 'b', 'b'],
+        }
+    )
+    target = pd.Series(['low', 'low', 'high', 'low', 'low', 'low'])
+
+    support = source_stratified_target_support(frame, target)
+
+    assert support.status == 'source_concentration_diagnosed'
+    assert support.source_column == 'cohort_id'
+    assert support.hard_blockers == []
+    assert any(
+        diagnostic['blocker'] == 'target_class_source_concentrated'
+        and diagnostic['details']['target_class'] == 'high'
+        for diagnostic in support.diagnostics
+    )
 
 
 def test_failed_quantification_gates_remove_stale_final_model_artifacts(tmp_path):

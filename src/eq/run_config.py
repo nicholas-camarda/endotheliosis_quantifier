@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import glob
 import logging
 import os
 import sys
@@ -177,13 +176,21 @@ def _model_input_size(model_cfg: dict[str, Any], default: int = 256) -> int:
     return int(raw_size)
 
 
-def _latest_artifact_from_glob(runtime_root: Path, raw_glob: str) -> Path:
-    glob_path = _runtime_path(runtime_root, raw_glob)
-    matches = sorted(Path(path) for path in glob.glob(str(glob_path), recursive=True))
-    matches = [path for path in matches if path.is_file()]
-    if not matches:
-        raise FileNotFoundError(f"No artifact matched configured glob: {glob_path}")
-    return matches[-1]
+def _exact_artifact_path(runtime_root: Path, raw_path: Any, *, dry_run: bool) -> Path:
+    text = str(raw_path or "").strip()
+    if not text:
+        raise ValueError("Supported artifact handoff requires pretrained_model.artifact_path.")
+    if any(token in text for token in ("*", "?", "[")):
+        raise ValueError(
+            "Supported artifact handoff requires an exact artifact_path, not a glob "
+            f"or latest-artifact selector: {text}"
+        )
+    path = _runtime_path(runtime_root, text)
+    if not dry_run and not path.exists():
+        raise FileNotFoundError(f"Configured artifact_path does not exist: {path}")
+    if not dry_run and not path.is_file():
+        raise ValueError(f"Configured artifact_path is not a file: {path}")
+    return path
 
 
 def run_mitochondria_pretraining_config(
@@ -219,6 +226,16 @@ def run_mitochondria_pretraining_config(
             str(training_cfg["learning_rate"]),
             "--image-size",
             str(_model_input_size(model_cfg)),
+            "--split-seed",
+            str(
+                processed_cfg.get(
+                    "random_seed",
+                    config.get("reproducibility", {}).get(
+                        "random_seed",
+                        config.get("run", {}).get("seed", 42),
+                    ),
+                )
+            ),
         ],
         env,
         dry_run=dry_run,
@@ -239,13 +256,16 @@ def run_glomeruli_transfer_config(
     pretrained_cfg = config.get("pretrained_model", {})
     if not isinstance(pretrained_cfg, dict):
         raise ValueError("pretrained_model must be a mapping for glomeruli transfer config")
-    base_model = (
-        _runtime_path(runtime_root, "DRY_RUN_BASE_MODEL.pkl")
-        if dry_run
-        else _latest_artifact_from_glob(runtime_root, str(pretrained_cfg["artifact_glob"]))
+    if "artifact_glob" in pretrained_cfg:
+        raise ValueError(
+            "pretrained_model.artifact_glob is not supported. Configure an exact "
+            "pretrained_model.artifact_path."
+        )
+    base_model = _exact_artifact_path(
+        runtime_root,
+        pretrained_cfg.get("artifact_path"),
+        dry_run=dry_run,
     )
-    if not dry_run and not base_model.exists():
-        raise FileNotFoundError(f"Configured base model does not exist: {base_model}")
 
     _run(
         [
@@ -274,6 +294,16 @@ def run_glomeruli_transfer_config(
             str(processed_cfg.get("crop_size", _model_input_size(model_cfg))),
             "--seed",
             str(config.get("reproducibility", {}).get("random_seed", 42)),
+            "--split-seed",
+            str(
+                processed_cfg.get(
+                    "random_seed",
+                    config.get("data", {}).get("split", {}).get(
+                        "random_seed",
+                        config.get("reproducibility", {}).get("random_seed", 42),
+                    ),
+                )
+            ),
         ],
         env,
         dry_run=dry_run,

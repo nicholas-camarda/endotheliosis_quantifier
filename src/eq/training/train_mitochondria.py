@@ -75,6 +75,7 @@ def train_mitochondria_with_datablock(
     positive_focus_p: float = DEFAULT_POSITIVE_FOCUS_P,
     min_pos_pixels: int = DEFAULT_MIN_POS_PIXELS,
     pos_crop_attempts: int = DEFAULT_POS_CROP_ATTEMPTS,
+    split_seed: int = 42,
     device: Optional[str] = None,
 ):
     """
@@ -123,6 +124,7 @@ def train_mitochondria_with_datablock(
         positive_focus_p=positive_focus_p,
         min_pos_pixels=min_pos_pixels,
         pos_crop_attempts=pos_crop_attempts,
+        split_seed=split_seed,
         device=device,
     )
 
@@ -134,6 +136,7 @@ def train_mitochondria_with_datablock(
         train_items=train_items,
         valid_items=valid_items,
         image_size=image_size,
+        split_seed=split_seed,
         crop_size=image_size,
         output_size=image_size,
         positive_focus_p=positive_focus_p,
@@ -150,8 +153,6 @@ def train_mitochondria_with_datablock(
         "data_root": str(data_root),
         "train_items": train_items,
         "valid_items": valid_items,
-        "split_seed": 42,
-        "splitter_name": "RandomSplitter",
         **training_provenance,
     })
     
@@ -284,6 +285,7 @@ def main():
     parser.add_argument('--batch-size', type=int, default=None, help='Training batch size (default: machine-aware recommendation)')
     parser.add_argument('--learning-rate', type=float, default=DEFAULT_LEARNING_RATE, help='Learning rate')
     parser.add_argument('--image-size', type=int, default=DEFAULT_IMAGE_SIZE, help='Input image size')
+    parser.add_argument('--split-seed', type=int, default=42, help='Explicit dynamic train/validation split seed')
     parser.add_argument(
         '--device',
         choices=["mps", "cuda", "cpu"],
@@ -308,6 +310,10 @@ def main():
                 args.batch_size = int(training_cfg['batch_size'])
             if 'learning_rate' in training_cfg and parser.get_default('learning_rate') == args.learning_rate:
                 args.learning_rate = float(training_cfg['learning_rate'])
+            data_cfg = cfg_yaml.get('data', {}) if isinstance(cfg_yaml.get('data'), dict) else {}
+            processed_cfg = data_cfg.get('processed', {}) if isinstance(data_cfg.get('processed'), dict) else {}
+            if 'random_seed' in processed_cfg and parser.get_default('split_seed') == args.split_seed:
+                args.split_seed = int(processed_cfg['random_seed'])
             # output model dir from checkpoint_path
             if 'checkpoint_path' in cfg_yaml.get('model', {}):
                 ckpt = resolve_runtime_path(cfg_yaml['model']['checkpoint_path'])
@@ -356,6 +362,7 @@ def main():
                 learning_rate=args.learning_rate,
                 image_size=args.image_size,
                 config_path=config_path,
+                split_seed=args.split_seed,
                 device=args.device,
             )
             

@@ -49,11 +49,7 @@ def ensure_conda_environment() -> bool:
 
 
 if os.environ.get('EQ_AUTO_CONDA', '0') == '1':
-    try:
-        ensure_conda_environment()
-    except Exception:
-        # Importing the package should stay safe even if environment activation fails.
-        pass
+    ensure_conda_environment()
 
 
 __all__ = ['__version__', 'ensure_conda_environment']

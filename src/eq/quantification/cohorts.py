@@ -1194,6 +1194,8 @@ def apply_dox_score_workbook_audit(
 
 def _load_label_studio_choice_scores(annotation_source: Path) -> pd.DataFrame:
     """Load image-level choice scores from a Label Studio JSON export."""
+    from eq.quantification.labelstudio_scores import extract_label_studio_grade
+
     payload = json.loads(Path(annotation_source).read_text(encoding='utf-8'))
     rows: list[dict[str, Any]] = []
     for task in payload:
@@ -1222,11 +1224,7 @@ def _load_label_studio_choice_scores(annotation_source: Path) -> pd.DataFrame:
             continue
 
         for annotation in annotations:
-            choices: list[Any] = []
-            for result in annotation.get('result', []):
-                if result.get('type') == 'choices':
-                    choices.extend(result.get('value', {}).get('choices', []))
-            score = _coerce_score(choices[-1]) if choices else None
+            score = extract_label_studio_grade(annotation)
             rows.append(
                 {
                     'task_id': task.get('id'),

@@ -10,12 +10,12 @@ from typing import Any, Optional
 import pandas as pd
 
 from eq.data_management.canonical_contract import parse_subject_image_filename
+from eq.quantification.burden import ALLOWED_SCORE_VALUES
 from eq.quantification.migration import inventory_raw_project
 
-DEFAULT_HISTORICAL_SOURCES = (
-    'git:348510e:data/Lauren_PreEclampsia_Data/train/2023-04-10_annotations.json',
-    'git:348510e:data/Lauren_PreEclampsia_Data/train/annotations.json',
-)
+
+class LabelStudioScoreError(ValueError):
+    """Raised when a Label Studio result cannot produce one unambiguous grade."""
 
 
 def _load_annotation_payload(source: str | Path) -> list[dict[str, Any]]:
@@ -41,26 +41,12 @@ def _candidate_annotation_paths(project_dir: Path) -> list[str]:
         project_dir / 'annotations.json',
         project_dir / 'labelstudio_annotations.json',
     ]
-    candidates = [str(path) for path in local_candidates if path.exists()]
-    candidates.extend(DEFAULT_HISTORICAL_SOURCES)
-    return candidates
+    return [str(path) for path in local_candidates if path.exists()]
 
 
 def discover_label_studio_annotation_source(project_dir: Path) -> Optional[str]:
     """Find the most plausible annotation export source for a raw project."""
     for candidate in _candidate_annotation_paths(Path(project_dir)):
-        if candidate.startswith('git:'):
-            _, revision, git_path = candidate.split(':', 2)
-            result = subprocess.run(
-                ['git', 'cat-file', '-e', f'{revision}:{git_path}'],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                return candidate
-            continue
-
         if Path(candidate).exists():
             return candidate
     return None
@@ -77,13 +63,43 @@ def _normalize_image_name(task: dict[str, Any]) -> str:
     return ''
 
 
-def _extract_grade(annotation: dict[str, Any]) -> Optional[str]:
+def _coerce_supported_grade(choice: Any) -> float | None:
+    text = str(choice).strip()
+    if not text:
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    for allowed in ALLOWED_SCORE_VALUES:
+        if abs(float(allowed) - value) < 1e-9:
+            return float(allowed)
+    return None
+
+
+def extract_label_studio_grade(annotation: dict[str, Any]) -> float | None:
+    """Extract one supported endotheliosis grade from one Label Studio annotation.
+
+    The shared quantification rule is intentionally narrow: exactly one supported
+    grade choice is accepted. Missing grade choices return None. Multiple
+    supported grade choices are ambiguous and fail closed.
+    """
+    supported_grades: list[float] = []
     for result in annotation.get('result', []):
         if result.get('type') != 'choices':
             continue
         choices = result.get('value', {}).get('choices', [])
-        if choices:
-            return str(choices[0])
+        for choice in choices:
+            grade = _coerce_supported_grade(choice)
+            if grade is not None:
+                supported_grades.append(grade)
+    if len(supported_grades) > 1:
+        raise LabelStudioScoreError(
+            'Ambiguous Label Studio grade result: multiple supported grade choices '
+            f'{supported_grades}'
+        )
+    if supported_grades:
+        return supported_grades[0]
     return None
 
 
@@ -147,7 +163,6 @@ def recover_label_studio_score_table(
     project_dir: Path,
     annotation_source: str | Path,
     output_dir: Path,
-    fallback_latest_missing_grade: bool = True,
 ) -> dict[str, Path]:
     """Recover image-level scores from a Label Studio export and join them to current raw files."""
     output_dir = Path(output_dir)
@@ -177,7 +192,7 @@ def recover_label_studio_score_table(
             continue
 
         for annotation in annotations:
-            grade = _extract_grade(annotation)
+            grade = extract_label_studio_grade(annotation)
             raw_rows.append(
                 {
                     'image_name': image_name,
@@ -209,14 +224,7 @@ def recover_label_studio_score_table(
 
         resolution = 'latest_annotation'
         chosen = latest_row
-        if latest_grade is None and fallback_latest_missing_grade:
-            graded_rows = ranked[ranked['grade'].notna()]
-            if not graded_rows.empty:
-                chosen = graded_rows.iloc[-1].to_dict()
-                resolution = 'latest_missing_grade_backfilled'
-            else:
-                resolution = 'latest_annotation_missing_grade'
-        elif latest_grade is None:
+        if pd.isna(latest_grade):
             resolution = 'latest_annotation_missing_grade'
 
         image_keys = (
@@ -246,10 +254,10 @@ def recover_label_studio_score_table(
                 'subject_prefix': chosen.get('subject_prefix')
                 or _subject_prefix_from_image_name(str(image_name)),
                 'score': float(chosen['grade'])
-                if chosen.get('grade') is not None
+                if not pd.isna(chosen.get('grade'))
                 else None,
                 'score_status': 'ok'
-                if chosen.get('grade') is not None
+                if not pd.isna(chosen.get('grade'))
                 else 'missing_score',
                 'score_resolution': resolution,
                 'annotation_source': str(annotation_source),

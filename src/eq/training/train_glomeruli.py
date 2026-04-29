@@ -12,7 +12,6 @@ This is the second stage of the two-stage training pipeline.
 """
 
 import random
-import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -37,7 +36,6 @@ from eq.core.constants import (
     DEFAULT_IMAGE_SIZE,
     DEFAULT_LEARNING_RATE,
     DEFAULT_MIN_POS_PIXELS,
-    DEFAULT_MITOCHONDRIA_MODEL_DIR,
     DEFAULT_POS_CROP_ATTEMPTS,
     DEFAULT_POSITIVE_FOCUS_P,
 )
@@ -135,6 +133,7 @@ def train_glomeruli_with_transfer_learning(
     crop_size: Optional[int] = None,
     use_lr_find: bool = True,
     seed: int = 42,
+    split_seed: int | None = None,
     split_manifest_path: Optional[str] = None,
     negative_crop_manifest_path: Optional[str] = None,
     negative_crop_sampler_weight: float = 0.0,
@@ -185,6 +184,7 @@ def train_glomeruli_with_transfer_learning(
         crop_size=crop_size,
         use_lr_find=use_lr_find,
         seed=seed,
+        split_seed=split_seed,
         split_manifest_path=split_manifest_path,
         negative_crop_manifest_path=negative_crop_manifest_path,
         negative_crop_sampler_weight=negative_crop_sampler_weight,
@@ -210,6 +210,7 @@ def train_glomeruli_with_datablock(
     min_pos_pixels: int = DEFAULT_MIN_POS_PIXELS,
     pos_crop_attempts: int = DEFAULT_POS_CROP_ATTEMPTS,
     seed: int = 42,
+    split_seed: int | None = None,
     split_manifest_path: Optional[str] = None,
     negative_crop_manifest_path: Optional[str] = None,
     negative_crop_sampler_weight: float = 0.0,
@@ -237,6 +238,7 @@ def train_glomeruli_with_datablock(
     logger = get_logger("eq.glomeruli_training")
     logger.info("Starting glomeruli model training with DataBlock...")
     set_training_seed(seed)
+    resolved_split_seed = int(seed if split_seed is None else split_seed)
     data_root = validate_supported_segmentation_training_root(data_dir, stage="glomeruli")
     if base_model_path:
         base_model_path = str(_require_existing_base_model(base_model_path))
@@ -271,6 +273,7 @@ def train_glomeruli_with_datablock(
         crop_size=(crop_size if crop_size is not None else image_size),
         output_size=image_size,
         splitter=fixed_splitter_from_manifest(split_manifest_path) if split_manifest_path else None,
+        split_seed=resolved_split_seed,
         positive_focus_p=positive_focus_p,
         min_pos_pixels=min_pos_pixels,
         pos_crop_attempts=pos_crop_attempts,
@@ -300,12 +303,13 @@ def train_glomeruli_with_datablock(
         train_items=train_items,
         valid_items=valid_items,
         seed=seed,
-        split_seed=42,
+        split_seed=resolved_split_seed,
         crop_size=int(crop_size) if crop_size is not None else int(image_size),
         output_size=int(image_size),
         candidate_family='mitochondria_transfer' if base_model_path else 'no_mitochondria_base',
         training_mode=TRAINING_MODE_DYNAMIC_FULL_IMAGE,
         splitter_name="explicit_shared_rng_split" if split_manifest_path else "RandomSplitter",
+        split_seed_used_for_membership=not bool(split_manifest_path),
         transfer_base_artifact_path=base_model_path,
         transfer_base_metadata=transfer_base_metadata,
         positive_focus_p=positive_focus_p,
@@ -428,69 +432,6 @@ def train_glomeruli_with_datablock(
     return learn
 
 
-# Legacy transfer learning functions removed - using modern FastAI v2 approach
-
-def find_best_mitochondria_model() -> Optional[str]:
-    """
-    Auto-detect the best available mitochondria model for transfer learning.
-    
-    Returns:
-        str: Path to best mitochondria model, or None if not found
-    """
-    logger = get_logger("eq.training.train_glomeruli")
-
-    # Common mitochondria model locations
-    search_paths = [
-        "models/segmentation/mitochondria",
-        DEFAULT_MITOCHONDRIA_MODEL_DIR,
-        "models/mitochondria"
-    ]
-    
-    best_model = None
-    best_score = -1
-    
-    for search_path in search_paths:
-        model_dir = Path(search_path)
-        if not model_dir.exists():
-            continue
-            
-        # Find all .pkl files in the directory tree
-        pkl_files = list(model_dir.glob("**/*.pkl"))
-        
-        for pkl_file in pkl_files:
-            try:
-                load_supported_segmentation_artifact_metadata(pkl_file)
-            except ValueError:
-                continue
-            # Prefer models with "pretrain" in the name (from mitochondria training)
-            score = 0
-            if "pretrain" in pkl_file.name:
-                score += 10
-            if "mitochondria" in pkl_file.name.lower():
-                score += 5
-            
-            # Prefer newer files (higher epochs, recent timestamp)
-            if "_e" in pkl_file.name:
-                try:
-                    # Extract epoch count from filename (e.g., "e10" -> 10)
-                    epoch_match = re.search(r'_e(\d+)', pkl_file.name)
-                    if epoch_match:
-                        epochs = int(epoch_match.group(1))
-                        score += epochs  # More epochs = better model
-                except Exception:
-                    pass
-            
-            if score > best_score:
-                best_score = score
-                best_model = str(pkl_file)
-    
-    if best_model:
-        logger.info(f"🔍 Auto-detected mitochondria model: {best_model}")
-        return best_model
-    else:
-        logger.info("🔍 No mitochondria model found for transfer learning")
-        return None
-
 def main():
     """CLI interface for glomeruli training."""
     import argparse
@@ -506,7 +447,6 @@ def main():
     parser.add_argument('--model-name', default='glomeruli_model', help='Base name for saved model files')
     parser.add_argument('--base-model', help='Path to base model for explicit transfer learning')
     parser.add_argument('--from-scratch', action='store_true', help='Train the explicit no-mitochondria-base ImageNet baseline')
-    parser.add_argument('--allow-auto-base-model', action='store_true', help='Opt in to auto-detecting a mitochondria base artifact when --base-model is not provided')
     parser.add_argument('--epochs', type=int, default=DEFAULT_EPOCHS, help='Number of training epochs')
     parser.add_argument('--batch-size', type=int, default=None, help='Training batch size (default: machine-aware recommendation)')
     parser.add_argument('--learning-rate', type=float, default=DEFAULT_LEARNING_RATE, help='Learning rate')
@@ -519,6 +459,7 @@ def main():
     parser.add_argument('--augmentation-variant', default='fastai_default', choices=['fastai_default', 'spatial_only', 'no_aug'], help='Recorded augmentation policy variant; unsupported names fail closed')
     parser.add_argument('--skip-lr-find', action='store_true', help='Skip lr_find and use provided learning rate for fine-tune')
     parser.add_argument('--seed', type=int, default=42, help='Explicit training seed to record in provenance and use for bounded comparisons')
+    parser.add_argument('--split-seed', type=int, default=None, help='Explicit dynamic train/validation split seed; defaults to --seed')
     parser.add_argument('--device', choices=["mps", "cuda", "cpu"], help='Training device. Omit to auto-select cuda, then mps, then cpu.')
     
     args = parser.parse_args()
@@ -550,6 +491,12 @@ def main():
             # image size
             if 'input_size' in model_cfg and isinstance(model_cfg['input_size'], (list, tuple)) and len(model_cfg['input_size']) >= 1:
                 args.image_size = int(model_cfg['input_size'][0])
+            data_cfg = cfg_yaml.get('data', {}) if isinstance(cfg_yaml.get('data'), dict) else {}
+            processed_cfg = data_cfg.get('processed', {}) if isinstance(data_cfg.get('processed'), dict) else {}
+            split_cfg = data_cfg.get('split', {}) if isinstance(data_cfg.get('split'), dict) else {}
+            yaml_split_seed = processed_cfg.get('random_seed', split_cfg.get('random_seed'))
+            if yaml_split_seed is not None and args.split_seed is None:
+                args.split_seed = int(yaml_split_seed)
             # output model dir and name from checkpoint_path
             if 'checkpoint_path' in model_cfg:
                 ckpt = resolve_runtime_path(model_cfg['checkpoint_path'])
@@ -597,21 +544,10 @@ def main():
             elif args.base_model:
                 logger.info("🔄 TRANSFER LEARNING: explicit base model provided")
                 logger.info(f"🔄 Using base model: {args.base_model}")
-            elif args.allow_auto_base_model:
-                auto_detected_model = find_best_mitochondria_model()
-                if not auto_detected_model:
-                    raise ValueError(
-                        "No supported mitochondria base artifact was auto-detected. "
-                        "Provide --base-model explicitly or choose --from-scratch."
-                    )
-                args.base_model = auto_detected_model
-                logger.info("🔄 TRANSFER LEARNING: using auto-detected base model")
-                logger.info(f"🔄 Using base model: {args.base_model}")
             else:
                 raise ValueError(
                     "Glomeruli training requires an explicit family selection. "
-                    "Provide --base-model for transfer learning or --from-scratch for a scratch candidate. "
-                    "Use --allow-auto-base-model only when you intentionally want auto-detection."
+                    "Provide --base-model for transfer learning or --from-scratch for a scratch candidate."
                 )
 
             if args.base_model:
@@ -629,6 +565,7 @@ def main():
                     # Skip lr_find if user asked to, or use provided LR directly
                     use_lr_find=(not args.skip_lr_find),
                     seed=args.seed,
+                    split_seed=args.split_seed,
                     split_manifest_path=args.split_manifest,
                     negative_crop_manifest_path=args.negative_crop_manifest,
                     negative_crop_sampler_weight=args.negative_crop_sampler_weight,
@@ -648,6 +585,7 @@ def main():
                     crop_size=args.crop_size,
                     config_path=config_path,
                     seed=args.seed,
+                    split_seed=args.split_seed,
                     split_manifest_path=args.split_manifest,
                     negative_crop_manifest_path=args.negative_crop_manifest,
                     negative_crop_sampler_weight=args.negative_crop_sampler_weight,

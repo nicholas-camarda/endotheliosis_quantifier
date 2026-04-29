@@ -24,6 +24,9 @@ from PIL import Image
 from eq.core.constants import DEFAULT_IMAGE_SIZE
 from eq.utils.logger import get_logger
 
+DEFAULT_PREDICTION_THRESHOLD = 0.5
+IMAGENET_PREPROCESSING_CONTRACT = "imagenet_normalized_fastai"
+
 
 class PredictionCore:
     """
@@ -129,6 +132,9 @@ class PredictionCore:
             'inference_preprocessing': 'imagenet_normalized'
             if imagenet_normalize
             else 'unit_scaled',
+            'preprocessing_contract': IMAGENET_PREPROCESSING_CONTRACT
+            if imagenet_normalize
+            else 'unit_scaled_legacy',
             'device': str(device),
         }
         return probability, audit
@@ -389,5 +395,4 @@ def convert_prediction_to_numpy(pred_tensor: torch.Tensor) -> np.ndarray:
     """
     core = create_prediction_core()
     return core.convert_tensor_to_numpy(pred_tensor)
-
 

@@ -23,13 +23,10 @@ from eq.utils.paths import (
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Optional conda environment activation (opt-in via EQ_AUTO_CONDA=1)
-try:
-    from eq import ensure_conda_environment
+from eq import ensure_conda_environment
 
-    if os.environ.get('EQ_AUTO_CONDA', '0') == '1':
-        ensure_conda_environment()
-except Exception:
-    pass
+if os.environ.get('EQ_AUTO_CONDA', '0') == '1':
+    ensure_conda_environment()
 
 
 # AUTOMATIC ENVIRONMENT SETUP - runs at CLI import time
@@ -55,17 +52,10 @@ def auto_setup_environment():
         # Restore logging level
         logging.getLogger().setLevel(original_level)
 
-        # Configure platform-specific settings
-        if hardware_capabilities.platform == 'Darwin':
-            import os
-
-            os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
-
         return mode_manager
 
     except Exception:
-        # Completely silent fallback
-        return None
+        raise RuntimeError('CLI environment auto-setup failed') from None
 
 
 # Run automatic setup when module is imported
@@ -1188,28 +1178,20 @@ Examples:
         sys.exit(1)
 
     # Ensure runtime artifact folders exist up front.
-    try:
-        get_runtime_raw_data_path().mkdir(parents=True, exist_ok=True)
-        get_output_path().mkdir(parents=True, exist_ok=True)
-        (get_runtime_models_path() / 'segmentation' / 'mitochondria').mkdir(
-            parents=True, exist_ok=True
-        )
-        (get_runtime_models_path() / 'segmentation' / 'glomeruli').mkdir(
-            parents=True, exist_ok=True
-        )
-        get_runtime_output_path().mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
+    runtime_dirs = [
+        get_runtime_raw_data_path(),
+        get_output_path(),
+        get_runtime_models_path() / 'segmentation' / 'mitochondria',
+        get_runtime_models_path() / 'segmentation' / 'glomeruli',
+        get_runtime_output_path(),
+    ]
+    for runtime_dir in runtime_dirs:
+        runtime_dir.mkdir(parents=True, exist_ok=True)
 
     # Initialize mode manager for the session based on global --mode
-    try:
-        session_mode = (
-            EnvironmentMode(args.mode)
-            if getattr(args, 'mode', None)
-            else EnvironmentMode.AUTO
-        )
-    except Exception:
-        session_mode = EnvironmentMode.AUTO
+    session_mode = (
+        EnvironmentMode(args.mode) if getattr(args, 'mode', None) else EnvironmentMode.AUTO
+    )
 
     # Use the global mode manager from auto-setup to avoid duplicates
     if _auto_mode_manager:

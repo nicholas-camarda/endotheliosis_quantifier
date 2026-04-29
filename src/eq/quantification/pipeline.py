@@ -378,17 +378,7 @@ def _build_union_mask(
         largest_component_area = max(int(component['area']) for component in components)
         selection = 'union_mask'
     else:
-        union_mask = binary_mask
-        num_labels, _, stats, _ = cv2.connectedComponentsWithStats(
-            binary_mask, connectivity=8
-        )
-        component_count = max(0, int(num_labels) - 1)
-        largest_component_area = (
-            int(stats[1:, cv2.CC_STAT_AREA].max())
-            if num_labels > 1
-            else int(binary_mask.sum())
-        )
-        selection = 'union_mask_all_positive_fallback'
+        return None
 
     ys, xs = np.where(union_mask > 0)
     if len(xs) == 0 or len(ys) == 0:
@@ -780,10 +770,7 @@ def run_manifest_quantification(
         stop_after,
     )
     manifest_path = manifest_root / 'manifest.csv'
-    raw_inventory_path = output_dir / 'raw_inventory.csv'
     mapping_template_path = output_dir / 'legacy_to_canonical_mapping_template.csv'
-    manifest = pd.read_csv(manifest_path)
-    manifest.to_csv(raw_inventory_path, index=False)
     pd.DataFrame(
         columns=[
             'subject_prefix',
@@ -826,7 +813,6 @@ def run_manifest_quantification(
     )
     if stop_after == 'contract':
         return {
-            'raw_inventory': raw_inventory_path,
             'mapping_template': mapping_template_path,
             'manifest': manifest_path,
             'manifest_scored_summary': manifest_summary_path,
@@ -844,7 +830,6 @@ def run_manifest_quantification(
     )
     if stop_after == 'roi':
         return {
-            'raw_inventory': raw_inventory_path,
             'mapping_template': mapping_template_path,
             'manifest': manifest_path,
             'manifest_scored_summary': manifest_summary_path,
@@ -865,7 +850,6 @@ def run_manifest_quantification(
     )
     if stop_after == 'embeddings':
         return {
-            'raw_inventory': raw_inventory_path,
             'mapping_template': mapping_template_path,
             'manifest': manifest_path,
             'manifest_scored_summary': manifest_summary_path,
@@ -887,7 +871,6 @@ def run_manifest_quantification(
         output_dir,
     )
     return {
-        'raw_inventory': raw_inventory_path,
         'mapping_template': mapping_template_path,
         'manifest': manifest_path,
         'manifest_scored_summary': manifest_summary_path,
@@ -933,6 +916,9 @@ def extract_roi_crops(
         mask_path = Path(str(first_row['raw_mask_path']))
         image_array = np.array(Image.open(image_path).convert('RGB'))
         mask_array = np.array(Image.open(mask_path).convert('L'))
+        if mask_array.shape[:2] != image_array.shape[:2]:
+            result.loc[subject_rows.index, 'roi_status'] = 'image_mask_size_mismatch'
+            continue
 
         components = _extract_components(mask_array, min_area=min_component_area)
         component_by_id = {
@@ -943,7 +929,7 @@ def extract_roi_crops(
             glomerulus_id = int(scored_row['glomerulus_id'])
             component = component_by_id.get(glomerulus_id)
             if component is None:
-                result.at[index, 'roi_status'] = 'component_not_found'
+                result.at[index, 'roi_status'] = 'component_below_min_area'
                 continue
 
             x = int(component['bbox_x'])
@@ -1029,9 +1015,12 @@ def extract_image_level_roi_crops(
         mask_path = Path(str(scored_row['raw_mask_path']))
         image_array = np.array(Image.open(image_path).convert('RGB'))
         mask_array = np.array(Image.open(mask_path).convert('L'))
+        if mask_array.shape[:2] != image_array.shape[:2]:
+            result.at[index, 'roi_status'] = 'image_mask_size_mismatch'
+            continue
         union = _build_union_mask(mask_array, min_component_area=min_component_area)
         if union is None:
-            result.at[index, 'roi_status'] = 'component_not_found'
+            result.at[index, 'roi_status'] = 'component_below_min_area'
             continue
 
         result.at[index, 'roi_component_count'] = int(union['component_count'])
@@ -1137,7 +1126,9 @@ def extract_embedding_table(
     embeddings: list[np.ndarray] = []
     for row in valid_rows.itertuples(index=False):
         roi_image = Image.open(str(row.roi_image_path)).convert('RGB')
-        tensor = prediction_core.preprocess_image(roi_image).to(device)
+        tensor = prediction_core.preprocess_image_imagenet_normalized(roi_image).to(
+            device
+        )
         with torch.no_grad():
             feature_map = _resolve_feature_map(encoder(tensor))
             pooled = F.adaptive_avg_pool2d(feature_map, output_size=1)
@@ -1164,6 +1155,7 @@ def extract_embedding_table(
             'embedding_dim': int(embedding_matrix.shape[1]),
             'pooling': 'adaptive_avg_pool2d_1x1',
             'representation': 'frozen_segmentation_encoder',
+            'preprocessing': 'imagenet_normalized_fastai',
         },
         output_dir / 'embedding_metadata.json',
     )
@@ -3012,7 +3004,13 @@ def run_contract_first_quantification(
     label_overrides_path = input_contract.label_overrides_path
 
     manifest_path = project_dir / 'manifest.csv'
-    if manifest_path.exists() and score_source == 'auto' and annotation_source is None:
+    if manifest_path.exists():
+        if score_source == 'labelstudio' or annotation_source is not None:
+            raise ContractPreparationError(
+                'Manifest roots require manifest-mode scoring; score_source=labelstudio '
+                'and annotation_source are raw-project Label Studio options and are not '
+                'supported for manifest.csv roots.'
+            )
         logger.info(
             'Manifest-backed quantification detected: manifest=%s', manifest_path
         )

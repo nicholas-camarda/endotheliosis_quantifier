@@ -26,7 +26,7 @@ run:
     - Use the eq-mac environment on macOS.
     - Run real MPS training with PYTORCH_ENABLE_MPS_FALLBACK=1.
     - Glomeruli training uses every admitted manual-mask row in raw_data/cohorts.
-    - P0 resize screening selected the current 512-to-256 policy for the next production candidate run.
+    - P0 resize evidence supports the current 512-to-256 policy for this production candidate run.
 
 paths:
   # Mitochondria training data. Must contain images/ and masks/.
@@ -64,10 +64,9 @@ glomeruli_transfer:
   enabled: true
   model_name: glomeruli_candidate_transfer
 
-  # This means "use the mitochondria .pkl trained earlier in this same run".
-  # The runner derives the artifact path from the configured mitochondria
-  # model_name, epochs, batch_size, learning_rate, and image_size.
-  base_model: latest_current_mito_run
+  # Exact supported mitochondria artifact consumed by the transfer candidate.
+  # Regenerate this path explicitly before running a supported comparison.
+  base_model_artifact_path: models/segmentation/mitochondria/glomeruli_candidate_mito_base-pretrain_e25_b24_lr1e-3_sz256/glomeruli_candidate_mito_base-pretrain_e25_b24_lr1e-3_sz256.pkl
 
   epochs: 20
   training_mode: dynamic_full_image_patching

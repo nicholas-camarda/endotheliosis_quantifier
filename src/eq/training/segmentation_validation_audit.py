@@ -1078,6 +1078,9 @@ def build_mitochondria_training_provenance(
     train_items: Iterable[Any],
     valid_items: Iterable[Any],
     image_size: int,
+    split_seed: int,
+    splitter_name: str = "RandomSplitter",
+    split_seed_used_for_membership: bool = True,
     crop_size: int | None = None,
     output_size: int | None = None,
     positive_focus_p: float | None = None,
@@ -1125,6 +1128,9 @@ def build_mitochondria_training_provenance(
         "actual_pretraining_image_paths": fitted_items,
         "actual_pretraining_mask_paths": fitted_masks,
         "split_policy": "internal_dynamic_train_validation_split",
+        "split_seed": int(split_seed),
+        "splitter_name": splitter_name,
+        "split_seed_used_for_membership": bool(split_seed_used_for_membership),
         "resize_policy": resize_policy_record(
             crop_size=int(crop_size or image_size),
             output_size=int(output_size or image_size),
@@ -1179,6 +1185,7 @@ def build_glomeruli_training_provenance(
     candidate_family: str,
     training_mode: str,
     splitter_name: str = "RandomSplitter",
+    split_seed_used_for_membership: bool = True,
     transfer_base_artifact_path: str | Path | None = None,
     transfer_base_metadata: Mapping[str, Any] | None = None,
     positive_focus_p: float | None = None,
@@ -1189,6 +1196,8 @@ def build_glomeruli_training_provenance(
     command: str | None = None,
 ) -> Dict[str, Any]:
     def _item_path(item: Any) -> Any:
+        if isinstance(item, dict) and item.get("__eq_manifest_pair_record__"):
+            return item.get("source_image_path")
         if isinstance(item, dict) and item.get("__eq_negative_crop_record__"):
             return item.get("source_image_path")
         return item
@@ -1201,17 +1210,26 @@ def build_glomeruli_training_provenance(
         if isinstance(item, dict) and item.get("__eq_negative_crop_record__")
     ]
     all_paths = train_paths + valid_paths
-    mask_paths: list[str] = []
-    try:
-        from eq.data_management.standard_getters import get_y_full
+    mask_paths: list[str] = [
+        _path_key(item.get("source_mask_path"))
+        for item in list(train_items) + list(valid_items)
+        if isinstance(item, dict) and item.get("__eq_manifest_pair_record__")
+    ]
+    if len(mask_paths) < len(all_paths):
+        try:
+            from eq.data_management.standard_getters import get_y_full
 
-        for image_path in all_paths:
-            try:
-                mask_paths.append(str(get_y_full(Path(image_path))))
-            except Exception:
-                continue
-    except Exception:
-        mask_paths = []
+            known_masks = set(mask_paths)
+            for image_path in all_paths:
+                try:
+                    mask_path = str(get_y_full(Path(image_path)))
+                except Exception:
+                    continue
+                if mask_path not in known_masks:
+                    mask_paths.append(mask_path)
+                    known_masks.add(mask_path)
+        except Exception:
+            pass
     resize_policy = resize_policy_record(crop_size=crop_size, output_size=output_size)
     return {
         "data_root": str(Path(data_root).expanduser()),
@@ -1220,6 +1238,7 @@ def build_glomeruli_training_provenance(
         "seed": int(seed),
         "split_seed": int(split_seed),
         "splitter_name": splitter_name,
+        "split_seed_used_for_membership": bool(split_seed_used_for_membership),
         "train_images": train_paths,
         "valid_images": valid_paths,
         "negative_train_crop_ids": negative_train_crop_ids,
