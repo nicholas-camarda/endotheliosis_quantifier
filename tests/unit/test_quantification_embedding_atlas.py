@@ -491,11 +491,27 @@ def test_review_queue_first_read_artifacts_and_no_label_overrides(tmp_path):
         'reviewed_anchor_evidence',
         'roi_image_path',
         'roi_path_provenance',
+        'roi_usability',
+        'morphology_assessment',
+        'score_plausibility',
+        'cluster_interpretation',
+        'reviewer_notes',
+        'reviewer_id',
+        'reviewed_at',
     }.issubset(queue.columns)
     assert not list(atlas_root.rglob('*label*override*'))
+    html = (atlas_root / 'evidence' / 'embedding_atlas_review.html').read_text(
+        encoding='utf-8'
+    )
     assert 'descriptive morphology clustering' in (atlas_root / 'INDEX.md').read_text(
         encoding='utf-8'
     )
+    assert 'Export adjudication CSV' in html
+    assert 'roi_usability' in html
+    assert 'morphology_assessment' in html
+    assert 'score_plausibility' in html
+    assert 'cluster_interpretation' in html
+    assert '<select' in html
 
 
 def test_run_config_dispatches_label_free_roi_embedding_atlas(tmp_path):

@@ -1509,6 +1509,13 @@ def _write_evidence_and_review_queue(
                     'roi_image_path': row.get('roi_image_path', ''),
                     'roi_mask_path': row.get('roi_mask_path', ''),
                     'roi_path_provenance': 'roi_image_path;roi_mask_path',
+                    'roi_usability': '',
+                    'morphology_assessment': '',
+                    'score_plausibility': '',
+                    'cluster_interpretation': '',
+                    'reviewer_notes': '',
+                    'reviewer_id': '',
+                    'reviewed_at': '',
                 }
             )
 
@@ -1612,47 +1619,207 @@ def _write_html_review(
 ) -> Path:
     missing_assets = _missing_asset_rows(representatives)
     cluster_rows = diagnostics.get('clusters', [])
-    items = []
-    for row in cluster_rows:
-        items.append(
-            '<tr>'
-            f'<td>{html.escape(str(row.get("feature_space_id", "")))}</td>'
-            f'<td>{html.escape(str(row.get("method_id", "")))}</td>'
-            f'<td>{html.escape(str(row.get("cluster_id", "")))}</td>'
-            f'<td>{row.get("row_count", "")}</td>'
-            f'<td>{row.get("subject_count", "")}</td>'
-            f'<td>{html.escape(str(row.get("interpretation_label", "")))}</td>'
-            f'<td>{html.escape(", ".join(row.get("threshold_blockers", [])))}</td>'
-            '</tr>'
+    nearest_lookup = (
+        nearest.drop_duplicates('atlas_row_id')
+        .set_index('atlas_row_id')
+        .to_dict('index')
+        if not nearest.empty and 'atlas_row_id' in nearest
+        else {}
+    )
+    cases = []
+    for _, row in representatives.head(300).iterrows():
+        atlas_row_id = int(row.get('atlas_row_id', -1))
+        neighbor = nearest_lookup.get(atlas_row_id, {})
+        cases.append(
+            {
+                'review_id': f'atlas-row-{atlas_row_id}',
+                'atlas_row_id': atlas_row_id,
+                'subject_id': str(row.get('subject_id', '')),
+                'subject_image_id': str(row.get('subject_image_id', '')),
+                'glomerulus_id': str(row.get('glomerulus_id', '')),
+                'feature_space_id': str(row.get('feature_space_id', '')),
+                'method_id': str(row.get('method_id', '')),
+                'cluster_id': str(row.get('cluster_id', '')),
+                'original_score': str(row.get('score', '')),
+                'representative_role': str(row.get('representative_role', '')),
+                'distance_to_cluster_centroid': row.get(
+                    'distance_to_cluster_centroid', ''
+                ),
+                'nearest_neighbor_atlas_row_id': neighbor.get(
+                    'neighbor_atlas_row_id', ''
+                ),
+                'nearest_neighbor_distance': neighbor.get('neighbor_distance', ''),
+                'roi_image_path': str(row.get('roi_image_path', '')),
+                'roi_mask_path': str(row.get('roi_mask_path', '')),
+                'roi_image_src': _review_image_src(row.get('roi_image_path', '')),
+                'roi_mask_src': _review_image_src(row.get('roi_mask_path', '')),
+            }
         )
-    rep_rows = []
-    for _, row in representatives.head(200).iterrows():
-        rep_rows.append(
-            '<tr>'
-            f'<td>{html.escape(str(row.get("atlas_row_id", "")))}</td>'
-            f'<td>{html.escape(str(row.get("cluster_id", "")))}</td>'
-            f'<td>{html.escape(str(row.get("score", "")))}</td>'
-            f'<td>{html.escape(str(row.get("roi_image_path", "")))}</td>'
-            f'<td>{html.escape(str(row.get("roi_mask_path", "")))}</td>'
-            '</tr>'
-        )
+    payload = {
+        'claim_boundary': CLAIM_BOUNDARY,
+        'clusters': cluster_rows,
+        'cases': cases,
+        'missing_asset_count': len(missing_assets),
+    }
+    payload_json = html.escape(json.dumps(payload, allow_nan=False), quote=False)
     document = f"""<!doctype html>
 <html>
-<head><meta charset="utf-8"><title>Label-free ROI embedding atlas review</title></head>
+<head>
+<meta charset="utf-8">
+<title>Label-free ROI embedding atlas review</title>
+<style>
+body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; color: #1f2933; background: #f6f7f9; }}
+header {{ position: sticky; top: 0; z-index: 10; background: #ffffff; border-bottom: 1px solid #d8dde6; padding: 14px 20px; }}
+h1 {{ margin: 0 0 6px; font-size: 22px; }}
+h2 {{ margin: 28px 0 10px; font-size: 18px; }}
+.claim {{ margin: 0; max-width: 1100px; color: #52606d; }}
+.toolbar {{ display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }}
+button {{ border: 1px solid #9fb3c8; background: #ffffff; border-radius: 6px; padding: 7px 10px; cursor: pointer; }}
+button.primary {{ background: #1f5eff; border-color: #1f5eff; color: white; }}
+main {{ padding: 18px 20px 40px; }}
+table {{ border-collapse: collapse; width: 100%; background: #ffffff; }}
+th, td {{ border: 1px solid #d8dde6; padding: 6px 8px; text-align: left; font-size: 13px; vertical-align: top; }}
+th {{ background: #eef2f7; }}
+.cluster-block {{ margin-top: 22px; }}
+.case-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 14px; }}
+.case-card {{ background: #ffffff; border: 1px solid #d8dde6; border-radius: 8px; overflow: hidden; }}
+.case-head {{ padding: 10px 12px; background: #eef2f7; display: flex; justify-content: space-between; gap: 10px; }}
+.case-meta {{ font-size: 12px; color: #52606d; line-height: 1.45; }}
+.image-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px; }}
+figure {{ margin: 0; }}
+figcaption {{ font-size: 12px; color: #52606d; margin-bottom: 4px; }}
+img {{ width: 100%; max-height: 260px; object-fit: contain; background: #111827; border-radius: 4px; }}
+.controls {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 10px; border-top: 1px solid #e4e7eb; }}
+label {{ display: grid; gap: 3px; font-size: 12px; color: #334e68; }}
+select, input, textarea {{ width: 100%; box-sizing: border-box; border: 1px solid #bcccdc; border-radius: 5px; padding: 6px; font: inherit; background: #ffffff; }}
+textarea {{ grid-column: 1 / -1; min-height: 58px; resize: vertical; }}
+.path {{ grid-column: 1 / -1; font-size: 11px; color: #627d98; overflow-wrap: anywhere; }}
+.status {{ color: #52606d; font-size: 13px; }}
+</style>
+</head>
 <body>
+<header>
 <h1>Label-free ROI embedding atlas review</h1>
-<p>{html.escape(CLAIM_BOUNDARY)}</p>
+<p class="claim">{html.escape(CLAIM_BOUNDARY)}</p>
+<div class="toolbar">
+<button class="primary" id="downloadCsv" type="button">Export adjudication CSV</button>
+<button id="clearSaved" type="button">Clear saved form values</button>
+<span class="status" id="saveStatus">Form autosaves in this browser.</span>
+</div>
+</header>
+<main>
+<section>
 <h2>Cluster summaries</h2>
-<table border="1" cellspacing="0" cellpadding="4">
-<thead><tr><th>Feature space</th><th>Method</th><th>Cluster</th><th>Rows</th><th>Subjects</th><th>Interpretation</th><th>Blocks</th></tr></thead>
-<tbody>{''.join(items)}</tbody>
+<table id="clusterTable">
+<thead><tr><th>Feature space</th><th>Method</th><th>Cluster</th><th>Rows</th><th>Subjects</th><th>Interpretation</th><th>Blocks</th><th>Max source fraction</th><th>Artifact fraction</th></tr></thead>
+<tbody></tbody>
 </table>
-<h2>Representative ROI rows</h2>
-<p>Missing asset rows: {len(missing_assets)}</p>
-<table border="1" cellspacing="0" cellpadding="4">
-<thead><tr><th>Atlas row</th><th>Cluster</th><th>Original score</th><th>ROI image path</th><th>ROI mask path</th></tr></thead>
-<tbody>{''.join(rep_rows)}</tbody>
-</table>
+</section>
+<section>
+<h2>Adjudication cases</h2>
+<p class="status">Missing asset rows: {len(missing_assets)}. Review each ROI/mask pair, set the dropdowns, add notes where useful, then export CSV.</p>
+<div id="cases"></div>
+</section>
+</main>
+<script id="atlas-data" type="application/json">{payload_json}</script>
+<script>
+const data = JSON.parse(document.getElementById('atlas-data').textContent);
+const storageKey = 'eq.embedding_atlas_review.' + location.pathname;
+const saved = JSON.parse(localStorage.getItem(storageKey) || '{{}}');
+const fields = {{
+  roi_usability: ['','usable','bad_crop','bad_mask','tissue_or_image_artifact','unclear'],
+  morphology_assessment: ['','mostly_open_lumina','collapsed_or_closed_capillaries','endotheliosis_like_swelling','rbc_heavy','poor_tissue_quality_or_artifact','not_enough_information'],
+  score_plausibility: ['','too_low','plausible','too_high','cannot_judge'],
+  cluster_interpretation: ['','real_morphology_cluster','source_or_batch_artifact','roi_or_mask_artifact','mixed_or_uninterpretable'],
+}};
+function esc(value) {{
+  return String(value ?? '').replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
+}}
+function optionHtml(value, current) {{
+  return `<option value="${{esc(value)}}" ${{value === current ? 'selected' : ''}}>${{esc(value || 'choose')}}</option>`;
+}}
+function rowState(id) {{
+  return saved[id] || {{}};
+}}
+function persist(id, key, value) {{
+  saved[id] = {{...(saved[id] || {{}}), [key]: value}};
+  localStorage.setItem(storageKey, JSON.stringify(saved));
+  document.getElementById('saveStatus').textContent = 'Saved locally at ' + new Date().toLocaleTimeString();
+}}
+function renderClusters() {{
+  const tbody = document.querySelector('#clusterTable tbody');
+  tbody.innerHTML = data.clusters.map(row => `<tr>
+    <td>${{esc(row.feature_space_id)}}</td><td>${{esc(row.method_id)}}</td><td>${{esc(row.cluster_id)}}</td>
+    <td>${{esc(row.row_count)}}</td><td>${{esc(row.subject_count)}}</td><td>${{esc(row.interpretation_label)}}</td>
+    <td>${{esc((row.threshold_blockers || []).join('; '))}}</td><td>${{esc(row.max_source_fraction)}}</td><td>${{esc(row.artifact_fraction)}}</td>
+  </tr>`).join('');
+}}
+function renderCases() {{
+  const byCluster = new Map();
+  for (const item of data.cases) {{
+    const key = `${{item.feature_space_id}} / ${{item.method_id}} / cluster ${{item.cluster_id}}`;
+    if (!byCluster.has(key)) byCluster.set(key, []);
+    byCluster.get(key).push(item);
+  }}
+  const root = document.getElementById('cases');
+  root.innerHTML = '';
+  for (const [cluster, rows] of byCluster.entries()) {{
+    const section = document.createElement('section');
+    section.className = 'cluster-block';
+    section.innerHTML = `<h2>${{esc(cluster)}}</h2><div class="case-grid"></div>`;
+    const grid = section.querySelector('.case-grid');
+    for (const item of rows) {{
+      const state = rowState(item.review_id);
+      const card = document.createElement('article');
+      card.className = 'case-card';
+      card.innerHTML = `
+        <div class="case-head">
+          <strong>Atlas row ${{esc(item.atlas_row_id)}} | score ${{esc(item.original_score)}}</strong>
+          <span class="case-meta">subject ${{esc(item.subject_id)}}<br>nearest row ${{esc(item.nearest_neighbor_atlas_row_id)}}</span>
+        </div>
+        <div class="image-row">
+          <figure><figcaption>ROI image</figcaption><img src="${{esc(item.roi_image_src)}}" alt="ROI image for atlas row ${{esc(item.atlas_row_id)}}"></figure>
+          <figure><figcaption>ROI mask</figcaption><img src="${{esc(item.roi_mask_src)}}" alt="ROI mask for atlas row ${{esc(item.atlas_row_id)}}"></figure>
+        </div>
+        <div class="controls">
+          ${{Object.entries(fields).map(([key, options]) => `<label>${{key.replaceAll('_',' ')}}<select data-review-id="${{esc(item.review_id)}}" data-key="${{key}}">${{options.map(value => optionHtml(value, state[key] || '')).join('')}}</select></label>`).join('')}}
+          <label>reviewer id<input data-review-id="${{esc(item.review_id)}}" data-key="reviewer_id" value="${{esc(state.reviewer_id || '')}}"></label>
+          <label>review notes<textarea data-review-id="${{esc(item.review_id)}}" data-key="reviewer_notes">${{esc(state.reviewer_notes || '')}}</textarea></label>
+          <div class="path">Image: ${{esc(item.roi_image_path)}}<br>Mask: ${{esc(item.roi_mask_path)}}</div>
+        </div>`;
+      grid.appendChild(card);
+    }}
+    root.appendChild(section);
+  }}
+  document.querySelectorAll('select,input,textarea').forEach(element => {{
+    element.addEventListener('change', event => persist(event.target.dataset.reviewId, event.target.dataset.key, event.target.value));
+    element.addEventListener('input', event => persist(event.target.dataset.reviewId, event.target.dataset.key, event.target.value));
+  }});
+}}
+function exportCsv() {{
+  const columns = ['review_id','atlas_row_id','subject_id','subject_image_id','glomerulus_id','feature_space_id','method_id','cluster_id','original_score','nearest_neighbor_atlas_row_id','roi_usability','morphology_assessment','score_plausibility','cluster_interpretation','reviewer_notes','reviewer_id','reviewed_at','roi_image_path','roi_mask_path'];
+  const rows = data.cases.map(item => {{
+    const state = rowState(item.review_id);
+    return {{...item, ...state, reviewed_at: state.reviewed_at || new Date().toISOString()}};
+  }});
+  const csv = [columns.join(',')].concat(rows.map(row => columns.map(col => `"${{String(row[col] ?? '').replaceAll('"','""')}}"`).join(','))).join('\\n');
+  const blob = new Blob([csv], {{type: 'text/csv'}});
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'atlas_adjudication_review_export.csv';
+  link.click();
+  URL.revokeObjectURL(link.href);
+}}
+document.getElementById('downloadCsv').addEventListener('click', exportCsv);
+document.getElementById('clearSaved').addEventListener('click', () => {{
+  if (confirm('Clear all locally saved adjudication values for this review page?')) {{
+    localStorage.removeItem(storageKey);
+    location.reload();
+  }}
+}});
+renderClusters();
+renderCases();
+</script>
 </body>
 </html>
 """
@@ -1663,6 +1830,16 @@ def _write_html_review(
         atlas_paths.evidence / 'missing_assets.json',
     )
     return path
+
+
+def _review_image_src(value: Any) -> str:
+    text = str(value or '')
+    if not text:
+        return ''
+    path = Path(text)
+    if path.exists():
+        return path.as_uri()
+    return text
 
 
 def _missing_asset_rows(frame: pd.DataFrame) -> list[dict[str, Any]]:
