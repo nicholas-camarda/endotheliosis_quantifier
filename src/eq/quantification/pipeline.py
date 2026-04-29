@@ -78,11 +78,41 @@ class ContractPreparationError(RuntimeError):
     """Raised when the raw project contract is not ready for quantification."""
 
 
+ROI_GEOMETRY_CONTRACT_VERSION = 'image_level_union_roi_geometry_v1'
+ROI_THRESHOLD_POLICY = 'mask_connected_components_min_area_fail_closed_v1'
+EMBEDDING_PREPROCESSING_VERSION = 'imagenet_normalized_fastai_v1'
+EMBEDDING_REPRESENTATION = 'frozen_segmentation_encoder'
+
+
 def _save_json(data: Dict[str, Any], output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open('w', encoding='utf-8') as handle:
         json.dump(data, handle, indent=2)
     return output_path
+
+
+def _roi_feature_lineage_json() -> str:
+    return json.dumps(
+        {
+            'roi_area': 'roi_qc_measurement',
+            'roi_fill_fraction': 'roi_qc_measurement',
+            'roi_mean_intensity': 'roi_qc_measurement',
+            'roi_openness_score': 'roi_qc_measurement',
+            'roi_component_count': 'roi_qc_measurement',
+            'roi_union_bbox_width': 'roi_qc_measurement',
+            'roi_union_bbox_height': 'roi_qc_measurement',
+            'roi_largest_component_area_fraction': 'roi_qc_measurement',
+        },
+        sort_keys=True,
+    )
+
+
+def _embedding_feature_lineage_json(
+    embedding_columns: list[str], roi_columns: list[str]
+) -> str:
+    lineage = {column: 'frozen_encoder_embedding' for column in embedding_columns}
+    lineage.update({column: 'roi_qc_measurement' for column in roi_columns})
+    return json.dumps(lineage, sort_keys=True)
 
 
 def _apply_score_label_overrides(
@@ -1003,6 +1033,13 @@ def extract_image_level_roi_crops(
     result['roi_union_bbox_width'] = np.nan
     result['roi_union_bbox_height'] = np.nan
     result['roi_largest_component_area_fraction'] = np.nan
+    result['roi_geometry_contract_version'] = ROI_GEOMETRY_CONTRACT_VERSION
+    result['roi_preprocessing_version'] = (
+        f'image_level_union_roi_padding_{padding}_min_area_{min_component_area}'
+    )
+    result['roi_threshold_policy'] = ROI_THRESHOLD_POLICY
+    result['artifact_provenance_id'] = ROI_GEOMETRY_CONTRACT_VERSION
+    result['feature_lineage_json'] = _roi_feature_lineage_json()
 
     for index, scored_row in result.iterrows():
         if str(scored_row.get('join_status', '')) != 'ok':
@@ -1138,6 +1175,30 @@ def extract_embedding_table(
     embedding_columns = [
         f'embedding_{index:04d}' for index in range(embedding_matrix.shape[1])
     ]
+    roi_lineage_columns = [
+        column
+        for column in [
+            'roi_area',
+            'roi_fill_fraction',
+            'roi_mean_intensity',
+            'roi_openness_score',
+            'roi_component_count',
+            'roi_union_bbox_width',
+            'roi_union_bbox_height',
+            'roi_largest_component_area_fraction',
+        ]
+        if column in valid_rows.columns
+    ]
+    valid_rows['embedding_model_id'] = Path(segmentation_model_path).stem
+    valid_rows['embedding_preprocessing_version'] = EMBEDDING_PREPROCESSING_VERSION
+    valid_rows['artifact_provenance_id'] = (
+        valid_rows['artifact_provenance_id'].astype(str)
+        + '|'
+        + Path(segmentation_model_path).stem
+    )
+    valid_rows['feature_lineage_json'] = _embedding_feature_lineage_json(
+        embedding_columns, roi_lineage_columns
+    )
     embedding_df = pd.concat(
         [
             valid_rows.reset_index(drop=True),
@@ -1154,8 +1215,9 @@ def extract_embedding_table(
             'expected_size': int(expected_size),
             'embedding_dim': int(embedding_matrix.shape[1]),
             'pooling': 'adaptive_avg_pool2d_1x1',
-            'representation': 'frozen_segmentation_encoder',
+            'representation': EMBEDDING_REPRESENTATION,
             'preprocessing': 'imagenet_normalized_fastai',
+            'embedding_preprocessing_version': EMBEDDING_PREPROCESSING_VERSION,
         },
         output_dir / 'embedding_metadata.json',
     )

@@ -244,6 +244,11 @@ def test_build_image_level_scored_table_and_extract_rois(tmp_path: Path):
     assert roi_table.loc[0, 'roi_bbox_x1'] == 95
     assert roi_table.loc[0, 'roi_bbox_y1'] == 95
     assert 0.4 < roi_table.loc[0, 'roi_largest_component_area_fraction'] < 0.6
+    assert roi_table.loc[0, 'roi_geometry_contract_version']
+    assert roi_table.loc[0, 'roi_preprocessing_version']
+    assert roi_table.loc[0, 'roi_threshold_policy']
+    assert roi_table.loc[0, 'artifact_provenance_id']
+    assert 'roi_area' in roi_table.loc[0, 'feature_lineage_json']
     assert Path(str(roi_table.loc[0, 'roi_image_path'])).exists()
 
 
@@ -318,6 +323,17 @@ def test_extract_embedding_table_records_imagenet_preprocessing(
             'subject_image_id': ['case_1'],
             'roi_status': ['ok'],
             'roi_image_path': [str(image_path)],
+            'roi_area': [64],
+            'roi_fill_fraction': [1.0],
+            'roi_geometry_contract_version': ['image_level_union_roi_geometry_v1'],
+            'roi_preprocessing_version': [
+                'image_level_union_roi_padding_32_min_area_64'
+            ],
+            'roi_threshold_policy': [
+                'mask_connected_components_min_area_fail_closed_v1'
+            ],
+            'artifact_provenance_id': ['image_level_union_roi_geometry_v1'],
+            'feature_lineage_json': ['{}'],
         }
     )
     monkeypatch.setattr(
@@ -330,8 +346,14 @@ def test_extract_embedding_table_records_imagenet_preprocessing(
         roi_table, tmp_path / 'model.pkl', tmp_path / 'embeddings', expected_size=8
     )
 
-    metadata = json.loads((tmp_path / 'embeddings' / 'embedding_metadata.json').read_text())
+    metadata = json.loads(
+        (tmp_path / 'embeddings' / 'embedding_metadata.json').read_text()
+    )
     assert metadata['preprocessing'] == 'imagenet_normalized_fastai'
+    embedding_table = pd.read_csv(tmp_path / 'embeddings' / 'roi_embeddings.csv')
+    assert embedding_table.loc[0, 'embedding_model_id'] == 'model'
+    assert embedding_table.loc[0, 'embedding_preprocessing_version']
+    assert 'embedding_0000' in embedding_table.loc[0, 'feature_lineage_json']
 
 
 def test_manifest_scored_examples_use_all_admitted_mask_paired_rows(tmp_path: Path):
