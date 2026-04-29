@@ -24,8 +24,13 @@ from eq.utils.logger import get_logger
 logger = get_logger("eq.run_io")
 
 
+def _required_artifact_failure(path: Path, exc: BaseException) -> RuntimeError:
+    return RuntimeError(f"Required training artifact could not be written: {path}. Error: {exc}")
+
+
 def save_splits(output_dir: Path, model_folder_name: str, data_info: Dict[str, Any]) -> None:
     """Save data splits manifest with prefixed filename."""
+    splits_file = output_dir / f"{model_folder_name}_splits.json"
     try:
         train_images = [str(p) for p in data_info.get("train_images", data_info.get("train_items", []))]
         valid_images = [str(p) for p in data_info.get("valid_images", data_info.get("valid_items", []))]
@@ -48,13 +53,12 @@ def save_splits(output_dir: Path, model_folder_name: str, data_info: Dict[str, A
                 continue
             split_manifest.setdefault(key, value)
         
-        splits_file = output_dir / f"{model_folder_name}_splits.json"
         split_manifest = {k: v for k, v in split_manifest.items() if v is not None}
         with open(splits_file, 'w') as f:
             json.dump(split_manifest, f, indent=2)
         logger.info(f"Wrote split manifest to {splits_file}")
     except Exception as e:
-        logger.warning(f"Could not write split manifest: {e}")
+        raise _required_artifact_failure(splits_file, e) from e
 
 
 def attach_best_model_callback(model_folder_name: str, monitor: str = 'valid_loss', comp: Optional[Callable] = None) -> SaveModelCallback:
@@ -76,6 +80,12 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
     """Save all training plots with prefixed filenames."""
     import matplotlib.pyplot as plt
     import numpy as np
+
+    training_loss_path = output_dir / f"{model_folder_name}_training_loss.png"
+    lr_schedule_path = output_dir / f"{model_folder_name}_lr_schedule.png"
+    metrics_path = output_dir / f"{model_folder_name}_metrics.png"
+    validation_panel_path = output_dir / f"{model_folder_name}_validation_predictions.png"
+    trace_path = output_dir / f"{model_folder_name}_validation_prediction_trace.csv"
 
     # Ensure matplotlib is available for subsequent plots
     try:
@@ -101,11 +111,11 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
             # Fallback to fastai helper (still on a fresh figure)
             plt.figure(figsize=(10, 6))
             learn.recorder.plot_loss()
-        plt.savefig(output_dir / f"{model_folder_name}_training_loss.png", dpi=150, bbox_inches='tight')
+        plt.savefig(training_loss_path, dpi=150, bbox_inches='tight')
         plt.close()
-        logger.info(f"Training loss plot saved to: {output_dir / f'{model_folder_name}_training_loss.png'}")
+        logger.info(f"Training loss plot saved to: {training_loss_path}")
     except Exception as e:
-        logger.warning(f"Could not save training loss plot: {e}")
+        logger.warning(f"Could not save optional training loss plot {training_loss_path}: {e}")
     
     # Learning rate schedule plot
     try:
@@ -116,13 +126,13 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
             plt.xlabel('Batch')
             plt.ylabel('Learning Rate')
             plt.grid(True)
-            plt.savefig(output_dir / f"{model_folder_name}_lr_schedule.png", dpi=150, bbox_inches='tight')
+            plt.savefig(lr_schedule_path, dpi=150, bbox_inches='tight')
             plt.close()
-            logger.info(f"Learning rate plot saved to: {output_dir / f'{model_folder_name}_lr_schedule.png'}")
+            logger.info(f"Learning rate plot saved to: {lr_schedule_path}")
         else:
             logger.info("Learning rate data not available for plotting")
     except Exception as e:
-        logger.warning(f"Could not save learning rate plot: {e}")
+        logger.warning(f"Could not save optional learning rate plot {lr_schedule_path}: {e}")
     
     # Training metrics plot
     try:
@@ -156,13 +166,13 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
                 plt.grid(True)
             
             plt.tight_layout()
-            plt.savefig(output_dir / f"{model_folder_name}_metrics.png", dpi=150, bbox_inches='tight')
+            plt.savefig(metrics_path, dpi=150, bbox_inches='tight')
             plt.close()
-            logger.info(f"Training metrics plot saved to: {output_dir / f'{model_folder_name}_metrics.png'}")
+            logger.info(f"Training metrics plot saved to: {metrics_path}")
         else:
             logger.info("Metrics data not available for plotting")
     except Exception as e:
-        logger.warning(f"Could not save metrics plot: {e}")
+        logger.warning(f"Could not save optional metrics plot {metrics_path}: {e}")
 
     # Validation predictions plot
     try:
@@ -192,7 +202,6 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
         
         # Always decode to display-ready space; never assume channels
         validation_trace_rows: list[Dict[str, Any]] = []
-        validation_panel_path = output_dir / f"{model_folder_name}_validation_predictions.png"
         artifact_path = output_dir / f"{model_folder_name}.pkl"
         trace_context = getattr(learn, "eq_validation_trace_context", {}) or {}
         trace_family = str(trace_context.get("candidate_family") or trace_context.get("stage") or "unknown")
@@ -465,22 +474,20 @@ def save_plots(learn: Learner, output_dir: Path, model_folder_name: str) -> None
             try:
                 from eq.training.segmentation_validation_audit import write_csv_rows
 
-                trace_path = output_dir / f"{model_folder_name}_validation_prediction_trace.csv"
                 write_csv_rows(validation_trace_rows, trace_path)
                 logger.info(f"Validation prediction trace saved to: {trace_path}")
             except Exception as _e:
-                logger.warning(f"Could not write validation prediction trace: {_e}")
+                logger.warning(f"Could not write optional validation prediction trace {trace_path}: {_e}")
         logger.info(f"Validation predictions saved to: {validation_panel_path}")
     except Exception as e:
-        logger.warning(f"Could not save validation predictions: {e}")
+        logger.warning(f"Could not save optional validation predictions plot {validation_panel_path}: {e}")
 
 
 def save_training_history(learn: Learner, output_dir: Path, model_folder_name: str, 
                          hyperparams: Dict[str, Any]) -> None:
     """Save training history as TSV with prefixed filename."""
+    history_file = output_dir / f"{model_folder_name}_training_history.tsv"
     try:
-        history_file = output_dir / f"{model_folder_name}_training_history.tsv"
-        
         with open(history_file, 'w', newline='') as f:
             writer = csv.writer(f, delimiter='\t')
             
@@ -567,7 +574,7 @@ def save_training_history(learn: Learner, output_dir: Path, model_folder_name: s
         
         logger.info(f"Training history saved to: {history_file}")
     except Exception as e:
-        logger.warning(f"Could not save training history: {e}")
+        raise _required_artifact_failure(history_file, e) from e
 
 
 def _package_version(package_name: str) -> Optional[str]:
@@ -639,26 +646,30 @@ def save_run_metadata(
     metadata = _build_run_metadata(config_path, extra_metadata)
     metadata_file = output_dir / f"{model_folder_name}_run_metadata.txt"
 
-    with open(metadata_file, 'w') as f:
-        f.write(f"Run generated at: {metadata['generated_at']}\n")
-        f.write(f"Command: {metadata['command']}\n")
-        f.write(f"Training mode: {metadata.get('training_mode', 'unknown')}\n")
-        f.write(f"Data root: {metadata.get('data_root', 'unknown')}\n")
-        f.write(f"Python version: {metadata['python']['version']}\n")
-        f.write(f"PyTorch version: {metadata['package_versions']['torch']}\n")
-        f.write(f"Torchvision version: {metadata['package_versions'].get('torchvision') or 'Not available'}\n")
-        f.write(f"FastAI version: {metadata['package_versions'].get('fastai') or 'Not available'}\n")
-        f.write(f"NumPy version: {metadata['package_versions'].get('numpy') or 'Not available'}\n")
-        f.write(f"Git commit: {metadata['code'].get('commit') or 'unknown'}\n")
-        f.write(f"Git dirty: {metadata['code'].get('dirty')}\n")
-        if config_path:
-            f.write(f"Config file: {config_path}\n")
-        if "model_path" in metadata:
-            f.write(f"Model path: {metadata['model_path']}\n")
-
     metadata_json_file = output_dir / f"{model_folder_name}_run_metadata.json"
-    with open(metadata_json_file, "w") as f:
-        json.dump(metadata, f, indent=2, sort_keys=True)
+    try:
+        with open(metadata_file, 'w') as f:
+            f.write(f"Run generated at: {metadata['generated_at']}\n")
+            f.write(f"Command: {metadata['command']}\n")
+            f.write(f"Training mode: {metadata.get('training_mode', 'unknown')}\n")
+            f.write(f"Data root: {metadata.get('data_root', 'unknown')}\n")
+            f.write(f"Python version: {metadata['python']['version']}\n")
+            f.write(f"PyTorch version: {metadata['package_versions']['torch']}\n")
+            f.write(f"Torchvision version: {metadata['package_versions'].get('torchvision') or 'Not available'}\n")
+            f.write(f"FastAI version: {metadata['package_versions'].get('fastai') or 'Not available'}\n")
+            f.write(f"NumPy version: {metadata['package_versions'].get('numpy') or 'Not available'}\n")
+            f.write(f"Git commit: {metadata['code'].get('commit') or 'unknown'}\n")
+            f.write(f"Git dirty: {metadata['code'].get('dirty')}\n")
+            if config_path:
+                f.write(f"Config file: {config_path}\n")
+            if "model_path" in metadata:
+                f.write(f"Model path: {metadata['model_path']}\n")
+
+        with open(metadata_json_file, "w") as f:
+            json.dump(metadata, f, indent=2, sort_keys=True)
+    except Exception as e:
+        failed_path = metadata_json_file if metadata_file.exists() else metadata_file
+        raise _required_artifact_failure(failed_path, e) from e
 
     if not metadata_json_file.exists():
         raise RuntimeError(f"Required run metadata was not written: {metadata_json_file}")
@@ -670,7 +681,10 @@ def save_run_metadata(
     if config_path and Path(config_path).exists():
         config_file = output_dir / f"{model_folder_name}_config.yaml"
         import shutil
-        shutil.copy2(config_path, config_file)
+        try:
+            shutil.copy2(config_path, config_file)
+        except Exception as e:
+            raise _required_artifact_failure(config_file, e) from e
         logger.info(f"Config file copied to: {config_file}")
 
 
@@ -704,7 +718,12 @@ def load_supported_segmentation_artifact_metadata(model_path: Union[str, Path]) 
 def export_final_model(learn: Learner, output_dir: Path, model_folder_name: str) -> Path:
     """Export final model with prefixed filename and return the path."""
     export_fname = f"{model_folder_name}.pkl"
-    learn.export(export_fname)
     model_path = output_dir / export_fname
+    try:
+        learn.export(model_path)
+    except Exception as e:
+        raise _required_artifact_failure(model_path, e) from e
+    if not model_path.exists():
+        raise RuntimeError(f"Required training artifact was not written: {model_path}")
     logger.info(f"Model saved to: {model_path}")
     return model_path

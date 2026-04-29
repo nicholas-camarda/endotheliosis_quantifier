@@ -13,8 +13,11 @@ from typing import Any, Iterable
 import numpy as np
 from PIL import Image
 
-from eq.data_management.datablock_loader import get_items_full_images
-from eq.data_management.standard_getters import get_y_full
+from eq.data_management.datablock_loader import (
+    get_items_full_images,
+    training_item_image_path,
+    training_item_mask_path,
+)
 
 MASK_DERIVED_LABEL = "mask_derived_background"
 CURATED_NEGATIVE_LABEL = "negative_glomerulus"
@@ -236,9 +239,9 @@ def generate_mask_derived_background_manifest(
     rejected_overlap = 0
     rejected_geometry = 0
     reviewed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    for image_index, image_path in enumerate(get_items_full_images(Path(data_root).expanduser())):
-        image_path = Path(image_path).expanduser()
-        mask_path = get_y_full(image_path)
+    for image_index, item in enumerate(get_items_full_images(Path(data_root).expanduser())):
+        image_path = training_item_image_path(item)
+        mask_path = training_item_mask_path(item)
         with Image.open(image_path) as image:
             width, height = image.size
         accepted_for_image = 0

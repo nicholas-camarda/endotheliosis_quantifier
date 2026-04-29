@@ -17,6 +17,8 @@ from eq.data_management.datablock_loader import (
     augmentation_policy_for_variant,
     build_segmentation_dls_dynamic_patching,
     get_items_full_images,
+    training_item_image_path,
+    training_item_mask_path,
     validate_supported_segmentation_training_root,
 )
 from eq.data_management.standard_getters import get_y_full
@@ -179,7 +181,8 @@ def test_cohort_training_root_uses_manifest_admitted_rows_only(tmp_path: Path):
 
     items = get_items_full_images(cohort_root)
 
-    assert items == [image_dir / "approved.jpg"]
+    assert [training_item_image_path(item) for item in items] == [image_dir / "approved.jpg"]
+    assert [training_item_mask_path(item) for item in items] == [mask_dir / "approved_mask.png"]
 
 
 def test_cohort_registry_training_root_uses_all_admitted_masked_rows(tmp_path: Path):
@@ -223,9 +226,40 @@ def test_cohort_registry_training_root_uses_all_admitted_masked_rows(tmp_path: P
     items = get_items_full_images(cohorts_root)
 
     assert items == [
-        cohorts_root / "lauren_preeclampsia/images/lauren.jpg",
-        cohorts_root / "vegfri_dox/images/dox.jpg",
+        {
+            "__eq_manifest_pair_record__": True,
+            "source_image_path": str(cohorts_root / "lauren_preeclampsia/images/lauren.jpg"),
+            "source_mask_path": str(cohorts_root / "lauren_preeclampsia/masks/lauren_mask.png"),
+        },
+        {
+            "__eq_manifest_pair_record__": True,
+            "source_image_path": str(cohorts_root / "vegfri_dox/images/dox.jpg"),
+            "source_mask_path": str(cohorts_root / "vegfri_dox/masks/dox_mask.png"),
+        },
     ]
+
+
+def test_manifest_backed_root_fails_when_explicit_mask_path_is_missing(tmp_path: Path):
+    runtime_root = tmp_path / "runtime"
+    cohorts_root = runtime_root / "raw_data" / "cohorts"
+    image_dir = cohorts_root / "vegfri_dox" / "images"
+    image_dir.mkdir(parents=True)
+    image_path = image_dir / "approved.jpg"
+    Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(image_path)
+    pd.DataFrame(
+        [
+            {
+                "cohort_id": "vegfri_dox",
+                "lane_assignment": "manual_mask_external",
+                "admission_status": "admitted",
+                "image_path": "raw_data/cohorts/vegfri_dox/images/approved.jpg",
+                "mask_path": "raw_data/cohorts/vegfri_dox/masks/approved_mask.png",
+            }
+        ]
+    ).to_csv(cohorts_root / "manifest.csv", index=False)
+
+    with pytest.raises(FileNotFoundError, match="missing explicit image/mask path"):
+        get_items_full_images(cohorts_root)
 
 
 def test_dynamic_dls_fails_clearly_when_no_valid_pairs_exist(tmp_path: Path):

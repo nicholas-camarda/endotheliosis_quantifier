@@ -13,6 +13,8 @@ ACTIVE_DOCS = (
     'docs/TECHNICAL_LAB_NOTEBOOK.md',
 )
 
+ACTIVE_SOURCE_ROOT = REPO_ROOT / 'src' / 'eq'
+
 BLOCKED_ACTIVE_PHRASES = (
     'eq.inference.historical_glomeruli_inference',
     'HistoricalGlomeruliInference',
@@ -35,6 +37,30 @@ def test_active_docs_do_not_contain_historical_fallback_operations():
         for phrase in BLOCKED_ACTIVE_PHRASES:
             if phrase.lower() in lowered:
                 violations.append(f'{relative_path}: {phrase}')
+
+    assert violations == []
+
+
+def test_active_source_does_not_reintroduce_fastai_shims_or_rescue_paths():
+    blocked_patterns = (
+        'from fastai.vision.all import *',
+        'from fastai.callback.all import *',
+        'torch.load(model_path',
+        'sys.modules',
+        'legacy namespace',
+        'compatibility rescue',
+        'historical_glomeruli_inference',
+        'setup_historical_environment',
+        'workaround',
+    )
+    violations = []
+    for path in sorted(ACTIVE_SOURCE_ROOT.rglob('*.py')):
+        text = path.read_text(encoding='utf-8')
+        lowered = text.lower()
+        for pattern in blocked_patterns:
+            if pattern.lower() in lowered:
+                relative_path = path.relative_to(REPO_ROOT)
+                violations.append(f'{relative_path}: {pattern}')
 
     assert violations == []
 

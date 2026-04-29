@@ -23,6 +23,8 @@ from PIL import Image, ImageDraw, ImageFont
 from eq.core.constants import DEFAULT_VAL_RATIO
 from eq.data_management.datablock_loader import (
     get_items_full_images,
+    training_item_image_path,
+    training_item_mask_path,
     validate_supported_segmentation_training_root,
 )
 from eq.data_management.model_loading import load_model_safely
@@ -1411,7 +1413,7 @@ def _subject_id_from_image_path(image_path: Path) -> str:
 
 def _write_shared_training_split(data_root: Path, output_root: Path, *, seed: int) -> Path:
     """Persist the one train/validation split used by fresh comparison candidates."""
-    image_paths = [str(Path(path).expanduser()) for path in get_items_full_images(data_root)]
+    image_paths = [str(training_item_image_path(item)) for item in get_items_full_images(data_root)]
     if len(image_paths) < 2:
         raise ValueError("Candidate comparison requires at least two image/mask pairs for an explicit split.")
     subject_to_images: dict[str, list[str]] = defaultdict(list)
@@ -2361,8 +2363,8 @@ def _write_html_report(
 def _validation_mask_paths(data_root: Path) -> List[Path]:
     image_paths = get_items_full_images(data_root)
     mask_paths: List[Path] = []
-    for image_path in image_paths:
-        mask_paths.append(get_y_full(image_path))
+    for item in image_paths:
+        mask_paths.append(training_item_mask_path(item))
     if not mask_paths:
         raise ValueError(
             f"No validation masks found for candidate comparison under {data_root}. "

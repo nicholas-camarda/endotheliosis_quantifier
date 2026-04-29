@@ -172,6 +172,32 @@ def _runtime_root_for_cohort_registry_root(root: Path) -> Path:
     return root.parents[1]
 
 
+def _manifest_pair_record(image_path: Path, mask_path: Path) -> dict[str, Any]:
+    return {
+        "__eq_manifest_pair_record__": True,
+        "source_image_path": str(image_path),
+        "source_mask_path": str(mask_path),
+    }
+
+
+def _is_manifest_pair_record(item: Any) -> bool:
+    return isinstance(item, dict) and item.get("__eq_manifest_pair_record__") is True
+
+
+def training_item_image_path(item: Any) -> Path:
+    if _is_manifest_pair_record(item) or _is_negative_crop_record(item):
+        return Path(item["source_image_path"]).expanduser()
+    return Path(item).expanduser()
+
+
+def training_item_mask_path(item: Any) -> Path:
+    if _is_manifest_pair_record(item):
+        return Path(item["source_mask_path"]).expanduser()
+    from eq.data_management.standard_getters import get_y_full as _get_y_full
+
+    return _get_y_full(item)
+
+
 def _manifest_admitted_cohort_images(root: Path) -> Optional[List[Any]]:
     if _is_raw_data_cohort_registry_root(root):
         manifest_path = root / "manifest.csv"
@@ -198,11 +224,23 @@ def _manifest_admitted_cohort_images(root: Path) -> Optional[List[Any]]:
     ].copy()
     if cohort_name is not None:
         cohort_rows = cohort_rows[cohort_rows["cohort_id"].astype(str) == cohort_name]
-    return [
-        runtime_root / image_path
-        for image_path in cohort_rows["image_path"].astype(str).tolist()
-        if (runtime_root / image_path).exists()
-    ]
+    items: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for row in cohort_rows.to_dict(orient="records"):
+        image_path = runtime_root / str(row["image_path"])
+        mask_path = runtime_root / str(row["mask_path"])
+        if not image_path.exists():
+            missing.append(str(image_path))
+        if not mask_path.exists():
+            missing.append(str(mask_path))
+        items.append(_manifest_pair_record(image_path, mask_path))
+    if missing:
+        examples = ", ".join(missing[:5])
+        raise FileNotFoundError(
+            f"Manifest-backed training root has {len(missing)} missing explicit image/mask path(s). "
+            f"Examples: {examples}"
+        )
+    return items
 
 
 def validate_supported_segmentation_training_root(data_root: Union[str, Path], *, stage: str = "segmentation") -> Path:
@@ -382,7 +420,6 @@ def get_items_full_images(path: Path) -> List[Any]:
     if not images_dir.exists():
         raise FileNotFoundError(f"images/ directory not found in {path}. Expected: {images_dir}")
     
-    # Get all image files
     all_images = get_image_files(images_dir)
     valid_images = []
     skipped_count = 0
@@ -393,32 +430,10 @@ def get_items_full_images(path: Path) -> List[Any]:
     for img_path in all_images:
         # Use the full-image getter to check if mask exists
         try:
-            # This will raise FileNotFoundError if no mask is found
             from eq.data_management.standard_getters import get_y_full as _get_y_full
-            _get_y_full(img_path)  # Just check if it exists, don't load it yet
+            _get_y_full(img_path)
             valid_images.append(img_path)
         except Exception:
-            # Fallback: try the most common expected path directly to be extra tolerant
-            try:
-                img_path = Path(img_path)
-                data_root = img_path.parent.parent  # .../images/<rel> → data_root
-                rel = img_path.parent.relative_to(data_root / "images") if (data_root / "images").exists() else Path("")
-                stem = img_path.stem
-                # Prefer same extension as image, then png
-                primary_ext = img_path.suffix.lower() or ".jpg"
-                candidates = []
-                masks_root = data_root / "masks"
-                for ext in [primary_ext, ".png", ".jpg", ".jpeg"]:
-                    # masks/<rel>/<stem>_mask<ext>
-                    candidates.append((masks_root / rel / f"{stem}_mask{ext}"))
-                    # masks/<rel>/mask_<stem><ext>
-                    candidates.append((masks_root / rel / f"mask_{stem}{ext}"))
-                hit = next((c for c in candidates if c.exists()), None)
-                if hit is not None:
-                    valid_images.append(img_path)
-                    continue
-            except Exception:
-                pass
             skipped_count += 1
             if len(skipped_samples) < 10:
                 skipped_samples.append(Path(img_path).name)
@@ -456,7 +471,7 @@ def fixed_splitter_from_paths(
         valid_idx: list[int] = []
         unknown: list[str] = []
         for index, item in enumerate(items):
-            key = str(Path(str(item)).expanduser())
+            key = str(training_item_image_path(item))
             if key in train_set:
                 train_idx.append(index)
             elif key in valid_set:
@@ -716,6 +731,8 @@ def _negative_crop_box(record: dict[str, Any]) -> tuple[int, int, int, int]:
 
 
 def _get_x_negative_or_path(item):
+    if _is_manifest_pair_record(item):
+        return Path(item["source_image_path"])
     if not _is_negative_crop_record(item):
         return item
     image = PILImage.create(item["source_image_path"])
@@ -723,6 +740,8 @@ def _get_x_negative_or_path(item):
 
 
 def _get_y_negative_or_full(item):
+    if _is_manifest_pair_record(item):
+        return Path(item["source_mask_path"])
     if not _is_negative_crop_record(item):
         from eq.data_management.standard_getters import get_y_full as _get_y_full
         return _get_y_full(item)

@@ -3,7 +3,7 @@
 Transfer Learning Utilities for FastAI v2
 
 This module provides utilities for transfer learning between segmentation models,
-specifically handling the namespace issues with custom functions.
+using supported current-namespace learner artifacts.
 """
 
 import random
@@ -13,7 +13,6 @@ from typing import Optional, Union
 
 import matplotlib.pyplot as plt
 import torch
-from fastai.vision.all import *
 from fastai.vision.all import (
     Dice,
     JaccardCoeff,
@@ -295,52 +294,9 @@ def load_model_for_transfer_learning(
             logger.info(f"Successfully loaded {len(compatible_weights)} compatible layers (full model)")
         
     except Exception as e:
-        load_errors.append(("full learner", e))
-        logger.warning(f"Could not load full learner: {e}")
-        logger.info("Attempting to load just the model weights...")
-        
-        try:
-            # Method 2: Try to load just the model state dict
-            checkpoint = torch.load(model_path, map_location='cpu')
-            if not isinstance(checkpoint, dict):
-                raise RuntimeError("Checkpoint is not a state dictionary")
-            if 'model' not in checkpoint:
-                raise RuntimeError("Checkpoint does not contain a 'model' state dictionary")
-
-            pretrained_state = checkpoint['model']
-            if load_encoder_only:
-                # Strict encoder-only via submodule state_dicts
-                src_learn = load_learner(model_path)
-                src_enc = _get_encoder_module(src_learn.model)
-                dst_enc = _get_encoder_module(learn.model)
-                if src_enc is None or dst_enc is None:
-                    raise RuntimeError("Could not resolve encoder modules for strict encoder-only loading (checkpoint)")
-                src_sd = src_enc.state_dict()
-                dst_sd = dst_enc.state_dict()
-                copied = 0
-                for k, v in src_sd.items():
-                    if k in dst_sd and dst_sd[k].shape == v.shape:
-                        dst_sd[k] = v
-                        copied += 1
-                if copied == 0:
-                    raise RuntimeError("Checkpoint load copied 0 compatible encoder parameters")
-                dst_enc.load_state_dict(dst_sd)
-                logger.info(f"Strict encoder-only weights loaded from checkpoint: {copied} params")
-            else:
-                current_state = learn.model.state_dict()
-                compatible_weights = {}
-                for key, value in pretrained_state.items():
-                    if key in current_state and current_state[key].shape == value.shape:
-                        compatible_weights[key] = value
-                if len(compatible_weights) == 0:
-                    raise RuntimeError("Checkpoint load copied 0 compatible model parameters")
-                current_state.update(compatible_weights)
-                learn.model.load_state_dict(current_state)
-                logger.info(f"Successfully loaded {len(compatible_weights)} compatible layers from checkpoint (full model)")
-        except Exception as e2:
-            load_errors.append(("checkpoint", e2))
-            logger.error(f"Could not load requested transfer model weights: {e2}")
-            _raise_transfer_base_load_failure(model_path, load_errors)
+        load_errors.append(("current-namespace FastAI learner", e))
+        logger.error(f"Could not load requested transfer learner artifact: {e}")
+        _raise_transfer_base_load_failure(model_path, load_errors)
     
     # Optionally reinitialize decoder to avoid negative transfer from source task
     if reinit_decoder:

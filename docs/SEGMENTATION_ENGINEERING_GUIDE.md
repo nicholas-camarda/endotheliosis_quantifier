@@ -70,6 +70,8 @@ These are throughput/stability starting points, not scientific constants. Overri
 
 FastAI learner exports are executable Python pickle artifacts, not neutral model-weight files. A `.pkl` can depend on the exact project module paths, FastAI objects, NumPy pickle namespaces, and package versions that existed when it was exported.
 
+Current loaders use FastAI `load_learner` only for trusted artifacts exported from this repository's current `src/eq` namespace in the certified environment. A successful load is runtime compatibility evidence, not scientific promotion evidence.
+
 A supported segmentation model artifact requires:
 
 - export from the current `src/eq` namespace

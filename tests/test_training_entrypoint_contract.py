@@ -239,7 +239,13 @@ def test_transfer_learning_refuses_no_base_candidate_when_base_cannot_load(tmp_p
         "load_learner",
         lambda *args, **kwargs: (_ for _ in ()).throw(ModuleNotFoundError("fasttransform")),
     )
-    monkeypatch.setattr(transfer_learning.torch, "load", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        transfer_learning.torch,
+        "load",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("transfer loading must not rescue FastAI learner failures with torch.load")
+        ),
+    )
 
     with pytest.raises(RuntimeError, match="refusing to continue as a no-base scratch candidate"):
         transfer_learning.load_model_for_transfer_learning(
@@ -314,7 +320,9 @@ def test_transfer_learning_refuses_no_base_candidate_when_base_has_no_compatible
     monkeypatch.setattr(
         transfer_learning.torch,
         "load",
-        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("not a checkpoint")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("transfer loading must not rescue incompatible FastAI learners with torch.load")
+        ),
     )
 
     with pytest.raises(RuntimeError, match="copied 0 compatible model parameters"):

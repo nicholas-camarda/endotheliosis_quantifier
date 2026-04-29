@@ -37,7 +37,7 @@ def get_y_full(x):
     Naming patterns tried (preserving subdirectories when present):
       - `<stem>_mask<ext>`
       - `mask_<stem><ext>`
-      - Fallback: glob any file containing both `<stem>` and `mask`.
+      - exact normalized-stem match within the supported mask directory.
 
     Returns a Path or raises FileNotFoundError if no mask is found.
     """
@@ -53,7 +53,7 @@ def get_y_full(x):
             break
         p = p.parent
     if data_root is None:
-        # Fallback to two levels up (Txx -> images -> root) for typical layout
+        # Direct paired roots use the usual Txx -> images -> root layout.
         data_root = img_path.parent.parent.parent
     masks_root = data_root / "masks"
 
@@ -94,7 +94,7 @@ def get_y_full(x):
                 if p.exists():
                     return p
 
-    # Fallback exact normalized-stem search
+    # Exact normalized-stem search inside the supported mask directory.
     for d in cand_dirs:
         if d.exists():
             for candidate in d.iterdir():

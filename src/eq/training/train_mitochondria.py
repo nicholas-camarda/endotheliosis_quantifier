@@ -16,8 +16,6 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from fastai.callback.all import *
-from fastai.vision.all import *
 from fastai.vision.all import Dice, JaccardCoeff, resnet34, unet_learner
 
 from eq.core.constants import (
