@@ -15,8 +15,8 @@ Lab-specific current-state notes live in:
 
 Historical or exploratory materials retained for reference:
 
-- [HISTORICAL_IMPLEMENTATION_ANALYSIS.md](HISTORICAL_IMPLEMENTATION_ANALYSIS.md)
-- [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md)
-- [PIPELINE_INTEGRATION_PLAN.md](PIPELINE_INTEGRATION_PLAN.md)
+- [archive/fastai_historical_implementation_analysis.md](archive/fastai_historical_implementation_analysis.md)
+- [archive/fastai_legacy_integration.md](archive/fastai_legacy_integration.md)
+- [archive/fastai_pipeline_integration_plan.md](archive/fastai_pipeline_integration_plan.md)
 
 These archive documents are intentionally separated from the front-door docs so the current workflow guidance only describes what the repository supports now.
