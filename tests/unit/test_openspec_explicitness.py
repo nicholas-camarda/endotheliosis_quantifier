@@ -5,14 +5,14 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "scripts" / "check_openspec_explicitness.py"
+SCRIPT = REPO_ROOT / 'scripts' / 'check_openspec_explicitness.py'
 
 
 def _write_change(root: Path, *, proposal: str, design: str) -> Path:
-    change_dir = root / "change"
+    change_dir = root / 'change'
     change_dir.mkdir(parents=True, exist_ok=True)
-    (change_dir / "proposal.md").write_text(proposal, encoding="utf-8")
-    (change_dir / "design.md").write_text(design, encoding="utf-8")
+    (change_dir / 'proposal.md').write_text(proposal, encoding='utf-8')
+    (change_dir / 'design.md').write_text(design, encoding='utf-8')
     return change_dir
 
 
@@ -51,7 +51,7 @@ Example.
     )
     result = _run_checker(change_dir)
     assert result.returncode == 0, result.stderr
-    assert "passed" in result.stdout.lower()
+    assert 'passed' in result.stdout.lower()
 
 
 def test_checker_fails_on_blocking_question(tmp_path: Path):
@@ -80,7 +80,7 @@ Example.
     )
     result = _run_checker(change_dir)
     assert result.returncode == 1
-    assert "blocking_open_question" in result.stderr
+    assert 'blocking_open_question' in result.stderr
 
 
 def test_checker_fails_on_untagged_open_question(tmp_path: Path):
@@ -109,7 +109,7 @@ Example.
     )
     result = _run_checker(change_dir)
     assert result.returncode == 1
-    assert "untagged_open_question" in result.stderr
+    assert 'untagged_open_question' in result.stderr
 
 
 def test_checker_fails_on_vague_placeholder(tmp_path: Path):
@@ -134,10 +134,12 @@ Example.
     )
     result = _run_checker(change_dir)
     assert result.returncode == 1
-    assert "vague_placeholder" in result.stderr
+    assert 'vague_placeholder' in result.stderr
 
 
-def test_checker_fails_execution_surface_change_without_logging_and_docs_notes(tmp_path: Path):
+def test_checker_fails_execution_surface_change_without_logging_and_docs_notes(
+    tmp_path: Path,
+):
     change_dir = _write_change(
         tmp_path,
         proposal="""## Why
@@ -159,11 +161,13 @@ Execution change.
     )
     result = _run_checker(change_dir)
     assert result.returncode == 1
-    assert "missing_logging_contract_note" in result.stderr
-    assert "missing_docs_impact_note" in result.stderr
+    assert 'missing_logging_contract_note' in result.stderr
+    assert 'missing_docs_impact_note' in result.stderr
 
 
-def test_checker_accepts_execution_surface_change_with_logging_and_docs_notes(tmp_path: Path):
+def test_checker_accepts_execution_surface_change_with_logging_and_docs_notes(
+    tmp_path: Path,
+):
     change_dir = _write_change(
         tmp_path,
         proposal="""## Why

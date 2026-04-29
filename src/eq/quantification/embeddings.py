@@ -34,14 +34,20 @@ def extract_encoder_embeddings_from_rois(
     """Extract pooled encoder embeddings from ROI crops."""
     output_dir.mkdir(parents=True, exist_ok=True)
     roi_examples = pd.read_csv(roi_examples_path)
-    valid_examples = roi_examples[roi_examples['roi_status'].isin(['matched_component_rank', 'heuristic_component_rank'])].copy()
+    valid_examples = roi_examples[
+        roi_examples['roi_status'].isin(
+            ['matched_component_rank', 'heuristic_component_rank']
+        )
+    ].copy()
     if valid_examples.empty:
         raise ValueError('No ROI rows are available for embedding extraction.')
 
     learner = load_model_safely(str(segmentation_model_path), model_type='glomeruli')
     encoder = _get_encoder_module(learner.model)
     if encoder is None:
-        raise RuntimeError('Could not resolve the encoder module from the segmentation model.')
+        raise RuntimeError(
+            'Could not resolve the encoder module from the segmentation model.'
+        )
     learner.model.eval()
     encoder.eval()
     device = next(learner.model.parameters()).device

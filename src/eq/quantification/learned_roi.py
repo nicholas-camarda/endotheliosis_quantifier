@@ -301,6 +301,7 @@ def build_learned_roi_feature_table(
             'sample_id',
             'image_id',
             'subject_image_id',
+            'glomerulus_id',
             'cohort_id',
             'score',
             'roi_image_path',

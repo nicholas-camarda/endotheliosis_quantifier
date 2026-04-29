@@ -13,9 +13,13 @@ from PIL import Image
 from eq.evaluation.quantification_metrics import calculate_quantification_metrics
 
 
-def _connected_component_boxes(mask_array: np.ndarray, min_area: int, threshold: int) -> list[dict[str, object]]:
+def _connected_component_boxes(
+    mask_array: np.ndarray, min_area: int, threshold: int
+) -> list[dict[str, object]]:
     binary = (mask_array >= threshold).astype(np.uint8)
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        binary, connectivity=8
+    )
     components: list[dict[str, object]] = []
     for label_id in range(1, num_labels):
         area = int(stats[label_id, cv2.CC_STAT_AREA])
@@ -34,11 +38,13 @@ def _connected_component_boxes(mask_array: np.ndarray, min_area: int, threshold:
                 'bbox_top': y,
                 'bbox_width': w,
                 'bbox_height': h,
-                'component_mask': component_mask[y:y + h, x:x + w],
+                'component_mask': component_mask[y : y + h, x : x + w],
                 'sort_key': (y, x),
             }
         )
-    components.sort(key=lambda item: item['sort_key'])  # Deterministic top-to-bottom, left-to-right assignment.
+    components.sort(
+        key=lambda item: item['sort_key']
+    )  # Deterministic top-to-bottom, left-to-right assignment.
     return components
 
 
@@ -71,7 +77,9 @@ def extract_rois_for_scored_examples(
         image_array = np.array(Image.open(image_path).convert('RGB'))
         grayscale_array = np.array(Image.open(image_path).convert('L'))
         mask_array = np.array(Image.open(mask_path).convert('L'))
-        components = _connected_component_boxes(mask_array, min_component_area, mask_threshold)
+        components = _connected_component_boxes(
+            mask_array, min_component_area, mask_threshold
+        )
         expected_count = len(group_rows)
 
         for component_index, component in enumerate(components, start=1):
@@ -79,8 +87,8 @@ def extract_rois_for_scored_examples(
             y = int(component['bbox_top'])
             w = int(component['bbox_width'])
             h = int(component['bbox_height'])
-            crop_image = image_array[y:y + h, x:x + w]
-            crop_gray = grayscale_array[y:y + h, x:x + w]
+            crop_image = image_array[y : y + h, x : x + w]
+            crop_gray = grayscale_array[y : y + h, x : x + w]
             crop_mask = component['component_mask']
             component_rows.append(
                 {
@@ -105,8 +113,13 @@ def extract_rois_for_scored_examples(
                 continue
 
             component = components[row_index]
-            roi_image_path = roi_dir / f'{subject_image_id}_glom{int(row["glomerulus_id"]):03d}.png'
-            roi_mask_path = roi_dir / f'{subject_image_id}_glom{int(row["glomerulus_id"]):03d}_mask.png'
+            roi_image_path = (
+                roi_dir / f'{subject_image_id}_glom{int(row["glomerulus_id"]):03d}.png'
+            )
+            roi_mask_path = (
+                roi_dir
+                / f'{subject_image_id}_glom{int(row["glomerulus_id"]):03d}_mask.png'
+            )
             Image.fromarray(component['crop_image']).save(roi_image_path)
             Image.fromarray(component['crop_mask']).save(roi_mask_path)
             metrics = calculate_quantification_metrics(
@@ -118,7 +131,9 @@ def extract_rois_for_scored_examples(
                 if len(components) == expected_count
                 else 'heuristic_component_rank'
             )
-            row['roi_assignment_strategy'] = 'component_rank_top_to_bottom_left_to_right'
+            row['roi_assignment_strategy'] = (
+                'component_rank_top_to_bottom_left_to_right'
+            )
             row['roi_image_path'] = str(roi_image_path)
             row['roi_mask_path'] = str(roi_mask_path)
             row['bbox_left'] = int(component['bbox_left'])
@@ -126,8 +141,14 @@ def extract_rois_for_scored_examples(
             row['bbox_width'] = int(component['bbox_width'])
             row['bbox_height'] = int(component['bbox_height'])
             row['roi_area'] = int(component['area'])
-            row['roi_fill_fraction'] = float(component['area'] / (component['bbox_width'] * component['bbox_height']))
-            row['roi_mean_intensity'] = float(np.array(component['crop_gray'])[np.array(component['crop_mask']) > 0].mean())
+            row['roi_fill_fraction'] = float(
+                component['area'] / (component['bbox_width'] * component['bbox_height'])
+            )
+            row['roi_mean_intensity'] = float(
+                np.array(component['crop_gray'])[
+                    np.array(component['crop_mask']) > 0
+                ].mean()
+            )
             row['openness_score'] = float(metrics.openness_score)
             updated_rows.append(row)
 

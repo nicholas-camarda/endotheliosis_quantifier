@@ -19,7 +19,11 @@ from eq.data_management.canonical_naming import (
 
 
 def _subject_dirs(root: Path) -> list[Path]:
-    return sorted([path for path in root.iterdir() if path.is_dir()]) if root.exists() else []
+    return (
+        sorted([path for path in root.iterdir() if path.is_dir()])
+        if root.exists()
+        else []
+    )
 
 
 def _find_matching_mask(mask_subject_dir: Path, image_stem: str) -> Optional[Path]:
@@ -51,13 +55,19 @@ def inventory_raw_project(raw_project_dir: Path) -> pd.DataFrame:
                 'image_name': image_path.name,
                 'image_stem': image_path.stem,
                 'image_suffix': image_path.suffix.lower(),
-                'image_naming_format': parsed_image.naming_format if parsed_image else 'invalid',
+                'image_naming_format': parsed_image.naming_format
+                if parsed_image
+                else 'invalid',
                 'mask_path': str(matching_mask) if matching_mask else None,
                 'mask_name': matching_mask.name if matching_mask else None,
                 'mask_suffix': matching_mask.suffix.lower() if matching_mask else None,
-                'mask_naming_format': parsed_mask.naming_format if parsed_mask else None,
+                'mask_naming_format': parsed_mask.naming_format
+                if parsed_mask
+                else None,
                 'has_mask': matching_mask is not None,
-                'current_subject_image_id': parsed_image.subject_image_id if parsed_image else None,
+                'current_subject_image_id': parsed_image.subject_image_id
+                if parsed_image
+                else None,
             }
         )
 
@@ -66,7 +76,10 @@ def inventory_raw_project(raw_project_dir: Path) -> pd.DataFrame:
         for subject_dir in subject_dirs:
             mask_subject_dir = masks_dir / subject_dir.name
             for image_path in sorted(subject_dir.iterdir()):
-                if image_path.is_file() and image_path.suffix.lower() in IMAGE_EXTENSIONS:
+                if (
+                    image_path.is_file()
+                    and image_path.suffix.lower() in IMAGE_EXTENSIONS
+                ):
                     append_record(image_path, mask_subject_dir, subject_dir.name)
     elif images_dir.exists():
         for image_path in sorted(images_dir.iterdir()):
@@ -93,7 +106,9 @@ def _read_mapping_table(mapping_file: Optional[Path]) -> pd.DataFrame:
         raise ValueError(f'Mapping file is missing required columns: {sorted(missing)}')
     cleaned = mapping.loc[:, ['legacy_image_stem', 'canonical_subject_image_id']].copy()
     cleaned['legacy_image_stem'] = cleaned['legacy_image_stem'].astype(str).str.strip()
-    cleaned['canonical_subject_image_id'] = cleaned['canonical_subject_image_id'].astype(str).str.strip()
+    cleaned['canonical_subject_image_id'] = (
+        cleaned['canonical_subject_image_id'].astype(str).str.strip()
+    )
     return cleaned[cleaned['legacy_image_stem'].ne('')]
 
 
@@ -151,19 +166,35 @@ def migrate_raw_project_to_canonical(
                 status = 'unresolved_missing_mask'
                 reason = 'image has no matching raw mask'
             else:
-                subject_prefix = subject_prefix_from_subject_image_id(canonical_subject_image_id)
-                image_target = raw_project_dir / 'images' / subject_prefix / canonical_image_name(
-                    canonical_subject_image_id, image_path.suffix
+                subject_prefix = subject_prefix_from_subject_image_id(
+                    canonical_subject_image_id
                 )
-                mask_target = raw_project_dir / 'masks' / subject_prefix / canonical_mask_name(
-                    canonical_subject_image_id, mask_path.suffix
+                image_target = (
+                    raw_project_dir
+                    / 'images'
+                    / subject_prefix
+                    / canonical_image_name(
+                        canonical_subject_image_id, image_path.suffix
+                    )
+                )
+                mask_target = (
+                    raw_project_dir
+                    / 'masks'
+                    / subject_prefix
+                    / canonical_mask_name(canonical_subject_image_id, mask_path.suffix)
                 )
                 target_image_path = str(image_target)
                 target_mask_path = str(mask_target)
-                if image_target.exists() and image_target.resolve() != image_path.resolve():
+                if (
+                    image_target.exists()
+                    and image_target.resolve() != image_path.resolve()
+                ):
                     status = 'unresolved_image_conflict'
                     reason = 'target canonical image already exists'
-                elif mask_target.exists() and mask_target.resolve() != mask_path.resolve():
+                elif (
+                    mask_target.exists()
+                    and mask_target.resolve() != mask_path.resolve()
+                ):
                     status = 'unresolved_mask_conflict'
                     reason = 'target canonical mask already exists'
                 else:
@@ -201,7 +232,4 @@ def migrate_raw_project_to_canonical(
     summary_path = report_dir / 'migration_summary.json'
     summary_path.write_text(json.dumps(summary, indent=2))
 
-    return {
-        'migration_report': report_path,
-        'migration_summary': summary_path,
-    }
+    return {'migration_report': report_path, 'migration_summary': summary_path}

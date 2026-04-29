@@ -3,12 +3,14 @@
 from .cohorts import (
     build_current_accessible_cohorts,
     build_dox_mask_quality_audit,
+    build_dox_scored_only_resolution_audit,
     canonical_manifest_columns,
     enrich_unified_manifest,
     validate_unified_manifest,
 )
 from .dataset import build_scored_example_table, load_standardized_metadata
 from .embeddings import extract_encoder_embeddings_from_rois
+from .endotheliosis_grade_model import evaluate_endotheliosis_grade_model
 from .learned_roi import evaluate_learned_roi_quantification
 from .migration import (
     generate_mapping_template,
@@ -35,11 +37,13 @@ __all__ = [
     'build_scored_example_table',
     'build_current_accessible_cohorts',
     'build_dox_mask_quality_audit',
+    'build_dox_scored_only_resolution_audit',
     'canonical_manifest_columns',
     'enrich_unified_manifest',
     'validate_unified_manifest',
     'extract_rois_for_scored_examples',
     'extract_encoder_embeddings_from_rois',
+    'evaluate_endotheliosis_grade_model',
     'evaluate_learned_roi_quantification',
     'evaluate_source_aware_endotheliosis_estimator',
     'evaluate_severe_aware_ordinal_endotheliosis_estimator',

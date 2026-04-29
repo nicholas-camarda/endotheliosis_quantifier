@@ -70,6 +70,14 @@ The FastAI segmentation stack currently passes runtime tests, but the repo still
   - `python3 scripts/check_openspec_explicitness.py openspec/changes/p1-align-fastai-practices-and-archive-history`
   - `OPENSPEC_TELEMETRY=0 openspec validate p1-align-fastai-practices-and-archive-history --strict`
 
+## logging-contract
+
+This change does not add a new durable logging root or generic command-capture surface. Existing `eq run-config` logging remains the workflow-owned durable logging contract; this change makes FastAI training artifact failures, CLI import checks, and docs/code hygiene validation visible through tests, lint, and the existing run-config surfaces.
+
+## docs-impact
+
+This change is documentation-facing by design. Active README and docs surfaces must describe only the current FastAI segmentation workflow, trusted current-namespace learner loading, and supported YAML entrypoints, while historical FastAI integration material remains discoverable only through `docs/HISTORICAL_NOTES.md` and `docs/archive/`.
+
 ## Impact
 
 - Affects FastAI segmentation training source under `src/eq/data_management/`, `src/eq/training/`, and `src/eq/utils/run_io.py`.

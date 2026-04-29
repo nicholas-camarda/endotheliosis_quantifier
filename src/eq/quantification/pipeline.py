@@ -43,6 +43,10 @@ from eq.quantification.burden import (
     BURDEN_COLUMN,
     derive_biological_grouping,
     evaluate_burden_index_table,
+    validate_score_values,
+)
+from eq.quantification.endotheliosis_grade_model import (
+    evaluate_endotheliosis_grade_model,
 )
 from eq.quantification.labelstudio_scores import (
     discover_label_studio_annotation_source,
@@ -74,6 +78,122 @@ def _save_json(data: Dict[str, Any], output_path: Path) -> Path:
     with output_path.open('w', encoding='utf-8') as handle:
         json.dump(data, handle, indent=2)
     return output_path
+
+
+def _apply_score_label_overrides(
+    scored_table: pd.DataFrame, label_overrides_path: Path | None, output_dir: Path
+) -> tuple[pd.DataFrame, dict[str, Path]]:
+    """Apply explicitly reviewed score overrides and write an audit surface."""
+    if label_overrides_path is None:
+        return scored_table, {}
+    label_overrides_path = Path(label_overrides_path)
+    if not label_overrides_path.exists():
+        raise FileNotFoundError(
+            f'Label overrides file does not exist: {label_overrides_path}'
+        )
+    overrides = pd.read_csv(label_overrides_path)
+    if 'subject_image_id' not in overrides.columns:
+        raise ValueError('Label overrides must contain subject_image_id')
+    score_column = next(
+        (
+            column
+            for column in ['rubric_score', 'reviewer_score', 'reviewer_grade', 'score']
+            if column in overrides.columns
+        ),
+        None,
+    )
+    if score_column is None:
+        raise ValueError(
+            'Label overrides must contain one score column: '
+            'rubric_score, reviewer_score, reviewer_grade, or score'
+        )
+    work = scored_table.copy()
+    overrides = overrides.copy()
+    overrides['subject_image_id'] = overrides['subject_image_id'].astype(str)
+    overrides['override_score'] = pd.to_numeric(
+        overrides[score_column], errors='coerce'
+    )
+    invalid_score = overrides['override_score'].isna()
+    if invalid_score.any():
+        bad_ids = overrides.loc[invalid_score, 'subject_image_id'].head(10).tolist()
+        raise ValueError(f'Label overrides contain nonnumeric scores for: {bad_ids}')
+    validate_score_values(overrides['override_score'])
+    duplicate_ids = overrides.loc[
+        overrides['subject_image_id'].duplicated(keep=False), 'subject_image_id'
+    ].unique()
+    if len(duplicate_ids):
+        raise ValueError(
+            'Label overrides contain duplicate subject_image_id values: '
+            f'{list(duplicate_ids[:10])}'
+        )
+    missing_ids = sorted(
+        set(overrides['subject_image_id']) - set(work['subject_image_id'].astype(str))
+    )
+    if missing_ids:
+        raise ValueError(
+            'Label overrides reference rows absent from scored examples: '
+            f'{missing_ids[:10]}'
+        )
+
+    lookup = overrides.set_index('subject_image_id')
+    mask = work['subject_image_id'].astype(str).isin(lookup.index)
+    original_scores = work.loc[mask, ['subject_image_id', 'score']].copy()
+    original_scores['score'] = pd.to_numeric(original_scores['score'], errors='coerce')
+    replacement = (
+        work.loc[mask, 'subject_image_id'].astype(str).map(lookup['override_score'])
+    )
+    work['original_score_before_label_override'] = work['score']
+    work['label_override_source'] = ''
+    work.loc[mask, 'score'] = replacement.astype(float).to_numpy()
+    work.loc[mask, 'label_override_source'] = str(label_overrides_path)
+    validate_score_values(work['score'])
+
+    audit = original_scores.rename(columns={'score': 'original_score'}).copy()
+    audit['override_score'] = (
+        audit['subject_image_id'].astype(str).map(lookup['override_score'])
+    )
+    audit['score_delta'] = audit['override_score'] - audit['original_score']
+    for column in [
+        'reviewer_confidence_1_5',
+        'accepted_teaching',
+        'review_flags',
+        'review_notes',
+        'review_source',
+    ]:
+        audit[column] = (
+            audit['subject_image_id'].astype(str).map(lookup[column])
+            if column in lookup.columns
+            else ''
+        )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    audit_path = output_dir / 'score_label_overrides_audit.csv'
+    summary_path = output_dir / 'score_label_overrides_summary.json'
+    audit.to_csv(audit_path, index=False)
+    _save_json(
+        {
+            'label_overrides_path': str(label_overrides_path),
+            'score_column': score_column,
+            'scored_rows': int(len(work)),
+            'override_rows': int(len(overrides)),
+            'applied_rows': int(mask.sum()),
+            'changed_rows': int((audit['score_delta'].abs() > 0).sum()),
+            'severe_boundary_changed_rows': int(
+                (
+                    (audit['original_score'].astype(float) >= 2.0)
+                    != (audit['override_score'].astype(float) >= 2.0)
+                ).sum()
+            ),
+            'allowed_score_values': ALLOWED_SCORE_VALUES.tolist(),
+            'claim_boundary': (
+                'explicit reviewer label overrides only; no inferred labels applied'
+            ),
+        },
+        summary_path,
+    )
+    return work, {
+        'score_label_overrides_audit': audit_path,
+        'score_label_overrides_summary': summary_path,
+    }
 
 
 def _score_to_class_index(score: float) -> int:
@@ -609,6 +729,7 @@ def run_manifest_quantification(
     segmentation_model_path: Path,
     output_dir: Path,
     stop_after: str = 'model',
+    label_overrides_path: Path | None = None,
 ) -> Dict[str, Path]:
     """Run quantification from the runtime cohort manifest."""
     logger = get_logger('eq.quantification.pipeline')
@@ -639,6 +760,13 @@ def run_manifest_quantification(
     scored_table = build_manifest_scored_example_table(
         manifest_root, output_dir / 'scored_examples'
     )
+    scored_table, label_override_artifacts = _apply_score_label_overrides(
+        scored_table, label_overrides_path, output_dir / 'scored_examples'
+    )
+    if label_override_artifacts:
+        scored_table.to_csv(
+            output_dir / 'scored_examples' / 'scored_examples.csv', index=False
+        )
     logger.info(
         'Scored examples ready: rows=%d -> %s',
         len(scored_table),
@@ -654,6 +782,7 @@ def run_manifest_quantification(
             'manifest': manifest_path,
             'manifest_scored_summary': manifest_summary_path,
             'scored_examples': output_dir / 'scored_examples' / 'scored_examples.csv',
+            **label_override_artifacts,
         }
 
     roi_table = extract_image_level_roi_crops(scored_table, output_dir / 'roi_crops')
@@ -671,6 +800,7 @@ def run_manifest_quantification(
             'manifest': manifest_path,
             'manifest_scored_summary': manifest_summary_path,
             'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
+            **label_override_artifacts,
         }
 
     embedding_table = extract_embedding_table(
@@ -692,10 +822,14 @@ def run_manifest_quantification(
             'manifest_scored_summary': manifest_summary_path,
             'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
             'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
+            **label_override_artifacts,
         }
 
     model_artifacts = evaluate_embedding_table(
-        embedding_table, output_dir / 'ordinal_model'
+        embedding_table,
+        output_dir / 'ordinal_model',
+        manifest_root=manifest_root,
+        segmentation_model_path=segmentation_model_path,
     )
     logger.info(
         'Quantification model artifacts complete: %d artifacts under %s',
@@ -710,6 +844,7 @@ def run_manifest_quantification(
         'scored_examples': output_dir / 'scored_examples' / 'scored_examples.csv',
         'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
         'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
+        **label_override_artifacts,
         **_burden_first_artifacts(model_artifacts),
     }
 
@@ -1511,6 +1646,21 @@ def generate_combined_quantification_review(
         and burden_artifacts['severe_aware_severe_threshold_metrics'].stat().st_size > 0
         else pd.DataFrame()
     )
+    grade_model_verdict = (
+        _read_json_if_exists(burden_artifacts['endotheliosis_grade_model_verdict'])
+        if burden_artifacts.get('endotheliosis_grade_model_verdict')
+        else {}
+    )
+    grade_model_metrics = (
+        pd.read_csv(burden_artifacts['endotheliosis_grade_model_candidate_metrics'])
+        if burden_artifacts.get('endotheliosis_grade_model_candidate_metrics')
+        and burden_artifacts['endotheliosis_grade_model_candidate_metrics'].exists()
+        and burden_artifacts['endotheliosis_grade_model_candidate_metrics']
+        .stat()
+        .st_size
+        > 0
+        else pd.DataFrame()
+    )
 
     support_status = str(burden_metrics.get('support_gate_status', 'unknown'))
     numerical_status = str(burden_metrics.get('numerical_stability_status', 'unknown'))
@@ -1569,6 +1719,11 @@ def generate_combined_quantification_review(
     severe_aware_reportable = severe_aware_verdict.get('reportable_scopes', {})
     severe_aware_scope_limiters = severe_aware_verdict.get('scope_limiters', [])
     severe_aware_hard_blockers = severe_aware_verdict.get('hard_blockers', [])
+    grade_model_status = str(grade_model_verdict.get('overall_status', 'not_run'))
+    grade_model_readme_ready = bool(
+        grade_model_verdict.get('readme_facing_deployment_allowed', False)
+    )
+    grade_model_hard_blockers = grade_model_verdict.get('hard_blockers', [])
     severe_aware_figure_links = []
     for key, path in burden_artifacts.items():
         if key.startswith('severe_aware_figure_') and path.exists():
@@ -1988,6 +2143,26 @@ def generate_combined_quantification_review(
             'value': severe_aware_readme_ready,
             'interpretation': 'Whether severe-aware estimator results may enter README snippets',
         },
+        {
+            'metric': 'p3_endotheliosis_grade_model_status',
+            'value': grade_model_status,
+            'interpretation': 'P3 final product verdict status',
+        },
+        {
+            'metric': 'p3_endotheliosis_grade_model_selected_candidate',
+            'value': grade_model_verdict.get('selected_candidate_id', ''),
+            'interpretation': 'P3 selected grade-model candidate, if any',
+        },
+        {
+            'metric': 'p3_endotheliosis_grade_model_readme_ready',
+            'value': grade_model_readme_ready,
+            'interpretation': 'Whether P3 permits README-facing MR TIFF deployment language',
+        },
+        {
+            'metric': 'p3_endotheliosis_grade_model_hard_blockers',
+            'value': ' | '.join(map(str, grade_model_hard_blockers)),
+            'interpretation': 'Hard blockers for P3 grade-model deployment claims',
+        },
     ]
     if not source_aware_metrics.empty:
         for _, row in source_aware_metrics.iterrows():
@@ -2023,6 +2198,35 @@ def generate_combined_quantification_review(
                     'interpretation': f'Severe false-negative count for selected candidate {row.get("candidate_id")} {row.get("split_label")}',
                 }
             )
+    if not grade_model_metrics.empty:
+        selected_grade_candidate = str(
+            grade_model_verdict.get('selected_candidate_id', '')
+        )
+        for _, row in grade_model_metrics.iterrows():
+            if str(row.get('candidate_id', '')) != selected_grade_candidate:
+                continue
+            summary_rows.append(
+                {
+                    'metric': 'p3_selected_candidate_metric_label',
+                    'value': row.get('metric_label'),
+                    'interpretation': 'P3 selected candidate metrics are grouped out-of-fold development estimates',
+                }
+            )
+            for metric_name in [
+                'recall',
+                'precision',
+                'average_precision',
+                'balanced_accuracy',
+                'severe_band_recall',
+            ]:
+                if metric_name in row and pd.notna(row.get(metric_name)):
+                    summary_rows.append(
+                        {
+                            'metric': f'p3_selected_candidate_{metric_name}',
+                            'value': row.get(metric_name),
+                            'interpretation': f'P3 selected candidate {metric_name}',
+                        }
+                    )
     pd.DataFrame(summary_rows).to_csv(results_summary_csv, index=False)
 
     results_summary_md = output_dir / 'results_summary.md'
@@ -2105,6 +2309,19 @@ def generate_combined_quantification_review(
 - Severe false-negative review: `../burden_model/severe_aware_ordinal_estimator/evidence/severe_false_negative_review.html`
 - Index: `../burden_model/severe_aware_ordinal_estimator/INDEX.md`
 
+## P3 Endotheliosis Grade Model
+
+- Status: `{grade_model_status}`
+- Selected candidate: `{grade_model_verdict.get('selected_candidate_id', '')}`
+- Selected output type: `{grade_model_verdict.get('selected_output_type', '')}`
+- Quantification gate passed: `{grade_model_verdict.get('quantification_gate_passed', '')}`
+- Severe safety gate passed: `{grade_model_verdict.get('severe_safety_gate_passed', '')}`
+- MR TIFF deployment gate passed: `{grade_model_verdict.get('mr_tiff_deployment_gate_passed', '')}`
+- README-facing deployment allowed: `{grade_model_readme_ready}`
+- Hard blockers: `{', '.join(map(str, grade_model_hard_blockers)) or 'none'}`
+- Index: `../burden_model/endotheliosis_grade_model/INDEX.md`
+- Final verdict: `../burden_model/endotheliosis_grade_model/summary/final_product_verdict.json`
+
 ## Documentation Recommendation
 
 Use these results in README/docs only when `README/docs-ready` is `True`. The generated snippet is written every run, but it is not approval for reuse when the readiness flag is false.
@@ -2132,6 +2349,12 @@ The current full-cohort quantification run reports an endotheliosis burden index
             '\nSevere-aware estimator result: eligible under the severe-aware scoped verdict. '
             f'Output type: `{severe_aware_verdict.get("selected_output_type", "")}`. '
             'This remains predictive grade-equivalent, severe-risk, or ordinal-set evidence for current scored MR TIFF/ROI data, not external validation or tissue percent.\n'
+        )
+    if grade_model_readme_ready:
+        snippet += (
+            '\nP3 endotheliosis grade-model result: README-facing MR TIFF deployment is allowed '
+            f'under verdict `{grade_model_status}`. '
+            'This remains current-data and source-sensitive, not external validation.\n'
         )
     readme_snippet_path.write_text(snippet, encoding='utf-8')
 
@@ -2224,8 +2447,15 @@ The current full-cohort quantification run reports an endotheliosis burden index
       <p><strong>Scope limiters:</strong> {escape(', '.join(map(str, severe_aware_scope_limiters)) or 'none')}</p>
       <p><a href="../burden_model/severe_aware_ordinal_estimator/INDEX.md">Open severe-aware estimator index</a> | <a href="../burden_model/severe_aware_ordinal_estimator/summary/metrics_by_split.csv">Metrics by split</a> | <a href="../burden_model/severe_aware_ordinal_estimator/summary/severe_threshold_metrics.csv">Severe threshold metrics</a> | <a href="../burden_model/severe_aware_ordinal_estimator/evidence/severe_false_negative_review.html">Severe false-negative review</a></p>
       <ul>{''.join(severe_aware_figure_links) or '<li>No severe-aware figures available.</li>'}</ul>
+      <h2>P3 Endotheliosis Grade Model</h2>
+      <p><strong>Status:</strong> {escape(grade_model_status)}; <strong>selected output type:</strong> {escape(str(grade_model_verdict.get('selected_output_type', '')))}</p>
+      <p><strong>Selected candidate:</strong> {escape(str(grade_model_verdict.get('selected_candidate_id', '')))}</p>
+      <p><strong>Quantification gate passed:</strong> {escape(str(grade_model_verdict.get('quantification_gate_passed', '')))}; <strong>severe safety gate passed:</strong> {escape(str(grade_model_verdict.get('severe_safety_gate_passed', '')))}; <strong>MR TIFF deployment gate passed:</strong> {escape(str(grade_model_verdict.get('mr_tiff_deployment_gate_passed', '')))}</p>
+      <p><strong>README-facing deployment allowed:</strong> {grade_model_readme_ready}</p>
+      <p><strong>Hard blockers:</strong> {escape(', '.join(map(str, grade_model_hard_blockers)) or 'none')}</p>
+      <p><a href="../burden_model/endotheliosis_grade_model/INDEX.md">Open P3 grade-model index</a> | <a href="../burden_model/endotheliosis_grade_model/summary/final_product_verdict.json">Final verdict JSON</a> | <a href="../burden_model/endotheliosis_grade_model/summary/candidate_coverage_matrix.csv">Candidate coverage</a></p>
       <h2>Artifact Links</h2>
-      <p>Primary artifacts: <code>burden_model/primary_burden_index/model/burden_predictions.csv</code> for held-out grouped validation, <code>burden_model/primary_burden_index/model/final_model_predictions.csv</code> for the final full-cohort fitted model, <code>burden_model/primary_burden_index/model/burden_metrics.json</code>, <code>burden_model/primary_burden_index/calibration/uncertainty_calibration.json</code>, <code>burden_model/primary_burden_index/evidence/nearest_examples.csv</code>, <code>burden_model/primary_burden_index/candidates/precision_candidate_summary.json</code>, <code>burden_model/primary_burden_index/candidates/morphology_candidate_summary.json</code>, <code>burden_model/primary_burden_index/feature_sets/morphology_features.csv</code>, <code>burden_model/learned_roi/summary/estimator_verdict.json</code>, <code>burden_model/learned_roi/candidates/learned_roi_candidate_summary.json</code>, <code>burden_model/learned_roi/diagnostics/cohort_confounding_diagnostics.json</code>, <code>ordinal_model/ordinal_metrics.json</code>, and <code>ordinal_model/ordinal_predictions.csv</code>.</p>
+      <p>Primary artifacts: <code>burden_model/primary_burden_index/model/burden_predictions.csv</code> for held-out grouped validation, <code>burden_model/primary_burden_index/model/final_model_predictions.csv</code> for the final full-cohort fitted model, <code>burden_model/primary_burden_index/model/burden_metrics.json</code>, <code>burden_model/primary_burden_index/calibration/uncertainty_calibration.json</code>, <code>burden_model/primary_burden_index/evidence/nearest_examples.csv</code>, <code>burden_model/primary_burden_index/candidates/precision_candidate_summary.json</code>, <code>burden_model/primary_burden_index/candidates/morphology_candidate_summary.json</code>, <code>burden_model/primary_burden_index/feature_sets/morphology_features.csv</code>, <code>burden_model/learned_roi/summary/estimator_verdict.json</code>, <code>burden_model/learned_roi/candidates/learned_roi_candidate_summary.json</code>, <code>burden_model/learned_roi/diagnostics/cohort_confounding_diagnostics.json</code>, <code>burden_model/endotheliosis_grade_model/INDEX.md</code>, <code>ordinal_model/ordinal_metrics.json</code>, and <code>ordinal_model/ordinal_predictions.csv</code>.</p>
       <h2>Final Full-Cohort Summaries</h2>
       <table><thead><tr><th>Cohort</th><th>Rows</th><th>Subjects</th><th>Subject-weighted burden</th><th>Stage-index MAE</th></tr></thead><tbody>{''.join(cohort_table_rows)}</tbody></table>
       <h2>Threshold Support</h2>
@@ -2269,6 +2499,11 @@ def _write_burden_model_index(
             'severe_aware_ordinal_estimator',
             'Severe-aware ordinal estimator verdict bundle',
             'severe_aware_ordinal_estimator/INDEX.md',
+        ),
+        (
+            'endotheliosis_grade_model',
+            'P3 grade-model selector and final product verdict',
+            'endotheliosis_grade_model/INDEX.md',
         ),
     ]
     table_rows = '\n'.join(
@@ -2565,7 +2800,11 @@ def _evaluate_ordinal_embedding_table(
 
 
 def evaluate_embedding_table(
-    embedding_df: pd.DataFrame, output_dir: Path, n_splits: int = 3
+    embedding_df: pd.DataFrame,
+    output_dir: Path,
+    n_splits: int = 3,
+    manifest_root: Path | None = None,
+    segmentation_model_path: Path | None = None,
 ) -> Dict[str, Path]:
     """Train burden-index model and retained ordinal comparator."""
     logger = get_logger('eq.quantification.pipeline')
@@ -2628,17 +2867,29 @@ def evaluate_embedding_table(
         parent_output / 'burden_model' / 'severe_aware_ordinal_estimator',
     )
     severe_aware_artifacts = evaluate_severe_aware_ordinal_endotheliosis_estimator(
-        embedding_df,
-        parent_output / 'burden_model',
-        n_splits=n_splits,
-        change_dir=Path(
-            'openspec/changes/p2-severe-aware-ordinal-endotheliosis-estimator'
-        ),
+        embedding_df, parent_output / 'burden_model', n_splits=n_splits
     )
     burden_artifacts.update(severe_aware_artifacts)
     logger.info(
         'Severe-aware ordinal estimator complete: verdict=%s',
         severe_aware_artifacts['severe_aware_estimator_verdict'],
+    )
+    logger.info(
+        'Evaluating P3 endotheliosis grade-model selector -> %s',
+        parent_output / 'burden_model' / 'endotheliosis_grade_model',
+    )
+    grade_model_artifacts = evaluate_endotheliosis_grade_model(
+        embedding_df,
+        parent_output / 'burden_model',
+        n_splits=n_splits,
+        change_dir=Path('openspec/changes/p3-functional-severe-ordinal-quantification'),
+        manifest_root=manifest_root,
+        segmentation_model_path=segmentation_model_path,
+    )
+    burden_artifacts.update(grade_model_artifacts)
+    logger.info(
+        'P3 endotheliosis grade-model selector complete: verdict=%s',
+        grade_model_artifacts['endotheliosis_grade_model_verdict'],
     )
     burden_model_index = _write_burden_model_index(
         parent_output / 'burden_model', burden_artifacts
@@ -2675,6 +2926,7 @@ def run_contract_first_quantification(
     score_source: str = 'auto',
     apply_migration: bool = False,
     stop_after: str = 'model',
+    label_overrides_path: Path | None = None,
 ) -> Dict[str, Path]:
     """Prepare the quantification contract and run the embedding-first scorer."""
     logger = get_logger('eq.quantification.pipeline')
@@ -2704,6 +2956,7 @@ def run_contract_first_quantification(
             segmentation_model_path=segmentation_model_path,
             output_dir=output_dir,
             stop_after=stop_after,
+            label_overrides_path=label_overrides_path,
         )
 
     inventory_path = output_dir / 'raw_inventory.csv'
@@ -2756,6 +3009,13 @@ def run_contract_first_quantification(
             score_table=score_table,
             output_dir=output_dir / 'scored_examples',
         )
+        scored_table, label_override_artifacts = _apply_score_label_overrides(
+            scored_table, label_overrides_path, output_dir / 'scored_examples'
+        )
+        if label_override_artifacts:
+            scored_table.to_csv(
+                output_dir / 'scored_examples' / 'scored_examples.csv', index=False
+            )
         logger.info('Scored examples ready: rows=%d', len(scored_table))
         if stop_after == 'contract':
             return {
@@ -2767,6 +3027,7 @@ def run_contract_first_quantification(
                 'scored_examples': output_dir
                 / 'scored_examples'
                 / 'scored_examples.csv',
+                **label_override_artifacts,
             }
 
         roi_table = extract_image_level_roi_crops(
@@ -2781,6 +3042,7 @@ def run_contract_first_quantification(
                 'labelstudio_summary': score_outputs['summary'],
                 'duplicate_annotations': score_outputs['duplicates'],
                 'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
+                **label_override_artifacts,
             }
 
         embedding_table = extract_embedding_table(
@@ -2802,10 +3064,13 @@ def run_contract_first_quantification(
                 'duplicate_annotations': score_outputs['duplicates'],
                 'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
                 'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
+                **label_override_artifacts,
             }
 
         model_artifacts = evaluate_embedding_table(
-            embedding_table, output_dir / 'ordinal_model'
+            embedding_table,
+            output_dir / 'ordinal_model',
+            segmentation_model_path=segmentation_model_path,
         )
         return {
             'raw_inventory': inventory_path,
@@ -2816,6 +3081,7 @@ def run_contract_first_quantification(
             'scored_examples': output_dir / 'scored_examples' / 'scored_examples.csv',
             'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
             'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
+            **label_override_artifacts,
             **_burden_first_artifacts(model_artifacts),
         }
 
@@ -2886,6 +3152,13 @@ def run_contract_first_quantification(
     scored_table = build_scored_example_table(
         project_dir, metadata_df, output_dir / 'scored_examples'
     )
+    scored_table, label_override_artifacts = _apply_score_label_overrides(
+        scored_table, label_overrides_path, output_dir / 'scored_examples'
+    )
+    if label_override_artifacts:
+        scored_table.to_csv(
+            output_dir / 'scored_examples' / 'scored_examples.csv', index=False
+        )
     logger.info('Scored examples ready: rows=%d', len(scored_table))
     if stop_after == 'contract':
         return {
@@ -2895,6 +3168,7 @@ def run_contract_first_quantification(
             'migration_plan': migration_plan_path,
             'validation': validation_path,
             'scored_examples': output_dir / 'scored_examples' / 'scored_examples.csv',
+            **label_override_artifacts,
         }
 
     roi_table = extract_roi_crops(scored_table, output_dir / 'roi_crops')
@@ -2907,6 +3181,7 @@ def run_contract_first_quantification(
             'migration_plan': migration_plan_path,
             'validation': validation_path,
             'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
+            **label_override_artifacts,
         }
 
     embedding_table = extract_embedding_table(
@@ -2928,10 +3203,13 @@ def run_contract_first_quantification(
             'validation': validation_path,
             'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
             'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
+            **label_override_artifacts,
         }
 
     model_artifacts = evaluate_embedding_table(
-        embedding_table, output_dir / 'ordinal_model'
+        embedding_table,
+        output_dir / 'ordinal_model',
+        segmentation_model_path=segmentation_model_path,
     )
     return {
         'raw_inventory': inventory_path,
@@ -2942,6 +3220,7 @@ def run_contract_first_quantification(
         'scored_examples': output_dir / 'scored_examples' / 'scored_examples.csv',
         'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
         'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
+        **label_override_artifacts,
         **_burden_first_artifacts(model_artifacts),
     }
 

@@ -22,12 +22,16 @@ def _load_annotation_payload(source: str | Path) -> list[dict[str, Any]]:
     source_str = str(source)
     if source_str.startswith('git:'):
         _, revision, git_path = source_str.split(':', 2)
-        raw = subprocess.check_output(['git', 'show', f'{revision}:{git_path}'], text=True)
+        raw = subprocess.check_output(
+            ['git', 'show', f'{revision}:{git_path}'], text=True
+        )
         return json.loads(raw)
 
     source_path = Path(source)
     if not source_path.exists():
-        raise FileNotFoundError(f'Label Studio annotation source not found: {source_path}')
+        raise FileNotFoundError(
+            f'Label Studio annotation source not found: {source_path}'
+        )
     return json.loads(source_path.read_text(encoding='utf-8'))
 
 
@@ -105,12 +109,14 @@ def _build_join_maps(project_dir: Path) -> tuple[dict[str, str], dict[str, str]]
         image_paths = [
             path
             for path in sorted(images_dir.rglob('*'))
-            if path.is_file() and path.suffix.lower() in {'.jpg', '.jpeg', '.png', '.tif', '.tiff'}
+            if path.is_file()
+            and path.suffix.lower() in {'.jpg', '.jpeg', '.png', '.tif', '.tiff'}
         ]
         masks_by_stem = {
             join_stem(path): str(path)
             for path in sorted(masks_dir.rglob('*'))
-            if path.is_file() and path.suffix.lower() in {'.jpg', '.jpeg', '.png', '.tif', '.tiff'}
+            if path.is_file()
+            and path.suffix.lower() in {'.jpg', '.jpeg', '.png', '.tif', '.tiff'}
         }
         image_lookup: dict[str, str] = {}
         mask_lookup: dict[str, str] = {}
@@ -130,7 +136,9 @@ def _build_join_maps(project_dir: Path) -> tuple[dict[str, str], dict[str, str]]
     mask_lookup = {
         str(row.image_name): str(row.mask_path)
         for row in inventory.itertuples(index=False)
-        if isinstance(row.image_name, str) and isinstance(row.mask_path, str) and row.mask_path
+        if isinstance(row.image_name, str)
+        and isinstance(row.mask_path, str)
+        and row.mask_path
     }
     return image_lookup, mask_lookup
 
@@ -179,7 +187,9 @@ def recover_label_studio_score_table(
                     'task_updated_at': task.get('updated_at'),
                     'annotation_updated_at': annotation.get('updated_at'),
                     'grade': grade,
-                    'annotation_status': 'graded' if grade is not None else 'missing_grade',
+                    'annotation_status': 'graded'
+                    if grade is not None
+                    else 'missing_grade',
                 }
             )
 
@@ -187,7 +197,9 @@ def recover_label_studio_score_table(
     all_rows.to_csv(output_dir / 'labelstudio_all_annotations.csv', index=False)
 
     chosen_rows: list[dict[str, Any]] = []
-    for image_name, image_rows in all_rows.groupby('image_name', dropna=False, sort=True):
+    for image_name, image_rows in all_rows.groupby(
+        'image_name', dropna=False, sort=True
+    ):
         ranked = image_rows.sort_values(
             ['annotation_updated_at', 'task_updated_at', 'task_created_at'],
             na_position='first',
@@ -207,9 +219,17 @@ def recover_label_studio_score_table(
         elif latest_grade is None:
             resolution = 'latest_annotation_missing_grade'
 
-        image_keys = (str(image_name), str(image_name).lower(), Path(str(image_name)).stem.lower())
-        image_path = next((image_lookup[key] for key in image_keys if key in image_lookup), '')
-        mask_path = next((mask_lookup[key] for key in image_keys if key in mask_lookup), '')
+        image_keys = (
+            str(image_name),
+            str(image_name).lower(),
+            Path(str(image_name)).stem.lower(),
+        )
+        image_path = next(
+            (image_lookup[key] for key in image_keys if key in image_lookup), ''
+        )
+        mask_path = next(
+            (mask_lookup[key] for key in image_keys if key in mask_lookup), ''
+        )
         if image_path and mask_path:
             join_status = 'ok'
         elif image_path:
@@ -223,9 +243,14 @@ def recover_label_studio_score_table(
             {
                 'image_name': image_name,
                 'image_stem': Path(str(image_name)).stem,
-                'subject_prefix': chosen.get('subject_prefix') or _subject_prefix_from_image_name(str(image_name)),
-                'score': float(chosen['grade']) if chosen.get('grade') is not None else None,
-                'score_status': 'ok' if chosen.get('grade') is not None else 'missing_score',
+                'subject_prefix': chosen.get('subject_prefix')
+                or _subject_prefix_from_image_name(str(image_name)),
+                'score': float(chosen['grade'])
+                if chosen.get('grade') is not None
+                else None,
+                'score_status': 'ok'
+                if chosen.get('grade') is not None
+                else 'missing_score',
                 'score_resolution': resolution,
                 'annotation_source': str(annotation_source),
                 'source_task_id': chosen.get('task_id'),
@@ -237,28 +262,48 @@ def recover_label_studio_score_table(
             }
         )
 
-    score_table = pd.DataFrame(chosen_rows).sort_values(['subject_prefix', 'image_name']).reset_index(drop=True)
+    score_table = (
+        pd.DataFrame(chosen_rows)
+        .sort_values(['subject_prefix', 'image_name'])
+        .reset_index(drop=True)
+    )
     score_table.to_csv(output_dir / 'labelstudio_scores.csv', index=False)
 
-    duplicate_rows = all_rows[all_rows.duplicated(subset=['image_name'], keep=False)].copy()
-    duplicate_rows.to_csv(output_dir / 'labelstudio_duplicate_annotations.csv', index=False)
+    duplicate_rows = all_rows[
+        all_rows.duplicated(subset=['image_name'], keep=False)
+    ].copy()
+    duplicate_rows.to_csv(
+        output_dir / 'labelstudio_duplicate_annotations.csv', index=False
+    )
 
     summary = {
         'annotation_source': str(annotation_source),
         'n_annotation_rows': int(len(all_rows)),
-        'n_unique_images': int(score_table['image_name'].nunique()) if not score_table.empty else 0,
-        'n_duplicate_images': int(duplicate_rows['image_name'].nunique()) if not duplicate_rows.empty else 0,
-        'score_status_counts': score_table['score_status'].value_counts(dropna=False).to_dict()
+        'n_unique_images': int(score_table['image_name'].nunique())
+        if not score_table.empty
+        else 0,
+        'n_duplicate_images': int(duplicate_rows['image_name'].nunique())
+        if not duplicate_rows.empty
+        else 0,
+        'score_status_counts': score_table['score_status']
+        .value_counts(dropna=False)
+        .to_dict()
         if not score_table.empty
         else {},
-        'join_status_counts': score_table['join_status'].value_counts(dropna=False).to_dict()
+        'join_status_counts': score_table['join_status']
+        .value_counts(dropna=False)
+        .to_dict()
         if not score_table.empty
         else {},
-        'score_resolution_counts': score_table['score_resolution'].value_counts(dropna=False).to_dict()
+        'score_resolution_counts': score_table['score_resolution']
+        .value_counts(dropna=False)
+        .to_dict()
         if not score_table.empty
         else {},
     }
-    (output_dir / 'labelstudio_score_summary.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
+    (output_dir / 'labelstudio_score_summary.json').write_text(
+        json.dumps(summary, indent=2), encoding='utf-8'
+    )
 
     return {
         'all_annotations': output_dir / 'labelstudio_all_annotations.csv',

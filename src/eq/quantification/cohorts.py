@@ -116,9 +116,7 @@ COHORT_DISCOVERY_REQUIREMENTS = {
 DEFAULT_IMAGE_MIN_COMPONENT_AREA = 64
 DOX_MASK_QUALITY_MIN_FOREGROUND_FRACTION = 0.001
 DOX_MASK_QUALITY_MAX_FOREGROUND_FRACTION = 0.25
-DEFAULT_LAUREN_PREECLAMPSIA_PROJECT = (
-    f'raw_data/cohorts/{COHORT_LAUREN_PREECLAMPSIA}'
-)
+DEFAULT_LAUREN_PREECLAMPSIA_PROJECT = f'raw_data/cohorts/{COHORT_LAUREN_PREECLAMPSIA}'
 DEFAULT_LAUREN_PREECLAMPSIA_ANNOTATIONS = (
     f'raw_data/cohorts/{COHORT_LAUREN_PREECLAMPSIA}/scores/labelstudio_annotations.json'
 )
@@ -232,7 +230,9 @@ def _runtime_relative(path: Path | str, runtime_root: Path | None = None) -> str
         return str(path)
 
 
-def _runtime_relative_or_empty(path: Path | str, runtime_root: Path | None = None) -> str:
+def _runtime_relative_or_empty(
+    path: Path | str, runtime_root: Path | None = None
+) -> str:
     runtime_root = Path(runtime_root) if runtime_root else get_active_runtime_root()
     path = Path(path).expanduser()
     try:
@@ -283,7 +283,9 @@ def validate_unified_manifest(
 
     if manifest.empty:
         warnings.append('manifest_empty')
-        return ManifestValidation(passed=not errors, errors=tuple(errors), warnings=tuple(warnings))
+        return ManifestValidation(
+            passed=not errors, errors=tuple(errors), warnings=tuple(warnings)
+        )
 
     if not any(column in manifest.columns for column in SCORE_LOCATOR_COLUMNS):
         errors.append('missing_score_locator:source_score_row_or_source_sample_id')
@@ -298,7 +300,10 @@ def validate_unified_manifest(
         generated_missing = sorted(set(GENERATED_COLUMNS).difference(manifest.columns))
         if generated_missing:
             errors.append(f'missing_generated_columns:{",".join(generated_missing)}')
-        if 'manifest_row_id' in manifest.columns and manifest['manifest_row_id'].duplicated().any():
+        if (
+            'manifest_row_id' in manifest.columns
+            and manifest['manifest_row_id'].duplicated().any()
+        ):
             errors.append('duplicate_manifest_row_id')
         if {'cohort_id', 'harmonized_id'}.issubset(manifest.columns):
             duplicate_harmonized = manifest.duplicated(
@@ -312,18 +317,28 @@ def validate_unified_manifest(
             if admitted.any():
                 admitted_rows = manifest.loc[admitted]
                 for column in ('score', 'image_path'):
-                    if column not in admitted_rows.columns or admitted_rows[column].map(_is_missing).any():
+                    if (
+                        column not in admitted_rows.columns
+                        or admitted_rows[column].map(_is_missing).any()
+                    ):
                         errors.append(f'admitted_missing_{column}')
-                if 'verification_status' not in admitted_rows.columns or not admitted_rows[
-                    'verification_status'
-                ].astype(str).eq('passed').all():
+                if (
+                    'verification_status' not in admitted_rows.columns
+                    or not admitted_rows['verification_status']
+                    .astype(str)
+                    .eq('passed')
+                    .all()
+                ):
                     errors.append('admitted_without_passed_verification')
-                if 'exclusion_reason' in admitted_rows.columns and not admitted_rows[
-                    'exclusion_reason'
-                ].map(_is_missing).all():
+                if (
+                    'exclusion_reason' in admitted_rows.columns
+                    and not admitted_rows['exclusion_reason'].map(_is_missing).all()
+                ):
                     errors.append('admitted_with_exclusion_reason')
 
-    return ManifestValidation(passed=not errors, errors=tuple(errors), warnings=tuple(warnings))
+    return ManifestValidation(
+        passed=not errors, errors=tuple(errors), warnings=tuple(warnings)
+    )
 
 
 def _uniqueness_columns_for_cohort(
@@ -393,14 +408,20 @@ def _deduplicate_same_image_same_score(manifest: pd.DataFrame) -> pd.DataFrame:
         return manifest
     duplicate_key = ['cohort_id', 'image_path', 'score']
     image_present = ~manifest['image_path'].map(_is_missing)
-    duplicate_mask = manifest.duplicated(subset=duplicate_key, keep=False) & image_present
+    duplicate_mask = (
+        manifest.duplicated(subset=duplicate_key, keep=False) & image_present
+    )
     if not duplicate_mask.any():
         return manifest
     work = manifest.copy()
-    duplicate_counts = work.groupby(duplicate_key, dropna=False)['cohort_id'].transform('size')
+    duplicate_counts = work.groupby(duplicate_key, dropna=False)['cohort_id'].transform(
+        'size'
+    )
     if 'duplicate_evidence_count' not in work.columns:
         work['duplicate_evidence_count'] = ''
-    work.loc[duplicate_mask, 'duplicate_evidence_count'] = duplicate_counts[duplicate_mask].astype(int).astype(str)
+    work.loc[duplicate_mask, 'duplicate_evidence_count'] = (
+        duplicate_counts[duplicate_mask].astype(int).astype(str)
+    )
     keep_mask = ~(
         work.duplicated(subset=duplicate_key, keep='first')
         & image_present.reindex(work.index, fill_value=False)
@@ -427,7 +448,8 @@ def enrich_unified_manifest(
 
     work = add_harmonized_ids(work)
     work['manifest_row_id'] = [
-        f'{_slug(row.cohort_id)}__{index:06d}' for index, row in enumerate(work.itertuples(index=False), start=1)
+        f'{_slug(row.cohort_id)}__{index:06d}'
+        for index, row in enumerate(work.itertuples(index=False), start=1)
     ]
 
     for index, row in work.iterrows():
@@ -435,8 +457,16 @@ def enrich_unified_manifest(
         mask_path_value = _clean_str(row.get('mask_path'))
         score = _coerce_score(row.get('score'))
 
-        image_path = resolve_runtime_asset_path(image_path_value, runtime_root) if image_path_value else None
-        mask_path = resolve_runtime_asset_path(mask_path_value, runtime_root) if mask_path_value else None
+        image_path = (
+            resolve_runtime_asset_path(image_path_value, runtime_root)
+            if image_path_value
+            else None
+        )
+        mask_path = (
+            resolve_runtime_asset_path(mask_path_value, runtime_root)
+            if mask_path_value
+            else None
+        )
         image_exists = bool(image_path and image_path.exists() and image_path.is_file())
         mask_exists = bool(mask_path and mask_path.exists() and mask_path.is_file())
 
@@ -462,10 +492,14 @@ def enrich_unified_manifest(
             if not _clean_str(row.get('mapping_review_status')):
                 work.at[index, 'mapping_review_status'] = 'not_sampled'
             if not _clean_str(row.get('discovery_surfaces')):
-                work.at[index, 'discovery_surfaces'] = ';'.join(DEFAULT_DISCOVERY_SURFACES)
+                work.at[index, 'discovery_surfaces'] = ';'.join(
+                    DEFAULT_DISCOVERY_SURFACES
+                )
             continue
 
-        locator_present = any(not _is_missing(row.get(column)) for column in SCORE_LOCATOR_COLUMNS)
+        locator_present = any(
+            not _is_missing(row.get(column)) for column in SCORE_LOCATOR_COLUMNS
+        )
         join_failures: list[str] = []
         if not image_path_value:
             join_failures.append('missing_image_path')
@@ -475,11 +509,17 @@ def enrich_unified_manifest(
             join_failures.append('missing_score')
         if not locator_present:
             join_failures.append('missing_score_locator')
-        if mask_path_value and require_readable_assets_for_admission and not mask_exists:
+        if (
+            mask_path_value
+            and require_readable_assets_for_admission
+            and not mask_exists
+        ):
             join_failures.append('mask_unreadable')
 
         if join_failures:
-            work.at[index, 'join_status'] = 'pending_discovery' if 'missing_score' in join_failures else 'failed'
+            work.at[index, 'join_status'] = (
+                'pending_discovery' if 'missing_score' in join_failures else 'failed'
+            )
             work.at[index, 'verification_status'] = 'pending_discovery'
             work.at[index, 'admission_status'] = 'unresolved'
             work.at[index, 'exclusion_reason'] = ';'.join(join_failures)
@@ -534,7 +574,9 @@ def summarize_manifest(manifest: pd.DataFrame) -> dict[str, Any]:
     for cohort_id, cohort_rows in manifest.groupby('cohort_id', sort=True):
         cohorts[str(cohort_id)] = {
             'rows': int(len(cohort_rows)),
-            'lane_counts': cohort_rows['lane_assignment'].value_counts(dropna=False).to_dict()
+            'lane_counts': cohort_rows['lane_assignment']
+            .value_counts(dropna=False)
+            .to_dict()
             if 'lane_assignment' in cohort_rows
             else {},
             'admission_status_counts': cohort_rows['admission_status']
@@ -542,7 +584,9 @@ def summarize_manifest(manifest: pd.DataFrame) -> dict[str, Any]:
             .to_dict()
             if 'admission_status' in cohort_rows
             else {},
-            'join_status_counts': cohort_rows['join_status'].value_counts(dropna=False).to_dict()
+            'join_status_counts': cohort_rows['join_status']
+            .value_counts(dropna=False)
+            .to_dict()
             if 'join_status' in cohort_rows
             else {},
         }
@@ -550,7 +594,9 @@ def summarize_manifest(manifest: pd.DataFrame) -> dict[str, Any]:
     return {
         'total_rows': int(len(manifest)),
         'cohorts': cohorts,
-        'status_counts': manifest['admission_status'].value_counts(dropna=False).to_dict()
+        'status_counts': manifest['admission_status']
+        .value_counts(dropna=False)
+        .to_dict()
         if 'admission_status' in manifest
         else {},
         'lane_counts': manifest['lane_assignment'].value_counts(dropna=False).to_dict()
@@ -595,7 +641,9 @@ def write_manifest_summary(
         else get_runtime_cohort_manifest_summary_path(runtime_root)
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(summarize_manifest(manifest), indent=2), encoding='utf-8')
+    output_path.write_text(
+        json.dumps(summarize_manifest(manifest), indent=2), encoding='utf-8'
+    )
     return output_path
 
 
@@ -612,11 +660,17 @@ def copy_asset_to_cohort(
     source_path = Path(source_path)
     if not source_path.exists() or not source_path.is_file():
         raise FileNotFoundError(source_path)
-    destination = get_runtime_cohort_path(cohort_id, runtime_root) / subdir / (
-        filename or source_path.name
+    destination = (
+        get_runtime_cohort_path(cohort_id, runtime_root)
+        / subdir
+        / (filename or source_path.name)
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.exists() and destination.is_file() and destination.stat().st_size == source_path.stat().st_size:
+    if (
+        destination.exists()
+        and destination.is_file()
+        and destination.stat().st_size == source_path.stat().st_size
+    ):
         return destination
     shutil.copy2(source_path, destination)
     return destination
@@ -631,7 +685,12 @@ def classify_foreign_rows(
     """Classify rows outside the intended cohort sample prefixes as foreign."""
     result = manifest.copy()
     allowed = {prefix.upper() for prefix in allowed_sample_prefixes}
-    for column in ('join_status', 'verification_status', 'admission_status', 'exclusion_reason'):
+    for column in (
+        'join_status',
+        'verification_status',
+        'admission_status',
+        'exclusion_reason',
+    ):
         if column not in result.columns:
             result[column] = ''
     for index, row in result.iterrows():
@@ -661,25 +720,42 @@ def harmonize_localized_cohort(
 
     for row in records.itertuples(index=False):
         row_dict = row._asdict()
-        source_image_value = _clean_str(row_dict.get('source_image_path') or row_dict.get('image_path'))
+        source_image_value = _clean_str(
+            row_dict.get('source_image_path') or row_dict.get('image_path')
+        )
         source_image = Path(source_image_value) if source_image_value else None
-        source_mask_value = _clean_str(row_dict.get('source_mask_path') or row_dict.get('mask_path'))
+        source_mask_value = _clean_str(
+            row_dict.get('source_mask_path') or row_dict.get('mask_path')
+        )
         source_mask = Path(source_mask_value) if source_mask_value else None
         source_image_name = _clean_str(
-            row_dict.get('source_image_name') or (source_image.name if source_image else '')
+            row_dict.get('source_image_name')
+            or (source_image.name if source_image else '')
         )
         harmonized_stem = _slug(
-            row_dict.get('source_sample_id') or Path(source_image_name).stem or row_dict.get('source_score_row')
+            row_dict.get('source_sample_id')
+            or Path(source_image_name).stem
+            or row_dict.get('source_score_row')
         )
 
-        if source_image is None or not source_image.exists() or not source_image.is_file():
+        if (
+            source_image is None
+            or not source_image.exists()
+            or not source_image.is_file()
+        ):
             localized_image = ''
             join_status = 'pending_discovery'
             exclusion_reason = 'source_image_missing'
         else:
             filename = f'{harmonized_stem}{source_image.suffix.lower()}'
             destination = (
-                copy_asset_to_cohort(source_image, cohort_id, 'images', runtime_root=runtime_root, filename=filename)
+                copy_asset_to_cohort(
+                    source_image,
+                    cohort_id,
+                    'images',
+                    runtime_root=runtime_root,
+                    filename=filename,
+                )
                 if copy_assets
                 else source_image
             )
@@ -691,7 +767,13 @@ def harmonize_localized_cohort(
         if source_mask and source_mask.exists():
             filename = f'{harmonized_stem}_mask{source_mask.suffix.lower()}'
             destination = (
-                copy_asset_to_cohort(source_mask, cohort_id, 'masks', runtime_root=runtime_root, filename=filename)
+                copy_asset_to_cohort(
+                    source_mask,
+                    cohort_id,
+                    'masks',
+                    runtime_root=runtime_root,
+                    filename=filename,
+                )
                 if copy_assets
                 else source_mask
             )
@@ -709,10 +791,14 @@ def harmonize_localized_cohort(
                 'image_path': localized_image,
                 'mask_path': localized_mask,
                 'source_image_name': source_image_name,
-                'source_sample_id': _clean_str(row_dict.get('source_sample_id') or harmonized_stem),
+                'source_sample_id': _clean_str(
+                    row_dict.get('source_sample_id') or harmonized_stem
+                ),
                 'source_score_row': _clean_str(row_dict.get('source_score_row')),
                 'join_status': join_status,
-                'verification_status': 'pending_discovery' if exclusion_reason else 'pending',
+                'verification_status': 'pending_discovery'
+                if exclusion_reason
+                else 'pending',
                 'admission_status': 'unresolved' if exclusion_reason else 'pending',
                 'exclusion_reason': exclusion_reason,
             }
@@ -741,7 +827,11 @@ def inventory_decoded_dox_runtime(
 ) -> pd.DataFrame:
     """Inventory the existing decoded Dox brushlabel runtime surface."""
     runtime_root = Path(runtime_root) if runtime_root else get_active_runtime_root()
-    cohort_dir = Path(cohort_dir) if cohort_dir else runtime_root / 'raw_data' / 'cohorts' / 'vegfri_dox'
+    cohort_dir = (
+        Path(cohort_dir)
+        if cohort_dir
+        else runtime_root / 'raw_data' / 'cohorts' / 'vegfri_dox'
+    )
     ledger_path = cohort_dir / 'metadata' / 'decoded_brushlabel_masks.csv'
     if not ledger_path.exists():
         return pd.DataFrame(columns=ENRICHED_MANIFEST_COLUMNS)
@@ -758,7 +848,9 @@ def inventory_decoded_dox_runtime(
                 'image_path': _runtime_relative(image_path, runtime_root),
                 'mask_path': _runtime_relative(mask_path, runtime_root),
                 'score': '',
-                'source_image_name': _clean_str(getattr(row, 'image_name', image_path.name)),
+                'source_image_name': _clean_str(
+                    getattr(row, 'image_name', image_path.name)
+                ),
                 'source_sample_id': subject_prefix,
                 'source_score_row': _clean_str(getattr(row, 'task_id', '')),
                 'source_score_sheet': 'latest_label_studio_brushlabel_export',
@@ -809,7 +901,9 @@ def _normalize_dox_group(value: Any) -> str:
 
 def _assignment_sheet_date(sheet_name: str) -> str:
     text = _clean_str(sheet_name)
-    match = re.fullmatch(r'(?P<month>[0-9]{2})-(?P<day>[0-9]{2})-(?P<year>[0-9]{2})', text)
+    match = re.fullmatch(
+        r'(?P<month>[0-9]{2})-(?P<day>[0-9]{2})-(?P<year>[0-9]{2})', text
+    )
     if not match:
         return text
     return f'20{match.group("year")}-{match.group("month")}-{match.group("day")}'
@@ -817,7 +911,9 @@ def _assignment_sheet_date(sheet_name: str) -> str:
 
 def load_dox_assignment_table(workbook_path: Path | None = None) -> pd.DataFrame:
     """Load the Dox assignment workbook as the authoritative sample identity table."""
-    workbook_path = Path(workbook_path) if workbook_path else get_dox_assignment_workbook_path()
+    workbook_path = (
+        Path(workbook_path) if workbook_path else get_dox_assignment_workbook_path()
+    )
     if not workbook_path.exists():
         return pd.DataFrame(
             columns=[
@@ -874,10 +970,7 @@ def attach_dox_assignment_metadata(
     if assignment.empty:
         return result
     result = result.merge(
-        assignment,
-        on='source_sample_id',
-        how='left',
-        suffixes=('', '_assignment'),
+        assignment, on='source_sample_id', how='left', suffixes=('', '_assignment')
     )
     matched = result['source_identity_sheet'].notna()
     for column in (
@@ -917,7 +1010,9 @@ def _source_image_stem(row: pd.Series) -> str:
 
 def _source_image_replicate(row: pd.Series) -> str:
     stem = _source_image_stem(row)
-    match = re.search(r'(?:_Image|image)(?P<replicate>[A-Za-z0-9]+)$', stem, flags=re.IGNORECASE)
+    match = re.search(
+        r'(?:_Image|image)(?P<replicate>[A-Za-z0-9]+)$', stem, flags=re.IGNORECASE
+    )
     if match:
         return f'image{match.group("replicate")}'
     return _slug(stem)
@@ -926,7 +1021,13 @@ def _source_image_replicate(row: pd.Series) -> str:
 def apply_manifest_identity_contract(manifest: pd.DataFrame) -> pd.DataFrame:
     """Write unambiguous subject/sample/image identity columns into the manifest."""
     result = manifest.copy()
-    for column in ('subject_id', 'sample_id', 'replicate_id', 'image_id', 'identity_resolution'):
+    for column in (
+        'subject_id',
+        'sample_id',
+        'replicate_id',
+        'image_id',
+        'identity_resolution',
+    ):
         if column not in result.columns:
             result[column] = ''
 
@@ -963,7 +1064,9 @@ def apply_manifest_identity_contract(manifest: pd.DataFrame) -> pd.DataFrame:
 
     duplicate_images = result['image_id'].astype(str).duplicated(keep=False)
     if duplicate_images.any():
-        duplicate_values = sorted(result.loc[duplicate_images, 'image_id'].astype(str).unique())
+        duplicate_values = sorted(
+            result.loc[duplicate_images, 'image_id'].astype(str).unique()
+        )
         raise CohortManifestError(
             f'duplicate_manifest_image_id:{duplicate_values[:10]}'
         )
@@ -978,7 +1081,9 @@ def apply_dox_score_workbook_audit(
 ) -> pd.DataFrame:
     """Compare Dox manifest scores against the maintained image-level score workbook."""
     runtime_root = Path(runtime_root) if runtime_root else get_active_runtime_root()
-    workbook_path = Path(workbook_path) if workbook_path else get_dox_score_workbook_path()
+    workbook_path = (
+        Path(workbook_path) if workbook_path else get_dox_score_workbook_path()
+    )
     result = manifest.copy()
     for column in ('source_score_audit_workbook', 'source_score_audit_status'):
         if column not in result.columns:
@@ -1068,15 +1173,16 @@ def apply_dox_score_workbook_audit(
         else {},
         'admitted_status_counts': audit.loc[
             audit['admission_status'].eq('admitted'), 'audit_status'
-        ].value_counts(dropna=False).to_dict()
+        ]
+        .value_counts(dropna=False)
+        .to_dict()
         if not audit.empty
         else {},
     }
     summary_path = metadata_dir / 'score_workbook_agreement_summary.json'
     summary_path.write_text(json.dumps(summary, indent=2), encoding='utf-8')
     admitted_failures = audit[
-        audit['admission_status'].eq('admitted')
-        & audit['audit_status'].eq('mismatch')
+        audit['admission_status'].eq('admitted') & audit['audit_status'].eq('mismatch')
     ]
     if not admitted_failures.empty:
         raise CohortManifestError(
@@ -1092,7 +1198,9 @@ def _load_label_studio_choice_scores(annotation_source: Path) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for task in payload:
         file_upload = _clean_str(task.get('file_upload'))
-        image_name = file_upload.split('-', 1)[-1] if '-' in file_upload else file_upload
+        image_name = (
+            file_upload.split('-', 1)[-1] if '-' in file_upload else file_upload
+        )
         if not image_name:
             image_value = _clean_str(task.get('data', {}).get('image'))
             image_name = Path(image_value).name if image_value else ''
@@ -1173,7 +1281,9 @@ def build_lauren_preeclampsia_runtime_cohort(
 
     cohort_dir = runtime_root / 'raw_data' / 'cohorts' / COHORT_LAUREN_PREECLAMPSIA
     scores_dir = cohort_dir / 'scores'
-    outputs = recover_label_studio_score_table(project_dir, annotation_source, scores_dir)
+    outputs = recover_label_studio_score_table(
+        project_dir, annotation_source, scores_dir
+    )
     score_table = pd.read_csv(outputs['scores'])
     score_table = score_table[
         (score_table['join_status'].astype(str) == 'ok')
@@ -1206,14 +1316,14 @@ def build_lauren_preeclampsia_runtime_cohort(
 
 
 def build_dox_runtime_cohort(
-    *,
-    runtime_root: Path | None = None,
-    annotation_source: Path | None = None,
+    *, runtime_root: Path | None = None, annotation_source: Path | None = None
 ) -> pd.DataFrame:
     """Build Dox rows from decoded masks plus latest Label Studio choice scores."""
     runtime_root = Path(runtime_root) if runtime_root else get_active_runtime_root()
     annotation_source = (
-        Path(annotation_source) if annotation_source else get_dox_label_studio_export_path()
+        Path(annotation_source)
+        if annotation_source
+        else get_dox_label_studio_export_path()
     )
     decoded = inventory_decoded_dox_runtime(runtime_root=runtime_root)
     if decoded.empty:
@@ -1253,9 +1363,7 @@ def build_dox_runtime_cohort(
     merged['admission_status'] = np.where(
         merged['score'].notna(), 'pending', 'unresolved'
     )
-    merged['exclusion_reason'] = np.where(
-        merged['score'].notna(), '', 'missing_score'
-    )
+    merged['exclusion_reason'] = np.where(merged['score'].notna(), '', 'missing_score')
     merged['lane_assignment'] = LANE_MANUAL_MASK_EXTERNAL
 
     decoded_task_ids = set(merged['source_score_row'].astype(str))
@@ -1292,10 +1400,7 @@ def build_dox_runtime_cohort(
                 'admission_status': status,
                 'exclusion_reason': reason,
                 'discovery_surfaces': ';'.join(
-                    (
-                        'latest_dox_label_studio_export',
-                        'decoded_brushlabel_masks.csv',
-                    )
+                    ('latest_dox_label_studio_export', 'decoded_brushlabel_masks.csv')
                 ),
             }
         )
@@ -1311,19 +1416,30 @@ def inventory_lauren_preeclampsia_from_score_table(
     runtime_root = Path(runtime_root) if runtime_root else get_active_runtime_root()
     rows: list[dict[str, Any]] = []
     for row in score_table.itertuples(index=False):
-        image_path = Path(_clean_str(getattr(row, 'raw_image_path', '') or getattr(row, 'image_path', '')))
-        mask_path = Path(_clean_str(getattr(row, 'raw_mask_path', '') or getattr(row, 'mask_path', '')))
+        image_path = Path(
+            _clean_str(
+                getattr(row, 'raw_image_path', '') or getattr(row, 'image_path', '')
+            )
+        )
+        mask_path = Path(
+            _clean_str(
+                getattr(row, 'raw_mask_path', '') or getattr(row, 'mask_path', '')
+            )
+        )
         if not image_path.exists():
             continue
         source_image_name = _clean_str(getattr(row, 'image_name', image_path.name))
         subject_image_id = _clean_str(
-            getattr(row, 'subject_image_id', '') or getattr(row, 'image_stem', Path(source_image_name).stem)
+            getattr(row, 'subject_image_id', '')
+            or getattr(row, 'image_stem', Path(source_image_name).stem)
         )
         rows.append(
             {
                 'cohort_id': COHORT_LAUREN_PREECLAMPSIA,
                 'image_path': _runtime_relative(image_path, runtime_root),
-                'mask_path': _runtime_relative(mask_path, runtime_root) if mask_path.exists() else '',
+                'mask_path': _runtime_relative(mask_path, runtime_root)
+                if mask_path.exists()
+                else '',
                 'score': getattr(row, 'score', ''),
                 'source_image_name': source_image_name,
                 'source_sample_id': subject_image_id,
@@ -1358,7 +1474,9 @@ def inventory_image_files_as_unresolved(
         return pd.DataFrame(columns=ENRICHED_MANIFEST_COLUMNS)
 
     rows: list[dict[str, Any]] = []
-    for image_path in sorted(path for path in image_root.rglob('*') if path.suffix.lower() in IMAGE_SUFFIXES):
+    for image_path in sorted(
+        path for path in image_root.rglob('*') if path.suffix.lower() in IMAGE_SUFFIXES
+    ):
         rows.append(
             {
                 'cohort_id': cohort_id,
@@ -1395,7 +1513,9 @@ def reduce_mr_replicates(
 
     for sheet_name, sheet in sheets.items():
         for column_index in sheet.columns:
-            values = pd.to_numeric(sheet.iloc[1:, column_index], errors='coerce').dropna()
+            values = pd.to_numeric(
+                sheet.iloc[1:, column_index], errors='coerce'
+            ).dropna()
             if values.empty:
                 continue
             image_label = _clean_excel_label(sheet.iloc[0, column_index])
@@ -1461,7 +1581,9 @@ def build_mr_runtime_cohort(
 ) -> pd.DataFrame:
     """Build VEGFRi MR image-level rows from workbook medians and whole-field TIFFs."""
     runtime_root = Path(runtime_root) if runtime_root else get_active_runtime_root()
-    workbook_path = Path(workbook_path) if workbook_path else get_mr_score_workbook_path()
+    workbook_path = (
+        Path(workbook_path) if workbook_path else get_mr_score_workbook_path()
+    )
     image_root = Path(image_root) if image_root else get_mr_image_root_path()
     if not workbook_path.exists():
         return pd.DataFrame(columns=ENRICHED_MANIFEST_COLUMNS)
@@ -1490,11 +1612,15 @@ def build_mr_runtime_cohort(
         records.append(
             {
                 'source_image_path': str(source_image) if source_image else '',
-                'source_image_name': source_image.name if source_image else f'{sample_id}.tif',
+                'source_image_name': source_image.name
+                if source_image
+                else f'{sample_id}.tif',
                 'source_sample_id': sample_id,
                 'source_score_row': _clean_str(row.source_score_row),
                 'source_score_sheet': _clean_str(row.source_score_sheet),
-                'source_batch': source_image.parent.name if source_image else _clean_str(row.source_score_sheet).lower(),
+                'source_batch': source_image.parent.name
+                if source_image
+                else _clean_str(row.source_score_sheet).lower(),
                 'score_path': _runtime_relative(localized_workbook, runtime_root)
                 if localized_workbook.exists()
                 else '',
@@ -1526,28 +1652,38 @@ def build_mr_runtime_cohort(
         'phase_1_use': 'concordance_only_not_training_admission',
     }
     (metadata_dir / 'mr_acquisition_metadata.json').write_text(
-        json.dumps(acquisition_metadata, indent=2),
-        encoding='utf-8',
+        json.dumps(acquisition_metadata, indent=2), encoding='utf-8'
     )
     return localized
 
 
-def verify_mapping_bundle(manifest: pd.DataFrame, *, runtime_root: Path | None = None) -> pd.DataFrame:
+def verify_mapping_bundle(
+    manifest: pd.DataFrame, *, runtime_root: Path | None = None
+) -> pd.DataFrame:
     """Apply the full fail-closed mapping-verification bundle."""
     runtime_root = Path(runtime_root) if runtime_root else get_active_runtime_root()
     result = manifest.copy()
-    for column in ('mapping_failure_reasons', 'verification_status', 'admission_status', 'exclusion_reason'):
+    for column in (
+        'mapping_failure_reasons',
+        'verification_status',
+        'admission_status',
+        'exclusion_reason',
+    ):
         if column not in result.columns:
             result[column] = ''
 
     conflict_source = result[~result['image_path'].map(_is_missing)].copy()
-    conflict_keys = conflict_source.groupby(['cohort_id', 'image_path'], dropna=False)['score'].nunique(dropna=True)
+    conflict_keys = conflict_source.groupby(['cohort_id', 'image_path'], dropna=False)[
+        'score'
+    ].nunique(dropna=True)
     conflicting_images = set(conflict_keys[conflict_keys > 1].index)
 
     for index, row in result.iterrows():
         preset_admission = _clean_str(row.get('admission_status'))
         if preset_admission in {'foreign', 'excluded'}:
-            result.at[index, 'mapping_failure_reasons'] = _clean_str(row.get('exclusion_reason'))
+            result.at[index, 'mapping_failure_reasons'] = _clean_str(
+                row.get('exclusion_reason')
+            )
             if not _clean_str(row.get('verification_status')):
                 result.at[index, 'verification_status'] = 'excluded'
             continue
@@ -1572,8 +1708,16 @@ def verify_mapping_bundle(manifest: pd.DataFrame, *, runtime_root: Path | None =
 
         if failures:
             result.at[index, 'mapping_failure_reasons'] = ';'.join(failures)
-            result.at[index, 'verification_status'] = 'failed' if 'conflicting_duplicate_scores' in failures else 'pending_discovery'
-            result.at[index, 'admission_status'] = 'excluded' if 'conflicting_duplicate_scores' in failures else 'unresolved'
+            result.at[index, 'verification_status'] = (
+                'failed'
+                if 'conflicting_duplicate_scores' in failures
+                else 'pending_discovery'
+            )
+            result.at[index, 'admission_status'] = (
+                'excluded'
+                if 'conflicting_duplicate_scores' in failures
+                else 'unresolved'
+            )
             result.at[index, 'exclusion_reason'] = ';'.join(failures)
         else:
             result.at[index, 'mapping_failure_reasons'] = ''
@@ -1595,19 +1739,423 @@ def apply_cohort_admission_policy(manifest: pd.DataFrame) -> pd.DataFrame:
             result.at[index, 'lane_assignment'] = LANE_MR_CONCORDANCE_ONLY
             if _clean_str(row.get('admission_status')) == 'admitted':
                 result.at[index, 'admission_status'] = 'evaluation_only'
-                result.at[index, 'exclusion_reason'] = 'mr_phase1_concordance_only_not_training_admitted'
-        elif lane == LANE_SCORED_ONLY and _clean_str(row.get('admission_status')) == 'admitted':
+                result.at[index, 'exclusion_reason'] = (
+                    'mr_phase1_concordance_only_not_training_admitted'
+                )
+        elif (
+            lane == LANE_SCORED_ONLY
+            and _clean_str(row.get('admission_status')) == 'admitted'
+        ):
             result.at[index, 'admission_status'] = 'pending_transport_audit'
-            result.at[index, 'exclusion_reason'] = 'scored_only_requires_segmentation_transport_audit'
+            result.at[index, 'exclusion_reason'] = (
+                'scored_only_requires_segmentation_transport_audit'
+            )
     return result
 
 
 def _default_dox_mask_quality_audit_path(runtime_root: Path) -> Path:
-    return runtime_root / 'raw_data' / 'cohorts' / 'vegfri_dox' / 'metadata' / 'mask_quality_audit.csv'
+    return (
+        runtime_root
+        / 'raw_data'
+        / 'cohorts'
+        / 'vegfri_dox'
+        / 'metadata'
+        / 'mask_quality_audit.csv'
+    )
 
 
 def _default_dox_mask_quality_panel_dir(runtime_root: Path) -> Path:
-    return runtime_root / 'raw_data' / 'cohorts' / 'vegfri_dox' / 'metadata' / 'mask_quality_panels'
+    return (
+        runtime_root
+        / 'raw_data'
+        / 'cohorts'
+        / 'vegfri_dox'
+        / 'metadata'
+        / 'mask_quality_panels'
+    )
+
+
+def _default_dox_scored_only_resolution_audit_path(runtime_root: Path) -> Path:
+    return (
+        runtime_root
+        / 'raw_data'
+        / 'cohorts'
+        / 'vegfri_dox'
+        / 'metadata'
+        / 'dox_scored_only_resolution_audit.csv'
+    )
+
+
+def _default_dox_scored_no_mask_smoke_manifest_path(runtime_root: Path) -> Path:
+    return (
+        runtime_root
+        / 'raw_data'
+        / 'cohorts'
+        / 'vegfri_dox'
+        / 'metadata'
+        / 'dox_scored_no_mask_smoke_manifest.csv'
+    )
+
+
+def _default_dox_scored_no_mask_image_root(runtime_root: Path) -> Path:
+    return (
+        runtime_root
+        / 'raw_data'
+        / 'cohorts'
+        / 'vegfri_dox'
+        / 'scored_no_mask_smoke'
+        / 'images'
+    )
+
+
+def _default_dox_label_studio_upload_root() -> Path:
+    return (
+        get_dox_label_studio_export_path().parent / 'label-studio' / 'media' / 'upload'
+    )
+
+
+def _index_label_studio_uploads(upload_root: Path) -> dict[str, list[Path]]:
+    upload_root = Path(upload_root)
+    suffix_index: dict[str, list[Path]] = {}
+    if not upload_root.exists():
+        return suffix_index
+    for path in sorted(upload_root.rglob('*')):
+        if not path.is_file() or path.suffix.lower() not in IMAGE_SUFFIXES:
+            continue
+        lower_name = path.name.lower()
+        suffix_index.setdefault(lower_name, []).append(path)
+        if '-' in lower_name:
+            suffix_index.setdefault(lower_name.split('-', 1)[1], []).append(path)
+    return suffix_index
+
+
+def build_dox_scored_only_resolution_audit(
+    manifest: pd.DataFrame | None = None,
+    *,
+    runtime_root: Path | None = None,
+    manifest_path: Path | None = None,
+    upload_root: Path | None = None,
+    audit_path: Path | None = None,
+    smoke_manifest_path: Path | None = None,
+    localized_image_root: Path | None = None,
+    update_manifest: bool = True,
+) -> dict[str, Path | dict[str, int]]:
+    """Resolve Dox scored-only rows to exact Label Studio upload images."""
+    runtime_root = Path(runtime_root) if runtime_root else get_active_runtime_root()
+    manifest = (
+        manifest.copy()
+        if manifest is not None
+        else load_runtime_cohort_manifest(manifest_path, runtime_root=runtime_root)
+    )
+    upload_root = (
+        Path(upload_root) if upload_root else _default_dox_label_studio_upload_root()
+    )
+    audit_path = (
+        Path(audit_path)
+        if audit_path
+        else _default_dox_scored_only_resolution_audit_path(runtime_root)
+    )
+    smoke_manifest_path = (
+        Path(smoke_manifest_path)
+        if smoke_manifest_path
+        else _default_dox_scored_no_mask_smoke_manifest_path(runtime_root)
+    )
+    localized_image_root = (
+        Path(localized_image_root)
+        if localized_image_root
+        else _default_dox_scored_no_mask_image_root(runtime_root)
+    )
+
+    lane_series = (
+        manifest['lane_assignment'].map(normalize_lane_assignment)
+        if 'lane_assignment' in manifest.columns
+        else pd.Series([''] * len(manifest), index=manifest.index)
+    )
+    dox_scored_only = manifest[
+        (manifest['cohort_id'].astype(str) == 'vegfri_dox')
+        & (lane_series == LANE_SCORED_ONLY)
+    ].copy()
+    upload_index = _index_label_studio_uploads(upload_root)
+    duplicate_names = (
+        dox_scored_only['source_image_name'].astype(str).duplicated(keep=False)
+    )
+    score_counts = (
+        dox_scored_only.assign(
+            _score_key=dox_scored_only['score'].map(
+                lambda value: ''
+                if _coerce_score(value) is None
+                else f'{float(value):g}'
+            )
+        )
+        .groupby('source_image_name')['_score_key']
+        .nunique(dropna=False)
+        .to_dict()
+        if not dox_scored_only.empty and 'source_image_name' in dox_scored_only
+        else {}
+    )
+
+    rows: list[dict[str, Any]] = []
+    for position, (index, row) in enumerate(dox_scored_only.iterrows()):
+        image_name = _clean_str(row.get('source_image_name'))
+        score = _coerce_score(row.get('score'))
+        matches = upload_index.get(image_name.lower(), []) if image_name else []
+        source_duplicate = (
+            bool(duplicate_names.loc[index]) if index in duplicate_names else False
+        )
+        conflicting_score = bool(score_counts.get(image_name, 0) > 1)
+        missing_score = score is None
+        exact_resolution_status = (
+            'resolved_exactly_once'
+            if len(matches) == 1
+            else 'resolved_multiple_uploads'
+            if len(matches) > 1
+            else 'unresolved_no_upload_match'
+        )
+        clean_status = (
+            'clean_smoke_candidate'
+            if (
+                exact_resolution_status == 'resolved_exactly_once'
+                and not source_duplicate
+                and not conflicting_score
+                and not missing_score
+            )
+            else 'excluded_from_clean_smoke_set'
+        )
+        exclusion_reasons = []
+        if exact_resolution_status != 'resolved_exactly_once':
+            exclusion_reasons.append(exact_resolution_status)
+        if source_duplicate:
+            exclusion_reasons.append('duplicate_source_image_name')
+        if conflicting_score:
+            exclusion_reasons.append('conflicting_scores_for_source_image_name')
+        if missing_score:
+            exclusion_reasons.append('missing_score')
+        first_match = matches[0] if matches else None
+        localized_image_path = ''
+        localized_image_sha256 = ''
+        copy_status = ''
+        if clean_status == 'clean_smoke_candidate' and first_match:
+            sample_dir = _slug(row.get('source_sample_id') or 'unknown_sample')
+            filename = (
+                f'{_clean_str(row.get("manifest_row_id")) or _slug(image_name)}'
+                f'{first_match.suffix.lower()}'
+            )
+            destination = localized_image_root / sample_dir / filename
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if not destination.exists() or (
+                destination.is_file()
+                and sha256_file(destination) != sha256_file(first_match)
+            ):
+                shutil.copy2(first_match, destination)
+                copy_status = 'copied'
+            else:
+                copy_status = 'already_localized'
+            localized_image_path = _runtime_relative(destination, runtime_root)
+            localized_image_sha256 = sha256_file(destination)
+        rows.append(
+            {
+                'manifest_index': int(position),
+                'manifest_row_id': _clean_str(row.get('manifest_row_id')),
+                'cohort_id': 'vegfri_dox',
+                'source_image_name': image_name,
+                'source_sample_id': _clean_str(row.get('source_sample_id')),
+                'source_score_row': _clean_str(row.get('source_score_row')),
+                'score': '' if score is None else score,
+                'admission_status': _clean_str(row.get('admission_status')),
+                'join_status': _clean_str(row.get('join_status')),
+                'exclusion_reason': _clean_str(row.get('exclusion_reason')),
+                'labelstudio_upload_root': str(upload_root),
+                'labelstudio_image_match_count': int(len(matches)),
+                'labelstudio_image_path': str(first_match) if first_match else '',
+                'labelstudio_image_sha256': sha256_file(first_match)
+                if first_match and first_match.exists()
+                else '',
+                'localized_image_path': localized_image_path,
+                'localized_image_sha256': localized_image_sha256,
+                'localized_copy_status': copy_status,
+                'resolution_status': exact_resolution_status,
+                'duplicate_source_image_name': source_duplicate,
+                'conflicting_scores_for_source_image_name': conflicting_score,
+                'missing_score': missing_score,
+                'clean_smoke_status': clean_status,
+                'clean_smoke_exclusion_reasons': ';'.join(exclusion_reasons),
+            }
+        )
+    audit_columns = [
+        'manifest_index',
+        'manifest_row_id',
+        'cohort_id',
+        'source_image_name',
+        'source_sample_id',
+        'source_score_row',
+        'score',
+        'admission_status',
+        'join_status',
+        'exclusion_reason',
+        'labelstudio_upload_root',
+        'labelstudio_image_match_count',
+        'labelstudio_image_path',
+        'labelstudio_image_sha256',
+        'localized_image_path',
+        'localized_image_sha256',
+        'localized_copy_status',
+        'resolution_status',
+        'duplicate_source_image_name',
+        'conflicting_scores_for_source_image_name',
+        'missing_score',
+        'clean_smoke_status',
+        'clean_smoke_exclusion_reasons',
+    ]
+    audit = pd.DataFrame(rows, columns=audit_columns)
+    clean = audit[audit['clean_smoke_status'] == 'clean_smoke_candidate'].copy()
+    if not clean.empty:
+        clean['image_path'] = clean['localized_image_path']
+        clean['mask_path'] = ''
+        clean['lane_assignment'] = LANE_SCORED_ONLY
+        clean['artifact_family'] = 'dox_scored_no_mask_smoke'
+        clean['heldout_role'] = 'pre_mr_segmentation_quantification_smoke'
+        clean = clean[
+            [
+                'manifest_row_id',
+                'cohort_id',
+                'source_image_name',
+                'source_sample_id',
+                'source_score_row',
+                'score',
+                'image_path',
+                'mask_path',
+                'labelstudio_image_path',
+                'labelstudio_image_sha256',
+                'localized_image_sha256',
+                'lane_assignment',
+                'artifact_family',
+                'heldout_role',
+            ]
+        ]
+    else:
+        clean = pd.DataFrame(
+            columns=[
+                'manifest_row_id',
+                'cohort_id',
+                'source_image_name',
+                'source_sample_id',
+                'source_score_row',
+                'score',
+                'image_path',
+                'mask_path',
+                'labelstudio_image_path',
+                'labelstudio_image_sha256',
+                'localized_image_sha256',
+                'lane_assignment',
+                'artifact_family',
+                'heldout_role',
+            ]
+        )
+
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    smoke_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    audit.to_csv(audit_path, index=False)
+    clean.to_csv(smoke_manifest_path, index=False)
+    if update_manifest:
+        manifest_update = manifest.copy()
+        obsolete_transport_columns = [
+            'dox_scored_no_mask_image_path',
+            'dox_scored_no_mask_image_sha256',
+            'dox_scored_no_mask_source_image_path',
+        ]
+        manifest_update = manifest_update.drop(
+            columns=[
+                column
+                for column in obsolete_transport_columns
+                if column in manifest_update.columns
+            ],
+            errors='ignore',
+        )
+        transport_columns = [
+            'dox_scored_no_mask_resolution_status',
+            'dox_scored_no_mask_clean_smoke_status',
+            'eligible_dox_scored_no_mask_smoke',
+            'dox_scored_no_mask_audit_path',
+            'dox_scored_no_mask_exclusion_reason',
+        ]
+        for column in transport_columns:
+            if column not in manifest_update.columns:
+                manifest_update[column] = ''
+        audit_lookup = audit.set_index('manifest_row_id', drop=False)
+        for index, row in manifest_update.iterrows():
+            row_id = _clean_str(row.get('manifest_row_id'))
+            if row_id not in audit_lookup.index:
+                continue
+            audit_row = audit_lookup.loc[row_id]
+            if isinstance(audit_row, pd.DataFrame):
+                audit_row = audit_row.iloc[0]
+            manifest_update.at[index, 'dox_scored_no_mask_resolution_status'] = (
+                _clean_str(audit_row.get('resolution_status'))
+            )
+            manifest_update.at[index, 'dox_scored_no_mask_clean_smoke_status'] = (
+                _clean_str(audit_row.get('clean_smoke_status'))
+            )
+            manifest_update.at[index, 'eligible_dox_scored_no_mask_smoke'] = bool(
+                audit_row.get('clean_smoke_status') == 'clean_smoke_candidate'
+            )
+            if audit_row.get('clean_smoke_status') == 'clean_smoke_candidate':
+                manifest_update.at[index, 'image_path'] = _clean_str(
+                    audit_row.get('localized_image_path')
+                )
+                manifest_update.at[index, 'image_sha256'] = _clean_str(
+                    audit_row.get('localized_image_sha256')
+                )
+                manifest_update.at[index, 'mask_path'] = ''
+                manifest_update.at[index, 'mask_sha256'] = ''
+            manifest_update.at[index, 'dox_scored_no_mask_audit_path'] = (
+                _runtime_relative(audit_path, runtime_root)
+            )
+            manifest_update.at[index, 'dox_scored_no_mask_exclusion_reason'] = (
+                _clean_str(audit_row.get('clean_smoke_exclusion_reasons'))
+            )
+        target_manifest_path = (
+            Path(manifest_path)
+            if manifest_path
+            else get_runtime_cohort_manifest_path(runtime_root)
+        )
+        target_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_update.to_csv(target_manifest_path, index=False)
+    summary = {
+        'scored_only_rows': int(len(audit)),
+        'resolved_exactly_once_rows': int(
+            audit['resolution_status'].eq('resolved_exactly_once').sum()
+        )
+        if not audit.empty
+        else 0,
+        'duplicate_source_image_name_rows': int(
+            audit['duplicate_source_image_name'].sum()
+        )
+        if not audit.empty
+        else 0,
+        'conflicting_score_rows': int(
+            audit['conflicting_scores_for_source_image_name'].sum()
+        )
+        if not audit.empty
+        else 0,
+        'missing_score_rows': int(audit['missing_score'].sum())
+        if not audit.empty
+        else 0,
+        'clean_smoke_rows': int(len(clean)),
+        'localized_image_rows': int(
+            audit['localized_image_path'].astype(str).str.len().gt(0).sum()
+        )
+        if not audit.empty
+        else 0,
+    }
+    summary_path = audit_path.with_suffix('.summary.json')
+    summary_path.write_text(json.dumps(summary, indent=2), encoding='utf-8')
+    return {
+        'audit': audit_path,
+        'smoke_manifest': smoke_manifest_path,
+        'summary': summary_path,
+        'localized_image_root': localized_image_root,
+        'counts': summary,
+    }
 
 
 def _mask_connected_component_count(mask_array: np.ndarray) -> int:
@@ -1622,7 +2170,9 @@ def _mask_connected_component_count(mask_array: np.ndarray) -> int:
         return 1
 
 
-def _thumbnail_with_mask_overlay(image_path: Path, mask_path: Path, label: str, size: int = 180):
+def _thumbnail_with_mask_overlay(
+    image_path: Path, mask_path: Path, label: str, size: int = 180
+):
     from PIL import Image, ImageDraw
 
     image = Image.open(image_path).convert('RGB')
@@ -1662,7 +2212,9 @@ def _write_mask_quality_review_panels(
         page = rows.iloc[start : start + page_size]
         page_columns = min(columns, len(page))
         page_rows = int(math.ceil(len(page) / page_columns))
-        sheet = Image.new('RGB', (page_columns * tile_width, page_rows * tile_height), 'white')
+        sheet = Image.new(
+            'RGB', (page_columns * tile_width, page_rows * tile_height), 'white'
+        )
         for item_index, row in enumerate(page.itertuples(index=False)):
             image_path = resolve_runtime_asset_path(row.image_path, runtime_root)
             mask_path = resolve_runtime_asset_path(row.mask_path, runtime_root)
@@ -1670,7 +2222,9 @@ def _write_mask_quality_review_panels(
                 f'{row.source_sample_id} {row.score} '
                 f'fg={float(row.foreground_fraction):.3f} {row.mask_quality_decision}'
             )
-            tile = _thumbnail_with_mask_overlay(image_path, mask_path, label, size=tile_width)
+            tile = _thumbnail_with_mask_overlay(
+                image_path, mask_path, label, size=tile_width
+            )
             x = (item_index % page_columns) * tile_width
             y = (item_index // page_columns) * tile_height
             sheet.paste(tile, (x, y))
@@ -1695,7 +2249,11 @@ def build_dox_mask_quality_audit(
         if manifest is not None
         else load_runtime_cohort_manifest(manifest_path, runtime_root=runtime_root)
     )
-    audit_path = Path(audit_path) if audit_path else _default_dox_mask_quality_audit_path(runtime_root)
+    audit_path = (
+        Path(audit_path)
+        if audit_path
+        else _default_dox_mask_quality_audit_path(runtime_root)
+    )
     panel_dir = (
         Path(panel_dir)
         if panel_dir
@@ -1764,7 +2322,9 @@ def build_dox_mask_quality_audit(
 
     audit = pd.DataFrame(rows)
     panel_paths = (
-        _write_mask_quality_review_panels(audit, runtime_root=runtime_root, output_dir=panel_dir)
+        _write_mask_quality_review_panels(
+            audit, runtime_root=runtime_root, output_dir=panel_dir
+        )
         if not audit.empty
         else []
     )
@@ -1775,9 +2335,15 @@ def build_dox_mask_quality_audit(
         'decision_counts': audit['mask_quality_decision'].value_counts().to_dict()
         if not audit.empty
         else {},
-        'foreground_fraction_min': float(audit['foreground_fraction'].min()) if not audit.empty else None,
-        'foreground_fraction_median': float(audit['foreground_fraction'].median()) if not audit.empty else None,
-        'foreground_fraction_max': float(audit['foreground_fraction'].max()) if not audit.empty else None,
+        'foreground_fraction_min': float(audit['foreground_fraction'].min())
+        if not audit.empty
+        else None,
+        'foreground_fraction_median': float(audit['foreground_fraction'].median())
+        if not audit.empty
+        else None,
+        'foreground_fraction_max': float(audit['foreground_fraction'].max())
+        if not audit.empty
+        else None,
         'panel_pages': panel_paths,
         'training_admission_rule': 'Dox manual-mask rows are accepted as first-class glomeruli training labels; this audit is provenance only',
     }
@@ -1794,7 +2360,11 @@ def apply_dox_mask_quality_approval(
 ) -> pd.DataFrame:
     """Attach optional Dox mask-audit provenance without changing admission."""
     runtime_root = Path(runtime_root) if runtime_root else get_active_runtime_root()
-    audit_path = Path(audit_path) if audit_path else _default_dox_mask_quality_audit_path(runtime_root)
+    audit_path = (
+        Path(audit_path)
+        if audit_path
+        else _default_dox_mask_quality_audit_path(runtime_root)
+    )
     result = manifest.copy()
     for column in ('mask_quality_review_status', 'mask_quality_audit_path'):
         if column not in result.columns:
@@ -1805,14 +2375,12 @@ def apply_dox_mask_quality_approval(
     audit = pd.read_csv(audit_path).fillna('')
     approved = set(
         audit.loc[
-            audit['mask_quality_decision'].astype(str).eq('approved'),
-            'manifest_row_id',
+            audit['mask_quality_decision'].astype(str).eq('approved'), 'manifest_row_id'
         ].astype(str)
     )
     blocked = set(
         audit.loc[
-            audit['mask_quality_decision'].astype(str).eq('blocked'),
-            'manifest_row_id',
+            audit['mask_quality_decision'].astype(str).eq('blocked'), 'manifest_row_id'
         ].astype(str)
     )
     audit_rel = _runtime_relative(audit_path, runtime_root)
@@ -1820,7 +2388,8 @@ def apply_dox_mask_quality_approval(
         row_id = _clean_str(row.get('manifest_row_id'))
         if (
             _clean_str(row.get('cohort_id')) == 'vegfri_dox'
-            and normalize_lane_assignment(row.get('lane_assignment')) == LANE_MANUAL_MASK_EXTERNAL
+            and normalize_lane_assignment(row.get('lane_assignment'))
+            == LANE_MANUAL_MASK_EXTERNAL
         ):
             if row_id in approved:
                 result.at[index, 'mask_quality_review_status'] = 'approved'
@@ -1855,7 +2424,9 @@ def apply_discovery_reconciliation(
             result.at[index, 'join_status'] = 'pending_discovery'
             result.at[index, 'verification_status'] = 'pending_discovery'
             result.at[index, 'admission_status'] = 'pending_discovery'
-            result.at[index, 'exclusion_reason'] = 'pending_discovery:' + ','.join(missing)
+            result.at[index, 'exclusion_reason'] = 'pending_discovery:' + ','.join(
+                missing
+            )
         elif admission == 'pending_discovery':
             result.at[index, 'admission_status'] = 'unresolved'
             if not _clean_str(row.get('exclusion_reason')):
@@ -1864,10 +2435,7 @@ def apply_discovery_reconciliation(
 
 
 def build_predicted_roi_grading_inputs(
-    manifest: pd.DataFrame,
-    output_dir: Path,
-    *,
-    segmentation_artifact: str,
+    manifest: pd.DataFrame, output_dir: Path, *, segmentation_artifact: str
 ) -> Path:
     """Write predicted-ROI grading rows for admitted scored-only manifest rows."""
     lane_series = (
@@ -1909,17 +2477,12 @@ def build_predicted_roi_grading_inputs(
 
 
 def build_predicted_roi_grading_inputs_from_manifest(
-    manifest_path: Path,
-    output_dir: Path,
-    *,
-    segmentation_artifact: str,
+    manifest_path: Path, output_dir: Path, *, segmentation_artifact: str
 ) -> Path:
     """Build predicted-ROI inputs directly from the canonical runtime manifest."""
     manifest = load_runtime_cohort_manifest(manifest_path)
     return build_predicted_roi_grading_inputs(
-        manifest,
-        output_dir,
-        segmentation_artifact=segmentation_artifact,
+        manifest, output_dir, segmentation_artifact=segmentation_artifact
     )
 
 
@@ -1954,10 +2517,17 @@ def validate_segmentation_transport_inputs(
     row_id_column: str = 'manifest_row_id',
 ) -> pd.DataFrame:
     """Block transport admission when segmentation or grading evidence is missing or invalid."""
-    required = {row_id_column, 'segmentation_status', 'accepted_roi_count', 'grading_status'}
+    required = {
+        row_id_column,
+        'segmentation_status',
+        'accepted_roi_count',
+        'grading_status',
+    }
     missing_columns = sorted(required.difference(segmentation_outputs.columns))
     if missing_columns:
-        raise CohortManifestError(f'missing_transport_columns:{",".join(missing_columns)}')
+        raise CohortManifestError(
+            f'missing_transport_columns:{",".join(missing_columns)}'
+        )
 
     output_lookup = segmentation_outputs.set_index(row_id_column)
     result = manifest.copy()
@@ -2038,12 +2608,18 @@ def build_mr_concordance_workflow(
     output_dir.mkdir(parents=True, exist_ok=True)
     mr_manifest = manifest[
         (manifest['cohort_id'].astype(str) == 'vegfri_mr')
-        & (manifest['admission_status'].astype(str).isin({'evaluation_only', 'admitted'}))
+        & (
+            manifest['admission_status']
+            .astype(str)
+            .isin({'evaluation_only', 'admitted'})
+        )
     ].copy()
     roi = inferred_roi_grades.copy()
     roi['component_area'] = pd.to_numeric(roi['component_area'], errors='coerce')
     roi['roi_grade'] = pd.to_numeric(roi['roi_grade'], errors='coerce')
-    roi['accepted_roi'] = (roi['component_area'] >= min_component_area) & roi['roi_grade'].notna()
+    roi['accepted_roi'] = (roi['component_area'] >= min_component_area) & roi[
+        'roi_grade'
+    ].notna()
 
     accepted = roi[roi['accepted_roi']].copy()
     aggregate_rows: list[dict[str, Any]] = []
@@ -2072,8 +2648,7 @@ def build_mr_concordance_workflow(
 
     image_level = pd.DataFrame(aggregate_rows)
     metrics = mr_concordance_metrics(
-        image_level['human_image_median'],
-        image_level['inferred_image_median'],
+        image_level['human_image_median'], image_level['inferred_image_median']
     )
     image_level_path = output_dir / 'mr_image_level_concordance.csv'
     metrics_path = output_dir / 'mr_concordance_metrics.json'
@@ -2153,7 +2728,11 @@ def build_current_accessible_cohorts(
     if not mr.empty:
         manifest_frames.append(mr)
 
-    manifest = pd.concat(manifest_frames, ignore_index=True) if manifest_frames else pd.DataFrame(columns=ENRICHED_MANIFEST_COLUMNS)
+    manifest = (
+        pd.concat(manifest_frames, ignore_index=True)
+        if manifest_frames
+        else pd.DataFrame(columns=ENRICHED_MANIFEST_COLUMNS)
+    )
     if manifest.empty:
         manifest_path = write_unified_manifest(
             manifest, manifest_path, runtime_root=runtime_root
@@ -2189,6 +2768,8 @@ def build_current_accessible_cohorts(
         manifest_path=manifest_path,
         summary_path=summary_path,
         rows=int(len(policy_applied)),
-        status_counts={str(k): int(v) for k, v in summary.get('status_counts', {}).items()},
+        status_counts={
+            str(k): int(v) for k, v in summary.get('status_counts', {}).items()
+        },
         lane_counts={str(k): int(v) for k, v in summary.get('lane_counts', {}).items()},
     )

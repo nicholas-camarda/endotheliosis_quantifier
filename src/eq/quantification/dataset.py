@@ -32,7 +32,12 @@ def _scan_canonical_image_mask_pairs(raw_project_dir: Path) -> pd.DataFrame:
         parsed = parse_image_path(image_path, allow_legacy=False)
         if parsed is None:
             continue
-        mask_path = raw_project_dir / 'masks' / parsed.subject_prefix / f'{parsed.subject_image_id}_mask{image_path.suffix.lower()}'
+        mask_path = (
+            raw_project_dir
+            / 'masks'
+            / parsed.subject_prefix
+            / f'{parsed.subject_image_id}_mask{image_path.suffix.lower()}'
+        )
         if not mask_path.exists():
             mask_path = None
         records.append(
@@ -48,9 +53,7 @@ def _scan_canonical_image_mask_pairs(raw_project_dir: Path) -> pd.DataFrame:
 
 
 def build_scored_example_table(
-    metadata_path: Path,
-    raw_project_dir: Path,
-    output_dir: Path,
+    metadata_path: Path, raw_project_dir: Path, output_dir: Path
 ) -> dict[str, Path]:
     """Create one row per scored glomerulus with canonical provenance fields."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -58,9 +61,7 @@ def build_scored_example_table(
     canonical_pairs = _scan_canonical_image_mask_pairs(raw_project_dir)
 
     scored = metadata.merge(
-        canonical_pairs,
-        how='left',
-        on=['subject_image_id', 'subject_prefix'],
+        canonical_pairs, how='left', on=['subject_image_id', 'subject_prefix']
     )
     scored['join_status'] = scored['raw_pair_status'].fillna('missing_canonical_pair')
     scored['roi_status'] = 'pending'
@@ -74,13 +75,12 @@ def build_scored_example_table(
 
     summary = {
         'total_scored_rows': int(len(scored)),
-        'join_status_counts': scored['join_status'].value_counts(dropna=False).to_dict(),
+        'join_status_counts': scored['join_status']
+        .value_counts(dropna=False)
+        .to_dict(),
         'subjects_with_scores': int(scored['subject_image_id'].nunique()),
     }
     summary_path = output_dir / 'scored_examples_summary.json'
     summary_path.write_text(json.dumps(summary, indent=2))
 
-    return {
-        'scored_examples': scored_path,
-        'summary': summary_path,
-    }
+    return {'scored_examples': scored_path, 'summary': summary_path}

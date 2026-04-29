@@ -32,9 +32,13 @@ def test_build_migration_plan_uses_mapping_and_apply(tmp_path: Path):
     (image_dir / 'T19_Image99.jpg').write_bytes(b'image')
     (mask_dir / 'T19_Image99_mask.jpg').write_bytes(b'mask')
 
-    metadata_df = pd.DataFrame({'subject_id': ['T19-1'], 'glomerulus_id': [1], 'score': [0.5]})
+    metadata_df = pd.DataFrame(
+        {'subject_id': ['T19-1'], 'glomerulus_id': [1], 'score': [0.5]}
+    )
     mapping_file = tmp_path / 'mapping.csv'
-    pd.DataFrame({'legacy_stem': ['T19_Image99'], 'subject_image_id': ['T19-1']}).to_csv(mapping_file, index=False)
+    pd.DataFrame(
+        {'legacy_stem': ['T19_Image99'], 'subject_image_id': ['T19-1']}
+    ).to_csv(mapping_file, index=False)
 
     plan = build_migration_plan(project_dir, metadata_df, mapping_file=mapping_file)
     assert set(plan['status']) == {'rename_required'}
@@ -55,11 +59,7 @@ def test_validate_project_contract_flags_legacy_and_missing_pairs(tmp_path: Path
     (mask_dir / 'T19-2_mask.jpg').write_bytes(b'mask')
 
     metadata_df = pd.DataFrame(
-        {
-            'subject_id': ['T19-1', 'T19-2'],
-            'glomerulus_id': [1, 1],
-            'score': [0.0, 1.0],
-        }
+        {'subject_id': ['T19-1', 'T19-2'], 'glomerulus_id': [1, 1], 'score': [0.0, 1.0]}
     )
     report = validate_project_contract(project_dir, metadata_df, require_canonical=True)
     assert report['overall_status'] == 'FAIL'
@@ -72,7 +72,9 @@ def test_create_backup_snapshot_writes_manifests(tmp_path: Path):
     source_dir.mkdir()
     (source_dir / 'a.txt').write_text('alpha', encoding='utf-8')
 
-    artifact = create_backup_snapshot([source_dir], tmp_path / 'backup', 'demo', timestamp='20260402_130000')
+    artifact = create_backup_snapshot(
+        [source_dir], tmp_path / 'backup', 'demo', timestamp='20260402_130000'
+    )
     assert artifact.backup_root.exists()
     assert artifact.manifest_files.exists()
     assert artifact.manifest_sha256.exists()

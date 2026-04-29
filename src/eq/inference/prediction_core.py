@@ -80,6 +80,58 @@ class PredictionCore:
         img_tensor = img_tensor.permute(2, 0, 1).unsqueeze(0)
         
         return img_tensor
+
+    def preprocess_image_imagenet_normalized(
+        self, image: Union[Image.Image, np.ndarray]
+    ) -> torch.Tensor:
+        """Preprocess an image with the ImageNet normalization used by FastAI exports."""
+        img_tensor = self.preprocess_image(image)
+        mean = torch.tensor([0.485, 0.456, 0.406], dtype=img_tensor.dtype).view(
+            1, 3, 1, 1
+        )
+        std = torch.tensor([0.229, 0.224, 0.225], dtype=img_tensor.dtype).view(
+            1, 3, 1, 1
+        )
+        return (img_tensor - mean) / std
+
+    def predict_segmentation_probability(
+        self,
+        model: torch.nn.Module,
+        image: Union[Image.Image, np.ndarray],
+        *,
+        foreground_channel: int = 1,
+        imagenet_normalize: bool = True,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        """Predict a foreground probability mask using the shared preprocessing contract."""
+        img_tensor = (
+            self.preprocess_image_imagenet_normalized(image)
+            if imagenet_normalize
+            else self.preprocess_image(image)
+        )
+        try:
+            device = next(model.parameters()).device
+            img_tensor = img_tensor.to(device)
+        except StopIteration:
+            device = torch.device('cpu')
+        model.eval()
+        with torch.no_grad():
+            raw_output = model(img_tensor)
+        if raw_output.shape[1] == 2:
+            probabilities = torch.softmax(raw_output, dim=1)[:, foreground_channel]
+        else:
+            probabilities = torch.sigmoid(raw_output).squeeze(1)
+        probability = probabilities.squeeze().detach().cpu().numpy()
+        audit = {
+            'input_tensor_shape': [int(value) for value in img_tensor.shape],
+            'raw_output_shape': [int(value) for value in raw_output.shape],
+            'probability_shape': [int(value) for value in probability.shape],
+            'foreground_channel': int(foreground_channel),
+            'inference_preprocessing': 'imagenet_normalized'
+            if imagenet_normalize
+            else 'unit_scaled',
+            'device': str(device),
+        }
+        return probability, audit
     
     def predict_with_model(self, model: torch.nn.Module, image: Union[Image.Image, np.ndarray],
                           threshold: float = 0.5) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -337,6 +389,5 @@ def convert_prediction_to_numpy(pred_tensor: torch.Tensor) -> np.ndarray:
     """
     core = create_prediction_core()
     return core.convert_tensor_to_numpy(pred_tensor)
-
 
 

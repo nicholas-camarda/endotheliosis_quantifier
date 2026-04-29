@@ -2025,6 +2025,7 @@ def _write_audit_results(change_dir: Path, payload: dict[str, Any]) -> None:
         '',
         '`src/eq/utils/execution_logging.py` is present. P2 participates as `high_level_function_events_only`: durable capture is owned by `endotheliosis_quantification` through `eq run-config --config configs/endotheliosis_quantification.yaml`; P2 adds no independent log root, file handlers, or tee implementation.',
     ]
+    change_dir.mkdir(parents=True, exist_ok=True)
     (change_dir / 'audit-results.md').write_text(
         '\n'.join(lines) + '\n', encoding='utf-8'
     )

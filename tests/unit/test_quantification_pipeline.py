@@ -10,6 +10,7 @@ from eq.quantification.labelstudio_scores import recover_label_studio_score_tabl
 from eq.quantification.ordinal import CanonicalOrdinalClassifier
 from eq.quantification.pipeline import (
     ALLOWED_SCORE_VALUES,
+    _apply_score_label_overrides,
     _prepare_encoder_for_forward,
     build_image_level_scored_example_table,
     build_manifest_scored_example_table,
@@ -302,6 +303,43 @@ def test_manifest_scored_examples_use_all_admitted_mask_paired_rows(tmp_path: Pa
     assert summary['cohort_counts'] == {'lauren_preeclampsia': 1, 'vegfri_dox': 1}
     assert summary['identity_contract']['validation_group_key'] == 'subject_id'
     assert summary['identity_contract']['duplicate_image_ids'] == []
+
+
+def test_score_label_overrides_replace_scores_and_write_audit(tmp_path: Path):
+    scored = pd.DataFrame(
+        {'subject_image_id': ['case_1', 'case_2'], 'score': [0.5, 2.0]}
+    )
+    overrides = tmp_path / 'rubric_overrides.csv'
+    pd.DataFrame(
+        {
+            'subject_image_id': ['case_1'],
+            'rubric_score': [2.0],
+            'reviewer_confidence_1_5': ['high'],
+            'accepted_teaching': [True],
+            'review_flags': ['RBCs'],
+        }
+    ).to_csv(overrides, index=False)
+
+    updated, artifacts = _apply_score_label_overrides(
+        scored, overrides, tmp_path / 'out'
+    )
+
+    assert updated.loc[updated['subject_image_id'] == 'case_1', 'score'].item() == 2.0
+    assert (
+        updated.loc[
+            updated['subject_image_id'] == 'case_1',
+            'original_score_before_label_override',
+        ].item()
+        == 0.5
+    )
+    audit = pd.read_csv(artifacts['score_label_overrides_audit'])
+    assert audit.loc[0, 'original_score'] == 0.5
+    assert audit.loc[0, 'override_score'] == 2.0
+    summary = json.loads(
+        artifacts['score_label_overrides_summary'].read_text(encoding='utf-8')
+    )
+    assert summary['applied_rows'] == 1
+    assert summary['severe_boundary_changed_rows'] == 1
 
 
 def test_canonical_ordinal_classifier_outputs_probability_simplex():

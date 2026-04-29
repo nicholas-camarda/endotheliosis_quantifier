@@ -18,24 +18,29 @@ available evidence
   +-- labels are image-level aggregates, not per-glomerulus truth
   |
   v
-best supportable product
+main product target
   |
-  +-- first: high-sensitivity current-data severe triage
-  +-- second: deployable ordinal burden bands if validated
-  +-- third: six-bin ordinal comparator if stable and useful
-  +-- never: unsupported scalar burden or external validation claim
+  +-- deployable MR TIFF segmentation-to-quantification grade model
+      |
+      +-- candidate output: ordinal grade bands if validated
+      +-- candidate output: calibrated score-like or scalar grade estimate only if gates pass
+      +-- fallback output: high-sensitivity severe-risk triage if richer grade outputs fail
+      +-- diagnostic only: six-bin comparator or scalar output unless gates pass
+      +-- never: unsupported scalar burden or external validation claim
 ```
 
 ## Explicit Decisions
 
-- Primary implementation module: `src/eq/quantification/functional_p3.py`.
-- Primary runtime root: `burden_model/functional_quantification_p3/`.
+- Primary implementation module: `src/eq/quantification/endotheliosis_grade_model.py`.
+- Primary runtime root: `burden_model/endotheliosis_grade_model/`.
 - Pipeline integration point: after P2 severe-aware outputs are available in `src/eq/quantification/pipeline.py`.
 - No internal locked test split is required; scarce current labeled data are preserved for grouped development validation and final refit.
-- Primary product objective: reduce adjudicated `score >= 2` severe false negatives under a current-data/source-sensitive claim boundary.
+- Primary product objective: deploy a defensible endotheliosis grade quantification model on the MR TIFF workflow under a current-data/source-sensitive claim boundary.
 - Available quantification labels are image-level aggregate labels. Multi-glomerulus images must not be treated as if every component has the same per-glomerulus truth.
-- Secondary product objective: test ordinal burden bands before declaring ordinal burden unsupported.
-- Severe-risk gates outrank scalar or exact-score burden metrics.
+- Row-level optional feature tables, including learned ROI and morphology feature tables, join to P3 candidate rows by `subject_image_id` and `glomerulus_id`. Missing or duplicate row-level join keys are hard blockers, not image-level fallback joins.
+- Primary safety objective: preserve useful grade 2/3 severe sensitivity so the deployed grade model does not look acceptable while missing clinically/biologically important severe disease.
+- Secondary product objective: test ordinal burden bands before falling back to severe-risk triage or diagnostic-only outputs.
+- Severe-risk gates are safety gates for deployability; they do not replace the MR TIFF deployment and grade-quantification objective.
 - Three-band ordinal is the first ordinal product candidate; six-bin exact ordinal is diagnostic unless it clears grouped out-of-fold gates.
 - Morphology features may be predictive covariates even when blocked for biological closed-lumen claims.
 - Learned ROI and embedding-heavy neural features must be tested as full P3 candidate lanes, not only mentioned as theoretical comparators.
@@ -44,21 +49,25 @@ best supportable product
 - P3 must not require new manual review during implementation.
 - P3 must not start segmentation-backbone work unless the final evidence localizes the bottleneck to mask geometry.
 - P3 durable logging remains caller-owned through the existing `endotheliosis_quantification` run-config surface.
+- Shared model-selection mechanics are governed in `src/eq/quantification/modeling_contracts.py`. P3 must use those helpers for finite feature matrices, recall-targeted threshold selection, warning capture, JSON/manifest writing, and grouped-development metric labels instead of recreating those contracts in the selector.
+- Candidate family identity must be source-truthful. A candidate named `embedding_*` is invalid unless actual embedding columns are present, and a candidate named `learned_*` is invalid unless learned-feature columns are present.
+- MR TIFF promotion requires an inference schema whose feature columns can be computed from the segmentation-to-ROI deployment path. Learned/embedding-heavy feature schemas remain diagnostic unless the deployment path computes those exact columns.
+- A Dox scored-no-mask smoke set is the pre-MR deployment bridge. It is built from Dox `scored_only` manifest rows that resolve exactly once to Label Studio upload images, have nonmissing scores, and have no duplicate/conflicting source-image evidence. Clean images are copied to the runtime cohort tree, stored in canonical `image_path`, and permitted for this workflow by Dox smoke eligibility/status columns.
 
 ## Product Ladder
 
-P3 should climb this ladder and stop at the highest rung supported by evidence:
+The grade-model workflow should climb this ladder and stop at the highest rung supported by evidence:
 
 | Rung | Product | Claim Boundary | Promotion Gate |
 | --- | --- | --- | --- |
-| 1 | Current-data severe-risk triage | Flags likely grade 2/3 images for review | high severe recall with finite grouped out-of-fold evidence |
-| 2 | Current-data ordinal burden bands | Predicts none/low, mild/mid, severe bands | severe-band recall plus band balanced accuracy |
-| 3 | Six-bin ordinal comparator | Diagnostic six-score rubric probabilities/sets | beats baselines with calibrated adjacent errors |
-| 4 | Scalar burden | Continuous grade-equivalent score | only if ordinal/scalar gates pass; unlikely from P2 evidence |
-| 5 | README-facing MR TIFF deployment | Runs supported segmentation-to-quantification test on the `vegfri_mr` whole-field TIFF cohort | quantification gate plus MR deployment test pass |
+| 1 | README-facing MR TIFF grade model | Runs segmentation-to-quantification on `vegfri_mr` and reports the best supported grade output | selected grade-output gate plus severe safety gate plus MR deployment test pass |
+| 2 | README-facing MR TIFF severe-risk triage | Runs segmentation-to-quantification on `vegfri_mr` and flags likely grade 2/3 for review | severe safety gate plus MR deployment test pass when ordinal bands fail |
+| 3 | Model-ready grade artifact pending MR deployment | Current-data grade or severe gate passes, but MR deployment is blocked or incomplete | model artifacts and inference schema pass, MR deployment not yet passable |
+| 4 | Diagnostic current-data grade model | Useful development evidence but not deployable | reports failed gate and best failed candidate |
+| 5 | Current-data insufficient | No candidate beats baseline gates after bounded attempts | writes additional-data recommendation |
 | 6 | External validation | Generalizes to new cohort/source | out of scope; current severe positives are source-confounded |
 
-The implementation should not stop at rung 1 if rung 2 is feasible. It should attempt rung 2 and rung 3, but severe false-negative reduction is the main product priority.
+The preferred product is an MR TIFF deployable grade model. The selected grade output may be ordinal bands, a calibrated score-like output, or another gated representation if it is the best defensible result from the candidate loop. Severe-risk triage is the fallback product if richer grade outputs fail but severe-sensitive deployment is still useful and honest. Severe false-negative reduction remains a safety gate and fallback value proposition, not the main product priority.
 
 ## Development And Final-Fit Strategy
 
@@ -105,6 +114,9 @@ P3 apply should run without user intervention by using explicit branch rules:
 Allowed autonomous choices:
 
 - If P2 adjudications exist, use them as the severe target. If not, use original `score >= 2` and label the verdict unadjudicated.
+- If `inputs.label_overrides` is configured, apply explicit reviewed rubric scores before ROI extraction, embedding extraction, burden modeling, learned ROI modeling, source-aware modeling, severe-aware modeling, and P3 selection. The override file must be row-level and keyed by `subject_image_id`; supported score columns are `rubric_score`, `reviewer_score`, `reviewer_grade`, or `score`.
+- Reviewed rubric overrides are a first-class label source, not projected labels. The pipeline must write `scored_examples/score_label_overrides_audit.csv` and `scored_examples/score_label_overrides_summary.json` with original scores, override scores, changed-row counts, severe-boundary changes, reviewer metadata when present, and the claim boundary `explicit reviewer label overrides only; no inferred labels applied`.
+- Missing override files, duplicate `subject_image_id` rows, unrecognized scores, nonnumeric scores, or references to absent scored examples are hard failures. The workflow must not silently ignore or partially apply a requested override file.
 - If six-bin ordinal support is too weak, collapse to three-band and four-band outputs before declaring ordinal impossible.
 - If the severe model achieves high recall only at low precision, report it as a triage product, not a definitive classifier.
 - If learned ROI or embedding features overfit development folds or fail source-sensitivity gates, exclude them from final selection but retain them in the ablation report.
@@ -131,6 +143,8 @@ Severe-focused families:
 - random forest / extra trees with class weighting as exploratory
 - histogram gradient boosting with shallow constraints as exploratory
 - threshold-selected high-recall variants using inner development folds
+- bounded regularization sweeps for logistic severe gates
+- source-truthful candidate registration so missing source-specific columns cannot silently downgrade a learned or embedding candidate into a morphology-only candidate
 
 Feature families:
 
@@ -146,6 +160,13 @@ Feature families:
   - per-subject aggregate context features where used only for subject-level outputs
   - quality-gated variants that downweight or label unreliable rows
   - multi-component aggregate features for image-level labels: component count, component area summaries, feature mean/median/max/upper quantile/spread, and high-risk component summaries
+
+Row-level feature tables:
+
+- `learned_roi/feature_sets/learned_roi_features.csv` must preserve `glomerulus_id` from the input embedding/ROI rows when available.
+- `primary_burden_index/feature_sets/morphology_features.csv` and `learned_roi/feature_sets/learned_roi_features.csv` are ROI-level sources for P3.
+- P3 must join those ROI-level sources on `subject_image_id` and `glomerulus_id`; a table that only has `subject_image_id` is not unique enough for multi-glomerulus images.
+- Duplicate optional-table keys are unusable and must be recorded as hard blockers rather than allowed to crash later or multiply rows.
 
 ## Multi-Glomerulus Aggregate Labels
 
@@ -222,23 +243,78 @@ Reportability depends on grouped out-of-fold behavior and MR deployment behavior
 
 ## Output Contract
 
-P3 root: `burden_model/functional_quantification_p3/`.
+## Output Architecture Amendment
+
+Existing model families keep their existing output directories when they are rerun or consumed:
+
+- `burden_model/primary_burden_index/`
+- `burden_model/learned_roi/`
+- `burden_model/source_aware_estimator/`
+- `burden_model/severe_aware_ordinal_estimator/`
+
+Newly fit model families must be first-class burden-model subtrees, not hidden under the final selector. Expected new model-family subtrees:
+
+- `burden_model/three_band_ordinal_model/`
+- `burden_model/four_band_ordinal_model/` when score support allows
+- `burden_model/severe_triage_model/`
+- `burden_model/aggregate_grade_model/`
+- `burden_model/embedding_grade_model/`
+
+Each first-class model-family subtree must use this navigable shape:
+
+- `INDEX.md`
+- `summary/`
+- `diagnostics/`
+- `predictions/`
+- `model/`
+- `evidence/`
+- `internal/`
+
+The final selector and deployment layer is `burden_model/endotheliosis_grade_model/`. It compares the model-family subtrees, records candidate coverage, writes the selected deployed model, and proves or blocks MR TIFF deployment. It must link back to each source model-family subtree rather than hiding family evidence only in `internal/`.
+
+## Model-Family Diagnostics Contract
+
+Every first-class model-family subtree must write diagnostics sufficient to explain whether the family was valid, failed, or selected:
+
+- `diagnostics/input_support.json`
+- `diagnostics/feature_diagnostics.json`
+- `diagnostics/fold_diagnostics.json`
+- `diagnostics/source_sensitivity.json`
+- `diagnostics/gate_diagnostics.json`
+
+Additional diagnostics are required when applicable:
+
+- `diagnostics/embedding_source_predictability.json`
+- `diagnostics/aggregate_label_diagnostics.json`
+- `diagnostics/calibration_diagnostics.json`
+- `diagnostics/threshold_selection_diagnostics.json`
+- `diagnostics/mr_tiff_deployment_diagnostics.json`
+- `diagnostics/hard_blockers.json`
+
+Missing expected upstream artifacts for required families are hard failures, not ordinary skipped candidates.
+
+## Final Selector Output Contract
+
+Selector root: `burden_model/endotheliosis_grade_model/`.
 
 Required artifacts:
 
 - `INDEX.md`
 - `summary/executive_summary.md`
+- `summary/candidate_coverage_matrix.csv`
 - `summary/final_product_verdict.json`
 - `summary/final_product_verdict.md`
 - `summary/model_selection_table.csv`
 - `summary/development_oof_metrics.csv`
 - `summary/ordinal_feasibility.json`
 - `summary/severe_threshold_selection.json`
+- `summary/input_artifact_index.json`
 - `summary/artifact_manifest.json`
+- `diagnostics/selector_diagnostics.json`
+- `diagnostics/candidate_family_gate_diagnostics.json`
 - `splits/development_folds.csv`
-- `feature_sets/p3_feature_matrix.csv`
-- `feature_sets/p3_feature_diagnostics.json`
 - `predictions/development_oof_predictions.csv`
+- `predictions/final_model_training_predictions.csv`
 - `internal/candidate_metrics.csv`
 - `internal/candidate_configs.json`
 - `internal/autonomous_loop_log.json`
@@ -260,38 +336,85 @@ Required deployment-smoke artifacts before README-facing promotion:
 - `deployment/mr_tiff_smoke_report.html`
 - `deployment/segmentation_quantification_contract.json`
 
+The selected deployed model must be traceable from `summary/final_product_verdict.json`, `summary/model_selection_table.csv`, and `model/final_model_metadata.json` back to its source model-family subtree and diagnostics.
+
+If final gates fail, stale deployable artifacts from prior runs must be removed from `burden_model/endotheliosis_grade_model/model/` so a diagnostic-only or insufficient verdict cannot be mistaken for a runnable final product.
+
+## Repo-Wide Audit And Centralization Contract
+
+Research-partner audit during apply found repeated local implementations of model-selection mechanics across quantification evaluators: grouped out-of-fold labels, threshold selection, warning handling, finite numeric preprocessing, and artifact manifests. P3 must not add another independent copy of those mechanics. The shared contract is:
+
+- `GROUPED_DEVELOPMENT_METRIC_LABEL` is the canonical label for current-data grouped out-of-fold metrics.
+- `to_finite_numeric_matrix()` owns coercion from DataFrame feature columns to finite model matrices.
+- `choose_recall_threshold()` owns recall-targeted severe operating-threshold selection.
+- `capture_fit_warnings()` owns warning capture for candidate fitting and final refits.
+- `save_json()` and `build_artifact_manifest()` own common JSON and manifest writing.
+
+This does not require broad refactoring of older P0/P1/P2 evaluators during P3, but P3 output and new tests must use the shared helpers, and the audit result must be recorded so future cleanup has a concrete target.
+
+The selector reads existing artifact inputs from their existing locations:
+
+- `burden_model/primary_burden_index/feature_sets/`
+- `burden_model/primary_burden_index/candidates/`
+- `burden_model/learned_roi/feature_sets/`
+- `burden_model/learned_roi/candidates/`
+- `burden_model/source_aware_estimator/summary/`
+- `burden_model/severe_aware_ordinal_estimator/summary/`
+- `burden_model/severe_aware_ordinal_estimator/evidence/`
+
+The selector may write compact derived tables under `internal/` when needed for reproducibility, but no required model family may be represented only by selector-internal logs. Every newly fit required family must have a source subtree, diagnostics, metrics, predictions, and evidence paths listed in `summary/candidate_coverage_matrix.csv`.
+
+`summary/candidate_coverage_matrix.csv` must include, at minimum:
+
+- `family_id`
+- `subtree_path`
+- `required_or_exploratory`
+- `run_status`
+- `candidate_ids`
+- `metrics_path`
+- `diagnostics_path`
+- `predictions_path`
+- `gate_status`
+- `selected`
+- `failure_or_exclusion_reason`
+
 ## MR TIFF Deployment Scope
 
 P3 is primarily a quantification-model change. It becomes an end-to-end deployable product only if it also proves that the selected quantification model can run downstream of the supported segmentation pipeline on the `vegfri_mr` whole-field TIFF cohort available under the runtime manifest.
 
+Before MR TIFF deployment, P3 must run the smaller Dox scored-no-mask smoke stage when the master manifest contains rows with `eligible_dox_scored_no_mask_smoke = true`. This stage uses runtime-local images under `raw_data/cohorts/vegfri_dox/scored_no_mask_smoke/images/`, runs supported glomerulus segmentation, extracts predicted ROI records, computes the selected P3 inference schema, loads `model/final_model.joblib`, writes ROI-level predictions, aggregates to image-level summaries, and compares inferred image-level severe/grade behavior against the human Dox score. It is a pre-MR deployment bridge, not external validation and not a replacement for the MR TIFF deployment test.
+
+The Dox smoke input is governed by `raw_data/cohorts/vegfri_dox/metadata/dox_scored_only_resolution_audit.csv`. The audit must resolve each Dox `scored_only` manifest row to exact Label Studio upload images, copy clean images into the runtime cohort tree, and flag duplicate source image names, conflicting source-image scores, missing scores, and unresolved/multi-match images. Only rows with exactly one resolved image, no duplicate source image name, no conflicting score, and a nonmissing score can enter `dox_scored_no_mask_smoke_manifest.csv`. The master manifest uses canonical `image_path` for the localized smoke image, keeps `mask_path` empty, and uses `eligible_dox_scored_no_mask_smoke` to permit this row only for the Dox smoke workflow.
+
+If Dox smoke fails because severe recall is preserved but severe precision is unacceptable, P3 writes `dox_scored_no_mask_overcall_triage_queue.csv` and `dox_scored_no_mask_overcall_triage_report.html`. The queue is selected from deployment-computable Dox prediction fields, includes clustered false-positive representatives, highest-confidence false positives, threshold-boundary false positives, human severe references, and segmentation misses, and is intended to drive a bounded review of model overcalling before any MR TIFF deployment attempt.
+
+When a reviewer completes the cluster-representative false-positive rows, P3 summarizes that review in `dox_scored_no_mask_overcall_review_diagnostic.json` and `dox_scored_no_mask_first12_review_interpretation.csv`. If at least eight cluster representatives are reviewed, at least five clearly usable ROIs are reviewed, and the clearly usable reviewed ROIs are predominantly non-severe with no clearly usable severe examples, the selected severe-risk candidate is rejected as a Dox overcaller. In that case P3 downgrades the verdict to `diagnostic_only_current_data_model`, records hard blockers, removes `model/final_model.joblib`, `model/final_model_metadata.json`, and `model/inference_schema.json`, and does not proceed to MR TIFF deployment.
+
 The MR deployment test must use a supported current-namespace segmentation artifact. It must process whole-field TIFFs by tiling, segmenting glomeruli, merging tile predictions into the whole-field coordinate frame, filtering connected components by area and quality, extracting accepted ROI image/mask records, computing the exact P3 inference feature schema, loading the final quantification model, writing per-ROI predictions, aggregating to image-level median/summary outputs, and producing a human-readable report. When workbook human image-level medians are available, it must report human-vs-inferred concordance; when labels are absent, it is only a technical deployment smoke, not an accuracy test. Passing a model on precomputed feature tables alone is not enough for README-facing deployment.
 
-If a supported segmentation artifact or MR TIFF input is unavailable, P3 must say that explicitly. In that case, a model may still be `deployable_current_data_severe_triage` or `deployable_current_data_ordinal_bands` as a quantification artifact, but README-facing end-to-end deployment is blocked until the MR deployment test exists.
+If a supported segmentation artifact or MR TIFF input is unavailable, P3 must say that explicitly. In that case, a model may still be `model_ready_pending_mr_tiff_deployment_smoke` as a quantification artifact, but README-facing end-to-end deployment is blocked until the MR deployment test exists.
 
 ## Final Verdict States
 
-`deployable_current_data_severe_triage`
+`readme_facing_deployable_mr_tiff_grade_model`
 
-- severe recall gate passes
-- ordinal gates do not pass or are secondary
-- output is a high-sensitivity review triage label
-
-`deployable_current_data_ordinal_bands`
-
-- severe recall gate passes
-- three-band or four-band ordinal gate passes
-- output is ordered band prediction plus severe-risk flag
-
-`readme_facing_deployable_current_data_model`
-
-- severe or ordinal quantification gate passes
+- at least one non-triage grade-output quantification gate passes
+- severe safety gate passes
 - final model artifact and inference schema are written
 - MR TIFF segmentation-to-quantification deployment test passes
 - README-facing report states current-data/source-sensitive claim boundary
 
+`readme_facing_deployable_mr_tiff_severe_triage`
+
+- no richer non-triage grade output passes
+- severe safety gate passes
+- final model artifact and inference schema are written
+- MR TIFF segmentation-to-quantification deployment test passes
+- README-facing report states high-sensitivity review-triage claim boundary
+
 `model_ready_pending_mr_tiff_deployment_smoke`
 
-- severe or ordinal quantification gate passes
+- ordinal grade-band or severe-triage gate passes
 - final model artifact and inference schema are written
 - MR TIFF deployment test cannot be completed because a supported segmentation artifact or MR TIFF input is missing or fails
 - README-facing deployment language remains blocked

@@ -144,15 +144,16 @@ def test_segmentation_training_batch_size_uses_powerful_mps_stage_defaults():
         cuda_device_count=0,
     )
 
-    assert detector.get_segmentation_training_batch_size(
-        'mitochondria',
-        image_size=256,
-    ) == 24
-    assert detector.get_segmentation_training_batch_size(
-        'glomeruli',
-        image_size=256,
-        crop_size=512,
-    ) == 12
+    assert (
+        detector.get_segmentation_training_batch_size('mitochondria', image_size=256)
+        == 24
+    )
+    assert (
+        detector.get_segmentation_training_batch_size(
+            'glomeruli', image_size=256, crop_size=512
+        )
+        == 12
+    )
 
 
 def test_segmentation_training_batch_size_respects_explicit_override():
@@ -170,11 +171,12 @@ def test_segmentation_training_batch_size_respects_explicit_override():
         cuda_device_count=0,
     )
 
-    assert detector.get_segmentation_training_batch_size(
-        'mitochondria',
-        image_size=256,
-        requested_batch_size=32,
-    ) == 32
+    assert (
+        detector.get_segmentation_training_batch_size(
+            'mitochondria', image_size=256, requested_batch_size=32
+        )
+        == 32
+    )
 
 
 def test_capability_report_contains_expected_sections():

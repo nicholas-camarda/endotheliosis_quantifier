@@ -8,6 +8,7 @@ context: |
   Mac segmentation training and validation commands should use PYTORCH_ENABLE_MPS_FALLBACK=1 when PyTorch requires CPU fallback for unsupported MPS operations, but requested transfer training must still fail closed if the base artifact cannot load or contributes zero compatible weights. The current glomeruli scratch candidate is the no-mitochondria-base comparator with an ImageNet-pretrained ResNet34 encoder, not a literal all-random initialization baseline.
   Git-tracked code and configs must stay separate from raw data, derived data, trained models, logs, and generated quantification outputs.
   Path defaults and environment overrides are centralized in src/eq/utils/paths.py.
+  Reuse and centralization are repository-wide design constraints. Before adding a new function, helper, script, CLI path, config key, output schema, gate, or validation step, inspect the existing owner and extend or reuse it when the concept already exists. Prefer one canonical implementation per concept under the appropriate src/eq module, and treat duplicated workflow-local gates or near-identical scripts as design debt unless explicitly justified.
   Runtime cohort identity and workflow lane are separate: Lauren's preeclampsia data is cohort_id=lauren_preeclampsia with lane_assignment=manual_mask_core; Dox manual masks use cohort_id=vegfri_dox with lane_assignment=manual_mask_external. Do not use generic cohort names to encode mask state.
   Quantification uses Label Studio image-level grades joined to image/mask pairs with full multi-component union ROI semantics.
   Method changes must distinguish segmentation behavior, embedding/ordinal prediction behavior, and scientific interpretation.
@@ -21,6 +22,7 @@ context: |
 rules:
   proposal:
     - Identify affected src/eq modules, CLI commands, configs, tests, and artifact directories.
+    - Identify existing functions, modules, scripts, configs, gates, and output contracts checked for reuse before proposing new implementation surfaces.
     - Call out changes to data contracts, path resolution, storage boundaries, or generated output schemas.
     - Distinguish legacy model artifacts, compatibility artifacts, supported runtime artifacts, and scientifically promoted artifacts.
     - Separate descriptive, associational, causal, and predictive/prognostic claims.
@@ -35,6 +37,8 @@ rules:
     - Mark missing data, unverified assumptions, and external-validity limits explicitly.
   design:
     - Reuse existing path helpers, CLI loaders, data-contract utilities, and quantification modules before adding abstractions.
+    - Centralize shared behavior in its existing owner where possible; if a new helper, module, script, CLI command, config key, gate, or schema is required, explain why the existing owner cannot absorb it.
+    - Do not create parallel workflow-local gates, duplicate path systems, near-identical scripts, or copied validation logic for concepts that already exist elsewhere in the repo.
     - Describe data flow and artifact flow across raw data, derived data, models, logs, and output.
     - Do not make tests depend on legacy FastAI pickle artifacts unless the change is explicitly about legacy artifact compatibility.
     - Include failure modes that could silently change labels, masks, ROI geometry, embeddings, metrics, or review artifacts.
@@ -45,5 +49,6 @@ rules:
     - Questions tagged `[audit_first_then_decide]` must identify the audit target, evidence source, or inspection step that will determine the answer.
   tasks:
     - Break work into small reviewable steps with implementation, tests, and docs/config updates when behavior changes.
+    - Include explicit reuse/centralization tasks for any new shared contract, and include migration tasks for touched callers instead of leaving duplicated local logic behind.
     - Include validation commands covering imports, relevant CLI paths, unit tests, and any changed OpenSpec artifacts.
     - When a repository-local explicitness checker exists, include it in the final validation task for changes that add or materially revise proposal/design artifacts.

@@ -10,6 +10,7 @@ from eq.quantification.cohorts import (
     apply_dox_mask_quality_approval,
     archive_retired_quantification_input_tree,
     build_dox_mask_quality_audit,
+    build_dox_scored_only_resolution_audit,
     build_mr_concordance_workflow,
     build_mr_runtime_cohort,
     build_predicted_roi_grading_inputs,
@@ -55,13 +56,7 @@ def test_manifest_schema_and_minimal_input_validation():
     assert 'image_sha256' in schema['pipeline_generated']
 
     manifest = pd.DataFrame(
-        [
-            {
-                'cohort_id': 'vegfri_dox',
-                'score': 1.5,
-                'source_sample_id': 'M1',
-            }
-        ]
+        [{'cohort_id': 'vegfri_dox', 'score': 1.5, 'source_sample_id': 'M1'}]
     )
 
     validation = validate_unified_manifest(manifest)
@@ -138,7 +133,8 @@ def test_harmonization_copies_assets_without_source_paths_in_manifest(tmp_path):
         records,
         'example',
         runtime_root=runtime_root,
-        source_audit_path=runtime_root / 'raw_data/cohorts/example/metadata/source_audit.csv',
+        source_audit_path=runtime_root
+        / 'raw_data/cohorts/example/metadata/source_audit.csv',
     )
 
     assert 'source_image_path' not in localized.columns
@@ -166,7 +162,9 @@ def test_harmonization_keeps_missing_source_image_unresolved(tmp_path):
         ]
     )
 
-    localized = harmonize_localized_cohort(records, 'example', runtime_root=runtime_root)
+    localized = harmonize_localized_cohort(
+        records, 'example', runtime_root=runtime_root
+    )
 
     assert localized.loc[0, 'image_path'] == ''
     assert localized.loc[0, 'admission_status'] == 'unresolved'
@@ -201,7 +199,10 @@ def test_mapping_verification_rejects_conflicting_duplicate_scores(tmp_path):
     verified = verify_mapping_bundle(enriched, runtime_root=runtime_root)
 
     assert set(verified['admission_status']) == {'excluded'}
-    assert all('conflicting_duplicate_scores' in reason for reason in verified['exclusion_reason'])
+    assert all(
+        'conflicting_duplicate_scores' in reason
+        for reason in verified['exclusion_reason']
+    )
 
 
 def test_missing_image_rows_remain_row_level_evidence(tmp_path):
@@ -299,9 +300,7 @@ def test_predicted_roi_builder_consumes_manifest_path_without_source_roots(tmp_p
     manifest.to_csv(manifest_path, index=False)
 
     predicted_path = build_predicted_roi_grading_inputs_from_manifest(
-        manifest_path,
-        tmp_path / 'output',
-        segmentation_artifact='segmentation.pkl',
+        manifest_path, tmp_path / 'output', segmentation_artifact='segmentation.pkl'
     )
     predicted = pd.read_csv(predicted_path)
 
@@ -356,10 +355,16 @@ def test_manual_mask_external_dox_rows_remain_training_admitted():
     assert policy.loc[0, 'exclusion_reason'] == ''
 
 
-def test_dox_mask_quality_audit_records_provenance_for_admitted_manual_external_rows(tmp_path):
+def test_dox_mask_quality_audit_records_provenance_for_admitted_manual_external_rows(
+    tmp_path,
+):
     runtime_root = tmp_path / 'runtime'
-    image = _write_image(runtime_root / 'raw_data/cohorts/vegfri_dox/images/M1/M1_Image0.jpg')
-    mask = _write_mask(runtime_root / 'raw_data/cohorts/vegfri_dox/masks/M1/M1_Image0_mask.png')
+    image = _write_image(
+        runtime_root / 'raw_data/cohorts/vegfri_dox/images/M1/M1_Image0.jpg'
+    )
+    mask = _write_mask(
+        runtime_root / 'raw_data/cohorts/vegfri_dox/masks/M1/M1_Image0_mask.png'
+    )
     manifest = pd.DataFrame(
         [
             {
@@ -374,7 +379,9 @@ def test_dox_mask_quality_audit_records_provenance_for_admitted_manual_external_
         ]
     )
     enriched = enrich_unified_manifest(manifest, runtime_root=runtime_root)
-    policy = apply_cohort_admission_policy(verify_mapping_bundle(enriched, runtime_root=runtime_root))
+    policy = apply_cohort_admission_policy(
+        verify_mapping_bundle(enriched, runtime_root=runtime_root)
+    )
 
     outputs = build_dox_mask_quality_audit(policy, runtime_root=runtime_root)
     audited = pd.read_csv(outputs['audit'])
@@ -383,15 +390,114 @@ def test_dox_mask_quality_audit_records_provenance_for_admitted_manual_external_
     assert audited['mask_quality_decision'].tolist() == ['approved']
     assert approved.loc[0, 'admission_status'] == 'admitted'
     assert approved.loc[0, 'mask_quality_review_status'] == 'approved'
-    assert outputs['panel_dir'] == runtime_root / 'raw_data/cohorts/vegfri_dox/metadata/mask_quality_panels'
+    assert (
+        outputs['panel_dir']
+        == runtime_root / 'raw_data/cohorts/vegfri_dox/metadata/mask_quality_panels'
+    )
     assert list(outputs['panel_dir'].glob('*.png'))
+
+
+def test_dox_scored_only_resolution_audit_defines_clean_smoke_set(tmp_path):
+    runtime_root = tmp_path / 'runtime'
+    upload_root = tmp_path / 'label-studio' / 'media' / 'upload' / '1'
+    clean_image = _write_image(upload_root / 'abc123-M1_Image0.jpg')
+    duplicate_image = _write_image(upload_root / 'def456-T19_Image0.jpg')
+    manifest = pd.DataFrame(
+        [
+            {
+                'manifest_row_id': 'clean-row',
+                'cohort_id': 'vegfri_dox',
+                'lane_assignment': 'scored_only',
+                'admission_status': 'unresolved',
+                'join_status': 'failed',
+                'exclusion_reason': 'missing_image_path;missing_image_hash',
+                'source_image_name': 'M1_Image0.jpg',
+                'source_sample_id': 'M1',
+                'source_score_row': 'task-clean',
+                'score': 1.0,
+            },
+            {
+                'manifest_row_id': 'duplicate-a',
+                'cohort_id': 'vegfri_dox',
+                'lane_assignment': 'scored_only',
+                'admission_status': 'foreign',
+                'join_status': 'foreign_row',
+                'exclusion_reason': 'foreign_mixed_export_row',
+                'source_image_name': 'T19_Image0.jpg',
+                'source_sample_id': 'T19',
+                'source_score_row': 'task-dup-a',
+                'score': 0.5,
+            },
+            {
+                'manifest_row_id': 'duplicate-b',
+                'cohort_id': 'vegfri_dox',
+                'lane_assignment': 'scored_only',
+                'admission_status': 'foreign',
+                'join_status': 'foreign_row',
+                'exclusion_reason': 'foreign_mixed_export_row',
+                'source_image_name': 'T19_Image0.jpg',
+                'source_sample_id': 'T19',
+                'source_score_row': 'task-dup-b',
+                'score': 1.0,
+            },
+            {
+                'manifest_row_id': 'missing-score',
+                'cohort_id': 'vegfri_dox',
+                'lane_assignment': 'scored_only',
+                'admission_status': 'foreign',
+                'join_status': 'foreign_row',
+                'exclusion_reason': 'foreign_mixed_export_row',
+                'source_image_name': 'missing_score.jpg',
+                'source_sample_id': 'T20',
+                'source_score_row': 'task-missing-score',
+                'score': np.nan,
+            },
+        ]
+    )
+
+    outputs = build_dox_scored_only_resolution_audit(
+        manifest, runtime_root=runtime_root, upload_root=upload_root.parent
+    )
+    audit = pd.read_csv(outputs['audit'])
+    smoke = pd.read_csv(outputs['smoke_manifest'])
+
+    assert outputs['counts']['scored_only_rows'] == 4
+    assert outputs['counts']['clean_smoke_rows'] == 1
+    assert smoke['manifest_row_id'].tolist() == ['clean-row']
+    localized_path = runtime_root / smoke.loc[0, 'image_path']
+    assert localized_path.exists()
+    assert localized_path.read_bytes() == clean_image.read_bytes()
+    assert smoke['labelstudio_image_path'].tolist() == [str(clean_image)]
+    assert smoke['mask_path'].fillna('').tolist() == ['']
+    updated_manifest = pd.read_csv(runtime_root / 'raw_data/cohorts/manifest.csv')
+    clean_row = updated_manifest[
+        updated_manifest['manifest_row_id'].astype(str) == 'clean-row'
+    ].iloc[0]
+    assert clean_row['eligible_dox_scored_no_mask_smoke'] is True or bool(
+        clean_row['eligible_dox_scored_no_mask_smoke']
+    )
+    assert clean_row['image_path'] == smoke.loc[0, 'image_path']
+    assert clean_row['mask_path'] == '' or pd.isna(clean_row['mask_path'])
+    duplicate_name = duplicate_image.name.split('-', 1)[1]
+    duplicate_rows = audit[audit['source_image_name'] == duplicate_name]
+    assert duplicate_rows['duplicate_source_image_name'].all()
+    assert duplicate_rows['conflicting_scores_for_source_image_name'].all()
+    assert audit.loc[
+        audit['manifest_row_id'] == 'missing-score', 'missing_score'
+    ].item()
 
 
 def test_transport_validation_blocks_missing_degenerate_or_invalid_outputs():
     manifest = pd.DataFrame(
         [
-            {'manifest_row_id': 'missing', 'admission_status': 'pending_transport_audit'},
-            {'manifest_row_id': 'degenerate', 'admission_status': 'pending_transport_audit'},
+            {
+                'manifest_row_id': 'missing',
+                'admission_status': 'pending_transport_audit',
+            },
+            {
+                'manifest_row_id': 'degenerate',
+                'admission_status': 'pending_transport_audit',
+            },
             {'manifest_row_id': 'ok', 'admission_status': 'pending_transport_audit'},
         ]
     )
@@ -415,21 +521,16 @@ def test_transport_validation_blocks_missing_degenerate_or_invalid_outputs():
     validated = validate_segmentation_transport_inputs(manifest, outputs)
 
     assert validated.loc[0, 'transport_failure_reason'] == 'missing_segmentation_output'
-    assert validated.loc[1, 'transport_failure_reason'] == 'degenerate_segmentation_output'
+    assert (
+        validated.loc[1, 'transport_failure_reason'] == 'degenerate_segmentation_output'
+    )
     assert validated.loc[2, 'transport_status'] == 'passed'
 
 
 def test_mr_replicates_reduce_to_image_level_sidecar(tmp_path):
     workbook = tmp_path / 'mr_scores.xlsx'
     sidecar = tmp_path / 'mr_replicates.csv'
-    raw = pd.DataFrame(
-        [
-            ['image_a', 'image_b'],
-            [1.0, 2.0],
-            [3.0, 2.0],
-            [None, 4.0],
-        ]
-    )
+    raw = pd.DataFrame([['image_a', 'image_b'], [1.0, 2.0], [3.0, 2.0], [None, 4.0]])
     raw.to_excel(workbook, index=False, header=False)
 
     reduced = reduce_mr_replicates(workbook, output_sidecar=sidecar)
@@ -451,21 +552,17 @@ def test_mr_runtime_cohort_uses_workbook_medians_and_localized_tiffs(tmp_path):
     _write_file(image_root / 'batch1' / '7010.tif')
     workbook = tmp_path / 'mr_scores.xlsx'
     raw = pd.DataFrame(
-        [
-            ['SampleID \\ Replicate', 7007.0, 7010.0],
-            [1, 0.0, 1.0],
-            [2, 2.0, 3.0],
-        ]
+        [['SampleID \\ Replicate', 7007.0, 7010.0], [1, 0.0, 1.0], [2, 2.0, 3.0]]
     )
     raw.to_excel(workbook, sheet_name='Batch1', index=False, header=False)
 
     cohort = build_mr_runtime_cohort(
-        runtime_root=runtime_root,
-        workbook_path=workbook,
-        image_root=image_root,
+        runtime_root=runtime_root, workbook_path=workbook, image_root=image_root
     )
     enriched = enrich_unified_manifest(cohort, runtime_root=runtime_root)
-    policy = apply_cohort_admission_policy(verify_mapping_bundle(enriched, runtime_root=runtime_root))
+    policy = apply_cohort_admission_policy(
+        verify_mapping_bundle(enriched, runtime_root=runtime_root)
+    )
 
     assert cohort['source_sample_id'].tolist() == ['7007', '7010']
     assert cohort['score'].tolist() == [1.0, 2.0]
@@ -511,10 +608,7 @@ def test_mr_inference_contract_and_concordance_workflow(tmp_path):
     )
 
     outputs = build_mr_concordance_workflow(
-        manifest,
-        inferred,
-        tmp_path / 'mr_concordance',
-        min_component_area=64,
+        manifest, inferred, tmp_path / 'mr_concordance', min_component_area=64
     )
     image_level = pd.read_csv(outputs['image_level_concordance'])
 

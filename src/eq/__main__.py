@@ -109,6 +109,13 @@ def _load_build_dox_mask_quality_audit():
     return build_dox_mask_quality_audit
 
 
+def _load_build_dox_scored_only_resolution_audit():
+    """Import Dox scored-only image resolution helpers lazily."""
+    from eq.quantification import build_dox_scored_only_resolution_audit
+
+    return build_dox_scored_only_resolution_audit
+
+
 def _load_organize_lucchi_dataset():
     """Import the Lucchi organizer only when requested from the CLI."""
     from eq.data_management.organize_lucchi_dataset import organize_lucchi_dataset
@@ -507,6 +514,36 @@ def dox_mask_quality_audit_command(args):
     print(f'  audit: {outputs["audit"]}')
     print(f'  summary: {outputs["summary"]}')
     print(f'  panel_dir: {outputs["panel_dir"]}')
+
+
+@log_function_call
+def dox_scored_only_resolution_audit_command(args):
+    """Resolve Dox scored-only rows to Label Studio upload images."""
+    logger = get_logger('eq.dox_scored_only_resolution_audit')
+    build_dox_scored_only_resolution_audit = (
+        _load_build_dox_scored_only_resolution_audit()
+    )
+
+    outputs = build_dox_scored_only_resolution_audit(
+        runtime_root=Path(args.runtime_root) if args.runtime_root else None,
+        manifest_path=Path(args.manifest_path) if args.manifest_path else None,
+        upload_root=Path(args.upload_root) if args.upload_root else None,
+        audit_path=Path(args.audit_path) if args.audit_path else None,
+        smoke_manifest_path=Path(args.smoke_manifest_path)
+        if args.smoke_manifest_path
+        else None,
+        localized_image_root=Path(args.localized_image_root)
+        if args.localized_image_root
+        else None,
+        update_manifest=not args.no_update_manifest,
+    )
+    logger.info('✅ Dox scored-only resolution audit written to %s', outputs['audit'])
+    print('✅ Dox scored-only resolution audit written:')
+    print(f'  audit: {outputs["audit"]}')
+    print(f'  smoke_manifest: {outputs["smoke_manifest"]}')
+    print(f'  localized_image_root: {outputs["localized_image_root"]}')
+    print(f'  summary: {outputs["summary"]}')
+    print(f'  counts: {outputs["counts"]}')
 
 
 @log_function_call
@@ -975,6 +1012,42 @@ Examples:
         help='Directory for visual provenance panel PNGs. Defaults to raw_data/cohorts/vegfri_dox/metadata/mask_quality_panels.',
     )
     dox_mask_quality_parser.set_defaults(func=dox_mask_quality_audit_command)
+
+    dox_scored_only_parser = subparsers.add_parser(
+        'dox-scored-only-resolution-audit',
+        help='Resolve Dox scored-only rows to exact Label Studio upload images',
+        description='Build the Dox scored-only resolution audit and clean scored-no-mask smoke manifest.',
+    )
+    dox_scored_only_parser.add_argument(
+        '--runtime-root',
+        help='Active runtime root to use instead of EQ_RUNTIME_ROOT or ~/ProjectsRuntime/endotheliosis_quantifier.',
+    )
+    dox_scored_only_parser.add_argument(
+        '--manifest-path',
+        help='Input manifest path. Defaults to the active runtime raw_data/cohorts/manifest.csv.',
+    )
+    dox_scored_only_parser.add_argument(
+        '--upload-root',
+        help='Label Studio upload media root. Defaults to the Dox project label-studio/media/upload directory.',
+    )
+    dox_scored_only_parser.add_argument(
+        '--audit-path',
+        help='Output audit CSV. Defaults to raw_data/cohorts/vegfri_dox/metadata/dox_scored_only_resolution_audit.csv.',
+    )
+    dox_scored_only_parser.add_argument(
+        '--smoke-manifest-path',
+        help='Output clean smoke manifest CSV. Defaults to raw_data/cohorts/vegfri_dox/metadata/dox_scored_no_mask_smoke_manifest.csv.',
+    )
+    dox_scored_only_parser.add_argument(
+        '--localized-image-root',
+        help='Runtime folder where clean smoke images are copied. Defaults to raw_data/cohorts/vegfri_dox/scored_no_mask_smoke/images.',
+    )
+    dox_scored_only_parser.add_argument(
+        '--no-update-manifest',
+        action='store_true',
+        help='Do not write Dox scored-no-mask transport columns back to the master manifest.',
+    )
+    dox_scored_only_parser.set_defaults(func=dox_scored_only_resolution_audit_command)
 
     backup_parser = subparsers.add_parser(
         'backup-project-data',
