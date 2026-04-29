@@ -68,7 +68,7 @@
 
 - [x] 9.1 Complete the per-change postflight required by `openspec/changes/ACTIVE_EXECUTION_ORDER.md`, including spec-to-diff review, completed-task evidence review, `git diff --check`, `git diff --stat`, and unrelated-edit inspection.
 - [x] 9.2 Commit the implementation as `implement p1-align-fastai-practices-and-archive-history`.
-- [ ] 9.3 Archive/sync with `openspec archive p1-align-fastai-practices-and-archive-history --yes`.
-- [ ] 9.4 Run `openspec validate --specs --strict` after archive/sync.
-- [ ] 9.5 Revalidate every remaining active change with `openspec validate <remaining-change> --strict` and `python3 scripts/check_openspec_explicitness.py <remaining-change>`.
-- [ ] 9.6 Commit the archive/sync as `archive p1-align-fastai-practices-and-archive-history`.
+- [x] 9.3 Archive/sync with `openspec archive p1-align-fastai-practices-and-archive-history --yes`.
+- [x] 9.4 Run `openspec validate --specs --strict` after archive/sync.
+- [x] 9.5 Revalidate every remaining active change with `openspec validate <remaining-change> --strict` and `python3 scripts/check_openspec_explicitness.py <remaining-change>`.
+- [x] 9.6 Commit the archive/sync as `archive p1-align-fastai-practices-and-archive-history`.

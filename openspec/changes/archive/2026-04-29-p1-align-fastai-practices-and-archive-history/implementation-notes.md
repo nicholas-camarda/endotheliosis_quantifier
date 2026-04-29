@@ -43,6 +43,17 @@ Implemented on 2026-04-29.
 - `python3 scripts/check_openspec_explicitness.py p1-align-fastai-practices-and-archive-history` passed.
 - `OPENSPEC_TELEMETRY=0 openspec validate p1-align-fastai-practices-and-archive-history --strict` passed.
 
+## Archive Sync
+
+- `openspec archive p1-align-fastai-practices-and-archive-history --yes` archived the change as `openspec/changes/archive/2026-04-29-p1-align-fastai-practices-and-archive-history/`.
+- Archive sync created `openspec/specs/fastai-training-hygiene/spec.md` and `openspec/specs/historical-documentation-quarantine/spec.md`.
+- Archive sync updated `openspec/specs/repo-wide-quality-review/spec.md` and `openspec/specs/segmentation-training-contract/spec.md`.
+- `openspec validate --specs --strict` passed after archive sync: `21 passed, 0 failed`.
+- Remaining active changes revalidated cleanly after archive sync:
+  - `oracle-canonical-quantification-input-contract`
+  - `oracle-harden-audit-contracts`
+  - `label-free-roi-embedding-atlas`
+
 ## Residual Risk
 
 - This change hardens runtime compatibility and artifact provenance, but it does not promote any segmentation model scientifically.
