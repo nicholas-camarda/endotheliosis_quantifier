@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 from PIL import Image
 
@@ -340,6 +341,56 @@ def test_score_label_overrides_replace_scores_and_write_audit(tmp_path: Path):
     )
     assert summary['applied_rows'] == 1
     assert summary['severe_boundary_changed_rows'] == 1
+    assert 'score_override_audit_path' in summary['label_contract_reference']
+
+
+def test_score_label_overrides_write_explicit_none_summary(tmp_path: Path):
+    scored = pd.DataFrame(
+        {'subject_image_id': ['case_1'], 'subject_id': ['subject_1'], 'score': [0.5]}
+    )
+
+    updated, artifacts = _apply_score_label_overrides(scored, None, tmp_path / 'out')
+
+    assert updated.equals(scored)
+    summary = json.loads(
+        artifacts['score_label_overrides_summary'].read_text(encoding='utf-8')
+    )
+    assert summary['label_overrides'] == 'none'
+    assert summary['applied_rows'] == 0
+
+
+def test_score_label_overrides_reject_duplicate_unmatched_nonnumeric_and_unrecognized(
+    tmp_path: Path,
+):
+    scored = pd.DataFrame(
+        {'subject_image_id': ['case_1', 'case_2'], 'score': [0.5, 2.0]}
+    )
+
+    cases = [
+        (
+            pd.DataFrame(
+                {'subject_image_id': ['case_1', 'case_1'], 'rubric_score': [1, 2]}
+            ),
+            'duplicate',
+        ),
+        (
+            pd.DataFrame({'subject_image_id': ['missing'], 'rubric_score': [1]}),
+            'absent',
+        ),
+        (
+            pd.DataFrame({'subject_image_id': ['case_1'], 'rubric_score': ['bad']}),
+            'nonnumeric',
+        ),
+        (
+            pd.DataFrame({'subject_image_id': ['case_1'], 'rubric_score': [9]}),
+            'Unsupported endotheliosis score values',
+        ),
+    ]
+    for index, (overrides, pattern) in enumerate(cases):
+        path = tmp_path / f'overrides_{index}.csv'
+        overrides.to_csv(path, index=False)
+        with pytest.raises(ValueError, match=pattern):
+            _apply_score_label_overrides(scored, path, tmp_path / f'out_{index}')
 
 
 def test_canonical_ordinal_classifier_outputs_probability_simplex():

@@ -48,6 +48,11 @@ from eq.quantification.burden import (
 from eq.quantification.endotheliosis_grade_model import (
     evaluate_endotheliosis_grade_model,
 )
+from eq.quantification.input_contract import (
+    ResolvedQuantificationInputContract,
+    label_contract_reference_for_scored_table,
+    resolve_quantification_input_contract,
+)
 from eq.quantification.labelstudio_scores import (
     discover_label_studio_annotation_source,
     recover_label_studio_score_table,
@@ -81,11 +86,35 @@ def _save_json(data: Dict[str, Any], output_path: Path) -> Path:
 
 
 def _apply_score_label_overrides(
-    scored_table: pd.DataFrame, label_overrides_path: Path | None, output_dir: Path
+    scored_table: pd.DataFrame,
+    label_overrides_path: Path | None,
+    output_dir: Path,
+    *,
+    label_contract_reference: dict[str, Any] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Path]]:
     """Apply explicitly reviewed score overrides and write an audit surface."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = output_dir / 'score_label_overrides_summary.json'
     if label_overrides_path is None:
-        return scored_table, {}
+        _save_json(
+            {
+                'label_overrides_path': 'none',
+                'label_overrides': 'none',
+                'score_column': '',
+                'scored_rows': int(len(scored_table)),
+                'override_rows': 0,
+                'applied_rows': 0,
+                'changed_rows': 0,
+                'severe_boundary_changed_rows': 0,
+                'allowed_score_values': ALLOWED_SCORE_VALUES.tolist(),
+                'claim_boundary': (
+                    'no reviewed label overrides supplied; base scored labels define target'
+                ),
+                'label_contract_reference': label_contract_reference or {},
+            },
+            summary_path,
+        )
+        return scored_table, {'score_label_overrides_summary': summary_path}
     label_overrides_path = Path(label_overrides_path)
     if not label_overrides_path.exists():
         raise FileNotFoundError(
@@ -165,10 +194,10 @@ def _apply_score_label_overrides(
             if column in lookup.columns
             else ''
         )
-    output_dir.mkdir(parents=True, exist_ok=True)
     audit_path = output_dir / 'score_label_overrides_audit.csv'
-    summary_path = output_dir / 'score_label_overrides_summary.json'
     audit.to_csv(audit_path, index=False)
+    contract_payload = dict(label_contract_reference or {})
+    contract_payload['score_override_audit_path'] = str(audit_path)
     _save_json(
         {
             'label_overrides_path': str(label_overrides_path),
@@ -186,6 +215,13 @@ def _apply_score_label_overrides(
             'allowed_score_values': ALLOWED_SCORE_VALUES.tolist(),
             'claim_boundary': (
                 'explicit reviewer label overrides only; no inferred labels applied'
+            ),
+            'label_contract_reference': contract_payload,
+            'override_content_hash': contract_payload.get('label_overrides_hash'),
+            'base_scored_input_hash': contract_payload.get('base_scored_input_hash'),
+            'grouping_identity': contract_payload.get('grouping_identity', {}),
+            'effective_target_definition_version': contract_payload.get(
+                'target_definition_version'
             ),
         },
         summary_path,
@@ -730,6 +766,7 @@ def run_manifest_quantification(
     output_dir: Path,
     stop_after: str = 'model',
     label_overrides_path: Path | None = None,
+    input_contract: ResolvedQuantificationInputContract | None = None,
 ) -> Dict[str, Path]:
     """Run quantification from the runtime cohort manifest."""
     logger = get_logger('eq.quantification.pipeline')
@@ -760,8 +797,20 @@ def run_manifest_quantification(
     scored_table = build_manifest_scored_example_table(
         manifest_root, output_dir / 'scored_examples'
     )
+    label_contract_reference = (
+        label_contract_reference_for_scored_table(
+            input_contract,
+            scored_table,
+            base_scored_input_path=manifest_path,
+        )
+        if input_contract is not None
+        else None
+    )
     scored_table, label_override_artifacts = _apply_score_label_overrides(
-        scored_table, label_overrides_path, output_dir / 'scored_examples'
+        scored_table,
+        label_overrides_path,
+        output_dir / 'scored_examples',
+        label_contract_reference=label_contract_reference,
     )
     if label_override_artifacts:
         scored_table.to_csv(
@@ -830,6 +879,7 @@ def run_manifest_quantification(
         output_dir / 'ordinal_model',
         manifest_root=manifest_root,
         segmentation_model_path=segmentation_model_path,
+        label_contract_reference=label_contract_reference,
     )
     logger.info(
         'Quantification model artifacts complete: %d artifacts under %s',
@@ -2805,6 +2855,7 @@ def evaluate_embedding_table(
     n_splits: int = 3,
     manifest_root: Path | None = None,
     segmentation_model_path: Path | None = None,
+    label_contract_reference: dict[str, Any] | None = None,
 ) -> Dict[str, Path]:
     """Train burden-index model and retained ordinal comparator."""
     logger = get_logger('eq.quantification.pipeline')
@@ -2885,6 +2936,7 @@ def evaluate_embedding_table(
         change_dir=Path('openspec/changes/p3-functional-severe-ordinal-quantification'),
         manifest_root=manifest_root,
         segmentation_model_path=segmentation_model_path,
+        label_contract_reference=label_contract_reference,
     )
     burden_artifacts.update(grade_model_artifacts)
     logger.info(
@@ -2927,6 +2979,7 @@ def run_contract_first_quantification(
     apply_migration: bool = False,
     stop_after: str = 'model',
     label_overrides_path: Path | None = None,
+    input_contract: ResolvedQuantificationInputContract | None = None,
 ) -> Dict[str, Path]:
     """Prepare the quantification contract and run the embedding-first scorer."""
     logger = get_logger('eq.quantification.pipeline')
@@ -2943,8 +2996,20 @@ def run_contract_first_quantification(
         stop_after,
     )
 
-    if score_source not in {'auto', 'labelstudio', 'spreadsheet'}:
-        raise ValueError(f'Unsupported score_source: {score_source}')
+    if input_contract is None:
+        input_contract = resolve_quantification_input_contract(
+            data_dir=project_dir,
+            segmentation_model=segmentation_model_path,
+            output_dir=output_dir,
+            mapping_file=mapping_file,
+            annotation_source=annotation_source,
+            score_source=score_source,
+            label_overrides_path=label_overrides_path,
+        )
+    score_source = input_contract.score_source
+    annotation_source = input_contract.annotation_source
+    mapping_file = input_contract.mapping_file
+    label_overrides_path = input_contract.label_overrides_path
 
     manifest_path = project_dir / 'manifest.csv'
     if manifest_path.exists() and score_source == 'auto' and annotation_source is None:
@@ -2957,6 +3022,7 @@ def run_contract_first_quantification(
             output_dir=output_dir,
             stop_after=stop_after,
             label_overrides_path=label_overrides_path,
+            input_contract=input_contract,
         )
 
     inventory_path = output_dir / 'raw_inventory.csv'
@@ -3009,8 +3075,17 @@ def run_contract_first_quantification(
             score_table=score_table,
             output_dir=output_dir / 'scored_examples',
         )
+        label_contract_reference = label_contract_reference_for_scored_table(
+            input_contract,
+            scored_table,
+            base_scored_input_path=score_outputs['scores'],
+            annotation_artifact_path=score_outputs['scores'],
+        )
         scored_table, label_override_artifacts = _apply_score_label_overrides(
-            scored_table, label_overrides_path, output_dir / 'scored_examples'
+            scored_table,
+            label_overrides_path,
+            output_dir / 'scored_examples',
+            label_contract_reference=label_contract_reference,
         )
         if label_override_artifacts:
             scored_table.to_csv(
@@ -3071,6 +3146,7 @@ def run_contract_first_quantification(
             embedding_table,
             output_dir / 'ordinal_model',
             segmentation_model_path=segmentation_model_path,
+            label_contract_reference=label_contract_reference,
         )
         return {
             'raw_inventory': inventory_path,
@@ -3152,8 +3228,16 @@ def run_contract_first_quantification(
     scored_table = build_scored_example_table(
         project_dir, metadata_df, output_dir / 'scored_examples'
     )
+    label_contract_reference = label_contract_reference_for_scored_table(
+        input_contract,
+        scored_table,
+        base_scored_input_path=metadata_output_dir / 'standardized_metadata.csv',
+    )
     scored_table, label_override_artifacts = _apply_score_label_overrides(
-        scored_table, label_overrides_path, output_dir / 'scored_examples'
+        scored_table,
+        label_overrides_path,
+        output_dir / 'scored_examples',
+        label_contract_reference=label_contract_reference,
     )
     if label_override_artifacts:
         scored_table.to_csv(
@@ -3210,6 +3294,7 @@ def run_contract_first_quantification(
         embedding_table,
         output_dir / 'ordinal_model',
         segmentation_model_path=segmentation_model_path,
+        label_contract_reference=label_contract_reference,
     )
     return {
         'raw_inventory': inventory_path,

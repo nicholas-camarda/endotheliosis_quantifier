@@ -1470,6 +1470,7 @@ def _write_final_model_if_supported(
     verdict: dict[str, Any],
     feature_sets: dict[str, list[str]],
     paths: dict[str, Path],
+    label_contract_reference: dict[str, Any] | None = None,
 ) -> None:
     if verdict['overall_status'] not in {
         'model_ready_pending_mr_tiff_deployment_smoke'
@@ -1540,6 +1541,7 @@ def _write_final_model_if_supported(
         else 'no_warnings_recorded',
         'refit_warning_count': warning_result.warning_count,
         'refit_warning_messages': warning_records[:10],
+        'label_contract_reference': label_contract_reference or {},
     }
     _save_json(metadata, paths['final_model_metadata'])
     _save_json(
@@ -2707,6 +2709,7 @@ def evaluate_endotheliosis_grade_model(
     change_dir: Path | None = None,
     manifest_root: Path | None = None,
     segmentation_model_path: Path | None = None,
+    label_contract_reference: dict[str, Any] | None = None,
 ) -> dict[str, Path]:
     """Evaluate the P3 grade-model selector and write contained artifacts."""
     del change_dir
@@ -2815,7 +2818,14 @@ def evaluate_endotheliosis_grade_model(
         paths['selector_diagnostics'],
     )
     _save_json(coverage.to_dict(orient='records'), paths['family_gate_diagnostics'])
-    _write_final_model_if_supported(frame, metrics, verdict, feature_sets, paths)
+    _write_final_model_if_supported(
+        frame,
+        metrics,
+        verdict,
+        feature_sets,
+        paths,
+        label_contract_reference=label_contract_reference,
+    )
     dox_smoke = _run_dox_scored_no_mask_smoke(
         paths=paths,
         burden_output_dir=burden_output_dir,
@@ -2871,6 +2881,7 @@ def evaluate_endotheliosis_grade_model(
             )
         )
         _clear_final_model_artifacts(paths)
+    verdict['label_contract_reference'] = label_contract_reference or {}
     _save_json(verdict, paths['final_verdict_json'])
     _save_json(verdict.get('hard_blockers', []), paths['hard_blockers'])
     _write_reviews(frame, predictions, verdict, paths)

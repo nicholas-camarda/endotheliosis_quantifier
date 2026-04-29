@@ -62,6 +62,31 @@ def test_cli_run_config_help():
     assert '--dry-run' in result.stdout
 
 
+def test_direct_quantification_help_exposes_reviewed_label_contract():
+    for command in ('quant-endo', 'prepare-quant-contract'):
+        result = run_cli(command, '--help')
+        assert result.returncode == 0
+        assert '--label-overrides' in result.stdout
+
+
+def test_direct_quantification_commands_fail_without_reviewed_label_contract(tmp_path):
+    for command in ('quant-endo', 'prepare-quant-contract'):
+        result = run_cli(
+            command,
+            '--data-dir',
+            str(tmp_path / 'data'),
+            '--segmentation-model',
+            str(tmp_path / 'model.pkl'),
+            '--output-dir',
+            str(tmp_path / 'out'),
+        )
+        assert result.returncode != 0
+        assert 'requires --label-overrides' in (result.stdout + result.stderr)
+        assert 'eq run-config --config configs/endotheliosis_quantification.yaml' in (
+            result.stdout + result.stderr
+        )
+
+
 def test_cli_run_config_dry_runs_all_committed_configs():
     for config_name in (
         'mito_pretraining_config.yaml',

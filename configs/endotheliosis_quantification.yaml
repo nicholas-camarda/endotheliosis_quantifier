@@ -32,7 +32,7 @@ inputs:
 
   # Optional reviewed rubric label overrides. These are explicit human-reviewed
   # row-level score replacements, not projected labels for unreviewed rows.
-  label_overrides: output/quantification_results/endotheliosis_quantification_full_cohort_transfer_p0_adjudicated/quantification_review/rubric_application_experiment/expanded_rubric_review/rubric_label_overrides_for_next_modeling_run.csv
+  label_overrides: derived_data/quantification_inputs/reviewed_label_overrides/endotheliosis_grade_model/rubric_label_overrides.csv
 
 options:
   score_source: auto

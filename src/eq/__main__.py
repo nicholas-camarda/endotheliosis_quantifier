@@ -447,6 +447,12 @@ def prepare_quant_contract_command(args):
     logger.info('🔄 Preparing quantification contract artifacts...')
 
     try:
+        if not args.label_overrides:
+            raise ValueError(
+                'Direct prepare-quant-contract requires --label-overrides for the '
+                'current reviewed-label contract. Preferred workflow: eq run-config '
+                '--config configs/endotheliosis_quantification.yaml'
+            )
         run_endotheliosis_quantification = _load_contract_first_quantification()
         outputs = run_endotheliosis_quantification(
             data_dir=Path(args.data_dir),
@@ -455,6 +461,9 @@ def prepare_quant_contract_command(args):
             mapping_file=Path(args.mapping_file) if args.mapping_file else None,
             annotation_source=args.annotation_source,
             score_source=args.score_source,
+            label_overrides_path=Path(args.label_overrides)
+            if args.label_overrides
+            else None,
             apply_migration=args.apply_migration,
             stop_after='contract',
         )
@@ -656,6 +665,12 @@ def quant_endo_command(args):
     print(f'Stop after: {args.stop_after}')
 
     try:
+        if not args.label_overrides:
+            raise ValueError(
+                'Direct quant-endo requires --label-overrides for the current '
+                'reviewed-label contract. Preferred workflow: eq run-config '
+                '--config configs/endotheliosis_quantification.yaml'
+            )
         run_endotheliosis_quantification = _load_contract_first_quantification()
         outputs = run_endotheliosis_quantification(
             data_dir=project_dir,
@@ -664,6 +679,9 @@ def quant_endo_command(args):
             mapping_file=mapping_file,
             annotation_source=args.annotation_source,
             score_source=args.score_source,
+            label_overrides_path=Path(args.label_overrides)
+            if args.label_overrides
+            else None,
             apply_migration=args.apply_migration,
             stop_after=args.stop_after,
         )
@@ -840,6 +858,13 @@ Examples:
         help='CSV mapping legacy image stems to canonical subject_image_id values',
     )
     quant_parser.add_argument(
+        '--label-overrides',
+        help=(
+            'Reviewed rubric label override CSV. Must be a stable derived input, '
+            'not a prior output/quantification_results artifact.'
+        ),
+    )
+    quant_parser.add_argument(
         '--output-dir',
         default=str(
             get_runtime_output_path()
@@ -888,6 +913,13 @@ Examples:
     contract_parser.add_argument(
         '--mapping-file',
         help='CSV mapping legacy image stems to canonical subject_image_id values',
+    )
+    contract_parser.add_argument(
+        '--label-overrides',
+        help=(
+            'Reviewed rubric label override CSV. Must be a stable derived input, '
+            'not a prior output/quantification_results artifact.'
+        ),
     )
     contract_parser.add_argument(
         '--output-dir',

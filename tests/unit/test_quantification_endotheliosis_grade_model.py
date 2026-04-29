@@ -8,6 +8,7 @@ from PIL import Image
 from eq.quantification.endotheliosis_grade_model import (
     FIRST_CLASS_FAMILIES,
     _write_dox_overcall_review_diagnostic,
+    _write_final_model_if_supported,
     evaluate_endotheliosis_grade_model,
     grade_model_output_paths,
 )
@@ -96,8 +97,19 @@ def test_grade_model_writes_grouped_folds_and_selector_artifacts(tmp_path):
     burden_root = tmp_path / 'burden_model'
     df = _embedding_df(tmp_path)
     _write_upstream_artifacts(burden_root, df)
+    label_contract = {
+        'target_definition_version': 'test_v1',
+        'label_overrides_path': 'derived_data/overrides.csv',
+        'label_overrides_hash': 'abc123',
+        'grouping_identity': {'validation_group_key': 'subject_id'},
+    }
 
-    artifacts = evaluate_endotheliosis_grade_model(df, burden_root, n_splits=3)
+    artifacts = evaluate_endotheliosis_grade_model(
+        df,
+        burden_root,
+        n_splits=3,
+        label_contract_reference=label_contract,
+    )
 
     root = burden_root / 'endotheliosis_grade_model'
     folds = pd.read_csv(artifacts['endotheliosis_grade_model_development_folds'])
@@ -105,6 +117,7 @@ def test_grade_model_writes_grouped_folds_and_selector_artifacts(tmp_path):
     assert 'adjudicated_severe' in folds.columns
 
     verdict = json.loads(artifacts['endotheliosis_grade_model_verdict'].read_text())
+    assert verdict['label_contract_reference'] == label_contract
     assert verdict['overall_status'] in {
         'model_ready_pending_mr_tiff_deployment_smoke',
         'diagnostic_only_current_data_model',
@@ -133,6 +146,54 @@ def test_grade_model_writes_grouped_folds_and_selector_artifacts(tmp_path):
     assert not (root / 'validation').exists()
     assert not (root / 'calibration').exists()
     assert not (root / 'summaries').exists()
+
+
+def test_final_model_metadata_records_label_contract_reference(tmp_path):
+    paths = grade_model_output_paths(tmp_path / 'burden_model')
+    paths['final_training_predictions'].parent.mkdir(parents=True, exist_ok=True)
+    label_contract = {'target_definition_version': 'test_v1'}
+    frame = pd.DataFrame(
+        {
+            'subject_id': ['s1', 's2', 's3', 's4'],
+            'subject_image_id': ['i1', 'i2', 'i3', 'i4'],
+            'glomerulus_id': [1, 1, 1, 1],
+            'cohort_id': ['c', 'c', 'c', 'c'],
+            'score': [0.0, 0.5, 2.0, 3.0],
+            'adjudicated_severe': [False, False, True, True],
+            'feature_a': [0.1, 0.2, 1.0, 1.2],
+        }
+    )
+    metrics = pd.DataFrame(
+        [
+            {
+                'candidate_id': 'candidate_1',
+                'feature_family': 'test',
+                'target_kind': 'severe',
+                'model_kind': 'logistic_l2',
+                'regularization_c': 1.0,
+                'threshold': 0.5,
+                'mr_computable': True,
+            }
+        ]
+    )
+    verdict = {
+        'overall_status': 'model_ready_pending_mr_tiff_deployment_smoke',
+        'selected_candidate_id': 'candidate_1',
+        'selected_family_id': 'test_family',
+        'claim_boundary': 'test',
+    }
+
+    _write_final_model_if_supported(
+        frame,
+        metrics,
+        verdict,
+        {'test': ['feature_a']},
+        paths,
+        label_contract_reference=label_contract,
+    )
+
+    metadata = json.loads(paths['final_model_metadata'].read_text(encoding='utf-8'))
+    assert metadata['label_contract_reference'] == label_contract
 
 
 def test_first_class_family_subtrees_are_not_selector_internal_only(tmp_path):

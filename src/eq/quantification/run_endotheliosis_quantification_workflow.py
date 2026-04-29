@@ -13,6 +13,11 @@ from typing import Any
 
 import yaml
 
+from eq.quantification.input_contract import (
+    ResolvedQuantificationInputContract,
+    resolve_quantification_input_contract,
+    validate_committed_label_override_path,
+)
 from eq.quantification.pipeline import run_contract_first_quantification
 from eq.utils.execution_logging import (
     direct_execution_log_context,
@@ -76,6 +81,27 @@ def _required_path(runtime_root: Path, section: dict[str, Any], key: str) -> Pat
     return _runtime_path(runtime_root, value)
 
 
+def resolve_endotheliosis_quantification_contract(
+    *,
+    data_dir: Path,
+    segmentation_model: Path,
+    output_dir: Path,
+    mapping_file: Path | None = None,
+    annotation_source: str | Path | None = None,
+    score_source: str = 'auto',
+    label_overrides_path: Path | None = None,
+) -> ResolvedQuantificationInputContract:
+    return resolve_quantification_input_contract(
+        data_dir=data_dir,
+        segmentation_model=segmentation_model,
+        output_dir=output_dir,
+        mapping_file=mapping_file,
+        annotation_source=annotation_source,
+        score_source=score_source,
+        label_overrides_path=label_overrides_path,
+    )
+
+
 def run_endotheliosis_quantification_inputs(
     *,
     data_dir: Path,
@@ -90,17 +116,20 @@ def run_endotheliosis_quantification_inputs(
     provenance: dict[str, Any] | None = None,
 ) -> dict[str, Path]:
     """Run the canonical contract-first quantification engine from explicit inputs."""
-    data_dir = Path(data_dir)
-    segmentation_model = Path(segmentation_model)
-    output_dir = Path(output_dir)
-    if not data_dir.exists():
-        raise FileNotFoundError(
-            f'Required quantification data_dir does not exist: {data_dir}'
-        )
-    if not segmentation_model.exists():
-        raise FileNotFoundError(
-            f'Required quantification segmentation_model does not exist: {segmentation_model}'
-        )
+    contract = resolve_endotheliosis_quantification_contract(
+        data_dir=Path(data_dir),
+        segmentation_model=Path(segmentation_model),
+        output_dir=Path(output_dir),
+        mapping_file=Path(mapping_file) if mapping_file else None,
+        annotation_source=annotation_source,
+        score_source=score_source,
+        label_overrides_path=Path(label_overrides_path)
+        if label_overrides_path
+        else None,
+    )
+    data_dir = contract.data_dir
+    segmentation_model = contract.segmentation_model
+    output_dir = contract.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     result = run_contract_first_quantification(
         project_dir=data_dir,
@@ -108,10 +137,11 @@ def run_endotheliosis_quantification_inputs(
         output_dir=output_dir,
         mapping_file=Path(mapping_file) if mapping_file else None,
         annotation_source=annotation_source,
-        score_source=score_source,
-        label_overrides_path=label_overrides_path,
+        score_source=contract.score_source,
+        label_overrides_path=contract.label_overrides_path,
         apply_migration=apply_migration,
         stop_after=stop_after,
+        input_contract=contract,
     )
     provenance_path = output_dir / 'workflow_provenance.json'
     payload = {
@@ -123,6 +153,7 @@ def run_endotheliosis_quantification_inputs(
         'label_overrides_path': str(label_overrides_path)
         if label_overrides_path
         else '',
+        'label_contract_reference': contract.reference(),
         'outputs': {key: str(value) for key, value in result.items()},
     }
     if provenance:
@@ -154,6 +185,14 @@ def run_endotheliosis_quantification_workflow(
     mapping_file = inputs.get('mapping_file')
     annotation_source = inputs.get('annotation_source')
     label_overrides = inputs.get('label_overrides')
+    validate_committed_label_override_path(label_overrides)
+    input_score_source = str(inputs.get('score_source', '') or '')
+    option_score_source = str(options.get('score_source', 'auto'))
+    if input_score_source and input_score_source != option_score_source:
+        raise ValueError(
+            'Quantification config has divergent inputs.score_source and '
+            f'options.score_source: {input_score_source!r} != {option_score_source!r}'
+        )
 
     command = [
         sys.executable,
@@ -195,7 +234,7 @@ def run_endotheliosis_quantification_workflow(
             if mapping_file
             else None,
             annotation_source=annotation_source,
-            score_source=str(options.get('score_source', 'auto')),
+            score_source=option_score_source,
             label_overrides_path=_runtime_path(runtime_root, label_overrides)
             if label_overrides
             else None,
