@@ -49,7 +49,7 @@
 
 - [x] 7.1 Complete the per-change postflight required by `openspec/changes/ACTIVE_EXECUTION_ORDER.md`, including spec-to-diff review, completed-task evidence review, `git diff --check`, `git diff --stat`, and unrelated-edit inspection.
 - [x] 7.2 Commit the implementation as `implement oracle-current-docs-quarantine`.
-- [ ] 7.3 Archive/sync with `openspec archive oracle-current-docs-quarantine --yes`.
-- [ ] 7.4 Run `openspec validate --specs --strict` after archive/sync.
-- [ ] 7.5 Revalidate every remaining active change with `openspec validate <remaining-change> --strict` and `python3 scripts/check_openspec_explicitness.py <remaining-change>`.
-- [ ] 7.6 Commit the archive/sync as `archive oracle-current-docs-quarantine`.
+- [x] 7.3 Archive/sync with `openspec archive oracle-current-docs-quarantine --yes`.
+- [x] 7.4 Run `openspec validate --specs --strict` after archive/sync.
+- [x] 7.5 Revalidate every remaining active change with `openspec validate <remaining-change> --strict` and `python3 scripts/check_openspec_explicitness.py <remaining-change>`.
+- [x] 7.6 Commit the archive/sync as `archive oracle-current-docs-quarantine`.

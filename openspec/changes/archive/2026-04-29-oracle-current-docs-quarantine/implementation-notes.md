@@ -40,3 +40,9 @@
 - `git diff --check` passed.
 - `git diff --stat` showed only docs/OpenSpec task changes before force-adding ignored current-state stubs and archive files.
 - Targeted active-doc scan found no historical fallback operation matches.
+
+## Archive Sync
+
+- `openspec archive oracle-current-docs-quarantine --yes` completed and synced `repo-wide-quality-review` plus `workflow-config-entrypoints`.
+- `openspec validate --specs --strict` passed after archive/sync.
+- Remaining active changes were revalidated with strict OpenSpec validation and the explicitness checker.
