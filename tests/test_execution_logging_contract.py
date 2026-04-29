@@ -137,6 +137,21 @@ def test_setup_logging_does_not_erase_active_execution_log_handler(tmp_path: Pat
     assert "EXECUTION_STATUS=completed" in text
 
 
+def test_colored_console_logging_does_not_leak_ansi_codes_to_execution_log(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "runtime" / "logs" / "direct" / "surface" / "run" / "run.log"
+    context = ExecutionLogContext(surface="surface", run_id="run", log_path=log_path)
+    logger = setup_logging(verbose=True)
+
+    with execution_log_context(context, logger_name="eq"):
+        logger.info("COLOR_SHOULD_STAY_ON_CONSOLE_ONLY")
+
+    text = log_path.read_text(encoding="utf-8")
+    assert "\033[" not in text
+    assert "INFO - COLOR_SHOULD_STAY_ON_CONSOLE_ONLY" in text
+
+
 def test_run_logged_subprocess_tees_stdout_and_stderr_on_success(tmp_path: Path) -> None:
     log_path = tmp_path / "runtime" / "logs" / "direct" / "surface" / "run" / "run.log"
     context = ExecutionLogContext(surface="surface", run_id="run", log_path=log_path)

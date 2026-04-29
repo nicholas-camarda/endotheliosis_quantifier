@@ -1,5 +1,6 @@
 """Logging utilities for the eq package."""
 
+import copy
 import logging
 import sys
 import time
@@ -104,6 +105,7 @@ class ColoredStreamHandler(logging.StreamHandler):
         try:
             # Add color to the level name
             if record.levelname in self.COLORS:
+                record = copy.copy(record)
                 record.levelname = f"{self.COLORS[record.levelname]}{record.levelname}{self.COLORS['RESET']}"
             
             super().emit(record)
