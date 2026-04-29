@@ -182,9 +182,10 @@ eq run-config --config configs/glomeruli_candidate_comparison.yaml
 eq run-config --config configs/glomeruli_transport_audit.yaml
 eq run-config --config configs/highres_glomeruli_concordance.yaml
 eq run-config --config configs/endotheliosis_quantification.yaml
+eq run-config --config configs/label_free_roi_embedding_atlas.yaml
 ```
 
-Use `configs/glomeruli_candidate_comparison.yaml` when you want candidate evidence for the current glomeruli segmentation baseline. Use the transport, high-resolution concordance, or quantification YAMLs only when you already have the explicit upstream artifacts required by those stages.
+Use `configs/glomeruli_candidate_comparison.yaml` when you want candidate evidence for the current glomeruli segmentation baseline. Use the transport, high-resolution concordance, quantification, or label-free atlas YAMLs only when you already have the explicit upstream artifacts required by those stages.
 
 The YAML owns the routine settings:
 
@@ -270,6 +271,14 @@ Endotheliosis is graded by assessing the relative amount of open versus collapse
 
 The learned ROI branch is a capped phase-1 screen under `burden_model/learned_roi/`. It fits only the current glomeruli encoder embeddings, simple ROI QC features, and their hybrid. Optional backbone or foundation providers are audited but not fitted. A learned ROI result is shareable only if its generated candidate summary passes the explicit uncertainty, numerical-stability, ordinal/grade-scale, and cohort-confounding gates.
 
+The label-free ROI embedding atlas runs from an existing quantification output root:
+
+```bash
+eq run-config --config configs/label_free_roi_embedding_atlas.yaml
+```
+
+The atlas writes under `burden_model/embedding_atlas/`. Open `INDEX.md` first, then `summary/atlas_verdict.json`, `evidence/embedding_atlas_review.html`, and `review_queue/atlas_adjudication_queue.csv`. These artifacts support descriptive morphology clustering and review prioritization only. They are not calibrated no-low, mid-mod, or mod-severe probabilities, mechanistic evidence, or replacements for human-reviewed labels.
+
 Current quantification implementation surfaces:
 
 - Primary burden-index estimator surface: `src/eq/quantification/burden.py`
@@ -298,6 +307,7 @@ The main workflow configs live here:
 - `configs/glomeruli_transport_audit.yaml`
 - `configs/highres_glomeruli_concordance.yaml`
 - `configs/endotheliosis_quantification.yaml`
+- `configs/label_free_roi_embedding_atlas.yaml`
 
 Path helpers centralize repo-local defaults, runtime roots, and external cohort sources. Prefer YAML-relative paths and the path helpers in `src/eq/utils/paths.py` over hardcoded machine-specific paths.
 

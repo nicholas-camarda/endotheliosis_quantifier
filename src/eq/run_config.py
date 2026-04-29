@@ -24,6 +24,7 @@ SUPPORTED_WORKFLOWS = {
     "glomeruli_candidate_comparison",
     "glomeruli_transport_audit",
     "highres_glomeruli_concordance",
+    "label_free_roi_embedding_atlas",
     "segmentation_glomeruli_transfer",
     "segmentation_mitochondria_pretraining",
 }
@@ -112,6 +113,13 @@ def run_config(config_path: Path, *, dry_run: bool = False) -> None:
                 )
 
                 run_endotheliosis_quantification_workflow(config_path, dry_run=dry_run)
+                return
+            if workflow == "label_free_roi_embedding_atlas":
+                from eq.quantification.embedding_atlas import (
+                    run_label_free_roi_embedding_atlas,
+                )
+
+                run_label_free_roi_embedding_atlas(config_path, dry_run=dry_run)
                 return
             if workflow == "segmentation_mitochondria_pretraining":
                 run_mitochondria_pretraining_config(config, dry_run=dry_run)

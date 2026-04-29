@@ -1,0 +1,168 @@
+# Runnable with:
+#   eq run-config --config configs/label_free_roi_embedding_atlas.yaml
+#
+# Purpose:
+#   Build a label-free ROI embedding atlas from an existing quantification run.
+#   The atlas clusters frozen encoder embeddings and approved ROI/QC or learned
+#   ROI feature spaces without using human grade, cohort, source, treatment, or
+#   reviewer fields during clustering.
+
+workflow: label_free_roi_embedding_atlas
+
+run:
+  name: label_free_roi_embedding_atlas_full_cohort_transfer_p0_adjudicated
+  seed: 42
+  runtime_root_env: EQ_RUNTIME_ROOT
+  runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
+  python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
+
+inputs:
+  # Existing quantification output root. Relative paths are resolved under the
+  # active runtime root.
+  quantification_dir: output/quantification_results/endotheliosis_quantification_full_cohort_transfer_p0_adjudicated
+
+  # Required atlas inputs inside quantification_dir.
+  roi_embeddings: embeddings/roi_embeddings.csv
+  roi_scored_examples: roi_crops/roi_scored_examples.csv
+
+  # Optional feature table. If present and join keys are unique, it can add a
+  # learned ROI feature space; otherwise that feature space is blocked.
+  learned_roi_features: burden_model/learned_roi/feature_sets/learned_roi_features.csv
+
+  row_identity_columns:
+    - subject_image_id
+    - subject_id
+    - sample_id
+    - image_id
+    - glomerulus_id
+  grouping_column: subject_id
+  optional_metadata_columns:
+    - cohort_id
+    - lane_assignment
+    - score
+    - original_score_before_label_override
+    - label_override_source
+    - roi_image_path
+    - roi_mask_path
+    - raw_image_path
+    - raw_mask_path
+  required_roi_provenance_columns:
+    - roi_status
+    - roi_component_selection
+    - roi_bbox_x0
+    - roi_bbox_y0
+    - roi_bbox_x1
+    - roi_bbox_y1
+    - roi_area
+    - roi_fill_fraction
+    - roi_component_count
+
+feature_spaces:
+  encoder_standardized:
+    source_table: roi_embeddings
+    column_prefixes:
+      - embedding_
+    scaling: standard
+  encoder_pca:
+    source_table: roi_embeddings
+    column_prefixes:
+      - embedding_
+    scaling: standard
+    pca:
+      max_components: 50
+      min_explained_variance: 0.90
+  roi_qc_standardized:
+    source_table: roi_embeddings
+    columns:
+      - roi_area
+      - roi_fill_fraction
+      - roi_mean_intensity
+      - roi_openness_score
+      - roi_component_count
+      - roi_union_bbox_width
+      - roi_union_bbox_height
+      - roi_largest_component_area_fraction
+    scaling: standard
+  learned_roi_standardized:
+    source_table: learned_roi_features
+    column_prefixes:
+      - learned_current_glomeruli_encoder_
+      - learned_simple_roi_qc_
+    scaling: standard
+    optional: true
+
+label_blinding:
+  denied_column_patterns:
+    - score
+    - grade
+    - severe
+    - cohort
+    - lane
+    - source
+    - treatment
+    - reviewer
+    - adjudication
+    - override
+    - prediction
+    - target
+    - path
+  approved_feature_lineage:
+    - frozen_encoder_embedding
+    - roi_qc_measurement
+    - learned_roi_feature
+
+methods:
+  required:
+    sklearn_pca: true
+    sklearn_kmeans: true
+    sklearn_gaussian_mixture: true
+    sklearn_nearest_neighbors: true
+  optional:
+    hdbscan: true
+    umap_learn: true
+  visualization_only:
+    tsne: false
+  cluster_count_grid:
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+  stability:
+    resampling_unit: subject_id
+    resamples: 100
+    min_subjects_per_cluster: 3
+
+interpretation:
+  candidate_severity_like_group_requires:
+    min_cluster_rows: 20
+    min_cluster_subjects: 3
+    min_stability_ari: 0.60
+    max_source_fraction: 0.80
+    max_artifact_dominance_fraction: 0.50
+    min_grade_association_effect: configured_in_runner
+    max_missing_representative_asset_fraction: 0.10
+  claim_boundary: descriptive_morphology_clustering_and_review_prioritization_only
+
+review:
+  max_clusters_in_html: 12
+  representatives_per_cluster: 8
+  nearest_neighbors_per_case: 5
+  exclude_same_subject_neighbors: true
+  max_adjudication_queue_rows: 200
+
+outputs:
+  atlas_dir: burden_model/embedding_atlas
+  first_read:
+    - INDEX.md
+    - summary/atlas_verdict.json
+    - summary/atlas_summary.md
+    - summary/artifact_manifest.json
+  artifact_groups:
+    - summary
+    - feature_space
+    - clusters
+    - stability
+    - diagnostics
+    - evidence
+    - review_queue

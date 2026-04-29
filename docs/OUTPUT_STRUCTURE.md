@@ -250,6 +250,26 @@ output/quantification_results/<cohort_id>/
 │   │       ├── learned_roi_nearest_examples.csv
 │   │       ├── learned_roi_attribution_status.json
 │   │       └── assets/
+│   ├── embedding_atlas/
+│   │   ├── INDEX.md
+│   │   ├── summary/
+│   │   │   ├── atlas_verdict.json
+│   │   │   ├── atlas_summary.md
+│   │   │   └── artifact_manifest.json
+│   │   ├── feature_space/
+│   │   │   └── feature_space_manifest.json
+│   │   ├── clusters/
+│   │   │   └── cluster_assignments.csv
+│   │   ├── stability/
+│   │   │   └── cluster_stability.json
+│   │   ├── diagnostics/
+│   │   │   ├── label_blinding_audit.json
+│   │   │   ├── method_availability.json
+│   │   │   └── cluster_posthoc_diagnostics.json
+│   │   ├── evidence/
+│   │   │   └── embedding_atlas_review.html
+│   │   └── review_queue/
+│   │       └── atlas_adjudication_queue.csv
 │   ├── source_aware_estimator/
 │       ├── INDEX.md
 │       ├── summary/
@@ -320,6 +340,8 @@ output/quantification_results/<cohort_id>/
 `burden_model/INDEX.md` is the first-read map for the burden-model subtree. `burden_model/primary_burden_index/model/burden_model.joblib` is the serialized exploratory burden model artifact. Candidate-screen files under `burden_model/primary_burden_index/candidates/` are comparison and planning artifacts, not separately deployed models. Use `burden_model/primary_burden_index/model/burden_predictions.csv` for held-out validation evidence and `burden_model/primary_burden_index/model/final_model_predictions.csv` for final full-cohort fitted summaries. Morphology features under `burden_model/primary_burden_index/feature_sets/` are deterministic review features; inspect `burden_model/primary_burden_index/evidence/morphology_feature_review/feature_review.html` and the operator adjudication output before treating them as biologically reliable evidence.
 
 `burden_model/learned_roi/` contains the capped learned-ROI candidate screen. Open `INDEX.md` first, then `summary/estimator_verdict.md` or `summary/estimator_verdict.json`. Phase 1 fits only the current glomeruli encoder embeddings, simple ROI QC features, and their hybrid. Optional backbone or foundation providers are recorded in `diagnostics/provider_audit.json` as audit-only, unavailable, or failed; they are not fitted candidates. Use `candidates/learned_roi_candidate_summary.json`, `calibration/learned_roi_calibration.json`, and `diagnostics/cohort_confounding_diagnostics.json` to determine whether any learned ROI track is README/docs-ready. If readiness gates fail, the learned ROI outputs are failure evidence and review artifacts, not a promoted quantification claim.
+
+`burden_model/embedding_atlas/` contains the label-free ROI embedding atlas. Run it with `eq run-config --config configs/label_free_roi_embedding_atlas.yaml` after the configured quantification output root contains `embeddings/roi_embeddings.csv` and `roi_crops/roi_scored_examples.csv`. Open `INDEX.md` first, then `summary/atlas_verdict.json`, `evidence/embedding_atlas_review.html`, and `review_queue/atlas_adjudication_queue.csv`. The atlas describes morphology clusters and prioritizes review; it does not report calibrated severity probabilities, mechanistic explanations, or automatic human-label replacement.
 
 `burden_model/source_aware_estimator/` contains the practical source-aware estimator review surface. Open `INDEX.md` first, then `summary/estimator_verdict.md`. Training/apparent, subject-heldout validation, and testing-availability rows are in `summary/metrics_by_split.csv`; apparent full-cohort metrics are not independent testing. The six PNGs under `summary/figures/` are the capped first-read graph set. `diagnostics/upstream_roi_adequacy.json` records whether the MR TIFF-to-ROI evidence is adequate for image-level, subject-level, or aggregate current-data use. Source sensitivity, score ambiguity, unknown-source rows, and broad uncertainty are reliability/scope labels unless they expose a hard blocker.
 
