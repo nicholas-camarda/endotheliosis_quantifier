@@ -88,8 +88,8 @@
 ## 10. Postflight And Archive Lifecycle
 
 - [x] 10.1 Complete the per-change postflight required by `openspec/changes/ACTIVE_EXECUTION_ORDER.md`, including spec-to-diff review, completed-task evidence review, `git diff --check`, `git diff --stat`, and unrelated-edit inspection.
-- [ ] 10.2 Commit the implementation as `implement oracle-harden-audit-contracts`.
-- [ ] 10.3 Archive/sync with `openspec archive oracle-harden-audit-contracts --yes`.
-- [ ] 10.4 Run `openspec validate --specs --strict` after archive/sync.
-- [ ] 10.5 Revalidate every remaining active change with `openspec validate <remaining-change> --strict` and `python3 scripts/check_openspec_explicitness.py <remaining-change>`.
-- [ ] 10.6 Commit the archive/sync as `archive oracle-harden-audit-contracts`.
+- [x] 10.2 Commit the implementation as `implement oracle-harden-audit-contracts`.
+- [x] 10.3 Archive/sync with `openspec archive oracle-harden-audit-contracts --yes`.
+- [x] 10.4 Run `openspec validate --specs --strict` after archive/sync.
+- [x] 10.5 Revalidate every remaining active change with `openspec validate <remaining-change> --strict` and `python3 scripts/check_openspec_explicitness.py <remaining-change>`.
+- [x] 10.6 Commit the archive/sync as `archive oracle-harden-audit-contracts`.
