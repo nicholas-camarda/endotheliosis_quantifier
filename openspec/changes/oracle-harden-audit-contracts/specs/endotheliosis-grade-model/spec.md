@@ -23,6 +23,11 @@ Quantification model evaluators SHALL use shared modeling-contract helpers for c
 - **AND** first-class family diagnostics SHALL include the relevant blocker details
 - **AND** README-facing deployment statuses SHALL remain blocked while any required model-family blocker is unresolved
 
+#### Scenario: Source-confounded candidates are diagnosed before promotion
+- **WHEN** evaluator inputs include cohort, source, lane, or treatment-proxy fields
+- **THEN** shared modeling-contract helpers SHALL compute source/cohort confounding diagnostics and source-stratified support checks
+- **AND** a candidate dominated by one source/cohort or lacking source-stratified support SHALL be blocked, downgraded, or explicitly labeled as source-confounded before any deployable verdict is written
+
 #### Scenario: Supported sklearn artifact serialization matches the filename contract
 - **WHEN** a supported sklearn model artifact is written with a `.joblib` filename
 - **THEN** the evaluator SHALL write it with `joblib.dump`

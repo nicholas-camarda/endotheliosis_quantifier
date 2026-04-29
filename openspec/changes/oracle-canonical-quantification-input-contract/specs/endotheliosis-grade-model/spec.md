@@ -5,7 +5,7 @@ The P3 endotheliosis grade model SHALL consume only the canonical resolved quant
 
 #### Scenario: Final model metadata records label contract
 - **WHEN** P3 writes `model/final_model_metadata.json`
-- **THEN** the metadata includes the resolved score source, reviewed label override path or `none`, override content hash when present, effective target-definition version, and path to the score override audit
+- **THEN** the metadata includes the resolved score source, reviewed label override path or `none`, override content hash when present, base scored input hash, annotation/mapping hashes when file-backed, segmentation artifact metadata reference, grouping identity, effective target-definition version, and path to the score override audit
 
 #### Scenario: Final verdict records label contract
 - **WHEN** P3 writes `summary/final_product_verdict.json`
@@ -16,5 +16,5 @@ The P3 endotheliosis grade model SHALL consume only the canonical resolved quant
 - **THEN** P3 ignores those stale score columns and uses only labels from the canonical resolved label contract
 
 #### Scenario: Label contract changes invalidate comparability
-- **WHEN** two P3 runs use different reviewed override hashes or target-definition versions
+- **WHEN** two P3 runs use different reviewed override hashes, base scored input hashes, grouping identity, segmentation artifact metadata references, or target-definition versions
 - **THEN** their model-selection and final-verdict artifacts record the difference so metrics are not presented as directly comparable without that context

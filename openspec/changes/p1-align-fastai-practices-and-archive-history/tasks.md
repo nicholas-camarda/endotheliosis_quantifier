@@ -39,11 +39,12 @@
 ## 6. Historical Documentation Quarantine
 
 - [ ] 6.1 Create `docs/archive/` if it does not exist.
-- [ ] 6.2 Move historical content from `docs/INTEGRATION_GUIDE.md` into `docs/archive/fastai_legacy_integration.md` with a historical/reference-only header, then keep or recreate `docs/INTEGRATION_GUIDE.md` as current implementation guidance if the guide remains.
-- [ ] 6.3 Move retained content from `docs/PIPELINE_INTEGRATION_PLAN.md` into `docs/archive/fastai_pipeline_integration_plan.md` with a historical/reference-only header.
-- [ ] 6.4 Move retained content from `docs/HISTORICAL_IMPLEMENTATION_ANALYSIS.md` into `docs/archive/fastai_historical_implementation_analysis.md` with a historical/reference-only header.
-- [ ] 6.5 Update `docs/HISTORICAL_NOTES.md` as the index for the archived FastAI historical material.
-- [ ] 6.6 Update `docs/README.md` and `docs/HISTORICAL_NOTES.md` so archive material is accessible and discoverable without being presented as current workflow guidance.
+- [ ] 6.2 Reconcile the already-applied `oracle-current-docs-quarantine` archive outputs before moving docs; if the historical content was already archived and indexed, mark the corresponding P1 archive move as satisfied/no-op with evidence instead of recreating or duplicating archive pages.
+- [ ] 6.3 Move historical content from `docs/INTEGRATION_GUIDE.md` into `docs/archive/fastai_legacy_integration.md` with a historical/reference-only header only when it was not already quarantined by the prior docs change, then keep or recreate `docs/INTEGRATION_GUIDE.md` as current implementation guidance if the guide remains.
+- [ ] 6.4 Move retained content from `docs/PIPELINE_INTEGRATION_PLAN.md` into `docs/archive/fastai_pipeline_integration_plan.md` with a historical/reference-only header only when it was not already quarantined by the prior docs change.
+- [ ] 6.5 Move retained content from `docs/HISTORICAL_IMPLEMENTATION_ANALYSIS.md` into `docs/archive/fastai_historical_implementation_analysis.md` with a historical/reference-only header only when it remains outside archive after the prior docs change.
+- [ ] 6.6 Update `docs/HISTORICAL_NOTES.md` as the index for the archived FastAI historical material.
+- [ ] 6.7 Update `docs/README.md` and `docs/HISTORICAL_NOTES.md` so archive material is accessible and discoverable without being presented as current workflow guidance.
 
 ## 7. Current Documentation Cleanup
 
@@ -62,3 +63,12 @@
 - [ ] 8.4 Run `python3 scripts/check_openspec_explicitness.py openspec/changes/p1-align-fastai-practices-and-archive-history`.
 - [ ] 8.5 Run `OPENSPEC_TELEMETRY=0 openspec validate p1-align-fastai-practices-and-archive-history --strict`.
 - [ ] 8.6 Record the reuse-first inventory, any new-script justification, validation results, and residual risk in this change before implementation is considered complete.
+
+## 9. Postflight And Archive Lifecycle
+
+- [ ] 9.1 Complete the per-change postflight required by `openspec/changes/ACTIVE_EXECUTION_ORDER.md`, including spec-to-diff review, completed-task evidence review, `git diff --check`, `git diff --stat`, and unrelated-edit inspection.
+- [ ] 9.2 Commit the implementation as `implement p1-align-fastai-practices-and-archive-history`.
+- [ ] 9.3 Archive/sync with `openspec archive p1-align-fastai-practices-and-archive-history --yes`.
+- [ ] 9.4 Run `openspec validate --specs --strict` after archive/sync.
+- [ ] 9.5 Revalidate every remaining active change with `openspec validate <remaining-change> --strict` and `python3 scripts/check_openspec_explicitness.py <remaining-change>`.
+- [ ] 9.6 Commit the archive/sync as `archive p1-align-fastai-practices-and-archive-history`.

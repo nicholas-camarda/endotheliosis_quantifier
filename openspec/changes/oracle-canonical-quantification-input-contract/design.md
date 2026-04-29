@@ -60,10 +60,15 @@ Every quantification run that consumes scores must write label-contract provenan
 - annotation source and mapping file if used
 - label override path or explicit `none`
 - label override content hash
+- base scored table or manifest content hash
+- annotation source content hash when file-backed
+- mapping file content hash when present
+- segmentation artifact metadata reference and content hash when file-backed
 - matched override rows
 - unmatched override rows
 - duplicate override status
 - accepted score set
+- grouping identity, including `subject_id`, row identity, `subject_image_id` uniqueness, grouping-key derivation, row count, and subject count
 - effective target-definition version
 
 P3 final model metadata and final verdict artifacts must reference this provenance.

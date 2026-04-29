@@ -46,6 +46,8 @@ Oracle's static repo review identified multiple fail-open paths that can produce
 - Manifest-paired training validation will be implemented in `src/eq/data_management/datablock_loader.py` and `src/eq/data_management/standard_getters.py`.
 - Shared segmentation preprocessing will use one explicit function in `src/eq/inference/prediction_core.py` and will be consumed by `src/eq/quantification/pipeline.py`, `src/eq/quantification/embeddings.py`, and `src/eq/inference/gpu_inference.py`.
 - Shared quantification modeling contracts will live in `src/eq/quantification/modeling_contracts.py`; `src/eq/quantification/endotheliosis_grade_model.py` must consume those helpers for candidate/fold estimability, insufficient-data hard blockers, gate payloads, and supported model serialization.
+- Source/cohort confounding diagnostics and source-stratified support checks will be added to the shared quantification modeling contracts where evaluator inputs contain source or cohort fields.
+- This change consumes the completed canonical quantification input contract for resolved labels, grouping identity, target-defining hashes, and override provenance. It owns current Label Studio extraction and historical backfill rejection, but it must not change the canonical target-definition version without updating provenance and tests.
 - Glomeruli candidate provenance hardening will target `src/eq/training/compare_glomeruli_candidates.py`, `src/eq/training/train_glomeruli.py`, and `src/eq/training/run_glomeruli_candidate_comparison_workflow.py`.
 - Exact artifact handoffs will target `src/eq/run_config.py` and `configs/glomeruli_candidate_comparison.yaml`.
 - ROI fail-closed behavior will target `src/eq/quantification/pipeline.py`.
@@ -57,11 +59,17 @@ Oracle's static repo review identified multiple fail-open paths that can produce
 - [audit_first_then_decide] Which current tests intentionally assert historical fallback behavior and should be inverted versus deleted? Deciding audit target: `tests/unit/test_quantification_pipeline.py`, `tests/test_glomeruli_resize_screening_workflow.py`, and candidate-comparison tests.
 - [audit_first_then_decide] Which existing local runtime artifacts become non-supported after provenance hardening? Deciding audit target: current metadata fields in `$EQ_RUNTIME_ROOT/models/segmentation/` and the active `configs/*.yaml` references.
 
+## logging-contract
+
+Durable logging behavior remains the existing `eq run-config` parent-log contract plus direct module logging. This change makes setup, subprocess, preprocessing, ROI, artifact-handoff, model-estimability, and provenance failures visible rather than adding a second logging system.
+
+## docs-impact
+
+README/docs/config guidance must describe the current fail-closed score, manifest, preprocessing, ROI, handoff, modeling-contract, and provenance behavior after implementation. Public docs should avoid historical migration framing.
+
 ## Impact
 
 - Affected code: `src/eq/quantification/labelstudio_scores.py`, `src/eq/quantification/cohorts.py`, `src/eq/quantification/pipeline.py`, `src/eq/quantification/embeddings.py`, `src/eq/quantification/modeling_contracts.py`, `src/eq/quantification/endotheliosis_grade_model.py`, `src/eq/inference/prediction_core.py`, `src/eq/inference/gpu_inference.py`, `src/eq/data_management/datablock_loader.py`, `src/eq/data_management/standard_getters.py`, `src/eq/data_management/canonical_naming.py`, `src/eq/data_management/canonical_contract.py`, `src/eq/training/compare_glomeruli_candidates.py`, `src/eq/training/train_glomeruli.py`, `src/eq/training/run_glomeruli_candidate_comparison_workflow.py`, `src/eq/utils/run_io.py`, `src/eq/run_config.py`, `src/eq/__main__.py`, and `src/eq/__init__.py`.
 - Affected configs: `configs/glomeruli_candidate_comparison.yaml` and `configs/endotheliosis_quantification.yaml`.
 - Affected artifact contracts: segmentation model metadata, candidate-comparison reports, embedding summaries, inference provenance, ROI status/crop outputs, quantification model verdicts, supported sklearn model files, and quantification review artifacts under `output/quantification_results/`.
 - Existing local artifacts that rely on latest-glob handoffs, fallback provenance, historical Label Studio backfill, or hard-coded inference thresholds may become compatibility or historical artifacts until regenerated under the hardened contracts.
-- logging-contract: Durable logging behavior remains the existing `eq run-config` parent-log contract plus direct module logging; this change makes setup, subprocess, and provenance failures visible rather than adding a second logging system.
-- docs-impact: README/docs/config guidance must describe the current fail-closed score, manifest, preprocessing, ROI, handoff, and provenance contracts after implementation; public docs should avoid historical migration framing.

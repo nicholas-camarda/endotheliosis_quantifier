@@ -99,6 +99,8 @@ Alternative considered: preserve import-time setup for convenience. Rejected bec
 - Supported glomeruli base artifacts must be exact YAML paths, not latest-glob selections.
 - `DEFAULT_PREDICTION_THRESHOLD` or an explicit caller threshold is the only default inference threshold contract; `0.01` is not supported as an implicit default.
 - Quantification evaluators must not call sklearn fitting on an unestimable fold; they must record a hard blocker and continue to a bounded diagnostic or insufficient-data verdict.
+- Quantification evaluators with source or cohort fields must use shared source/cohort confounding diagnostics and source-stratified support checks before any candidate is promoted as deployable evidence.
+- The completed canonical quantification input contract owns resolved label provenance, grouping identity, target-defining hashes, and override provenance. This change may harden current Label Studio extraction and reject historical backfill, but it must not silently change the canonical target-definition version.
 - A supported sklearn artifact filename and serialization method must agree; `.joblib` files are written with `joblib.dump`, while pickle output must use a `.pkl` contract.
 - A training artifact missing mandatory split/history/git/provenance metadata is non-supported or the run fails before export.
 - Tests that currently assert fallback behavior are implementation blockers and must be replaced before the change is considered complete.
@@ -122,5 +124,5 @@ Alternative considered: preserve import-time setup for convenience. Rejected bec
 
 ## Open Questions
 
-- [audit_first_then_decide] Which currently committed configs have resolvable exact artifact paths without inspecting local-only runtime metadata? Evidence source: `configs/*.yaml`, `analysis_registry.yaml`, and active `$EQ_RUNTIME_ROOT/models/segmentation/` metadata.
+- [audit_first_then_decide] Which currently committed config keys can be resolved to exact supported artifact paths from repo-tracked config/registry alone, and which must remain user-provided explicit paths rather than local machine paths? Deciding evidence source: `configs/*.yaml`, `analysis_registry.yaml`, and active `$EQ_RUNTIME_ROOT/models/segmentation/` metadata; the required audit output is a key-by-key list that rejects local-only runtime metadata as committed defaults before config edits proceed.
 - [audit_first_then_decide] Which candidate comparison unavailable-family report behavior remains valid for audit-only reports after training failures raise for requested supported runs? Evidence source: `src/eq/training/compare_glomeruli_candidates.py` report-mode call sites and tests.

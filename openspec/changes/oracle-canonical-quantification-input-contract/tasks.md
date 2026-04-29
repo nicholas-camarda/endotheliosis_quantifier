@@ -19,7 +19,9 @@
 - [ ] 3.2 Reuse existing path helpers from `src/eq/utils/paths.py` and existing score/cohort parsing helpers; do not duplicate path resolution or label parsing.
 - [ ] 3.3 Enforce reviewed override validation for required columns, unique `subject_image_id`, recognized scores, row matches, and nonnumeric values before downstream label consumption.
 - [ ] 3.4 Write label-contract provenance into existing `scored_examples/score_label_overrides_audit.csv` and `scored_examples/score_label_overrides_summary.json`.
-- [ ] 3.5 Ensure no optional feature-table merge can overwrite the canonical resolved label columns with stale score columns.
+- [ ] 3.5 Include validation grouping identity in the resolved contract: `subject_id`, row identity, `subject_image_id` uniqueness, grouping-key derivation, and subject/image counts.
+- [ ] 3.6 Record content hashes for all target-defining inputs, including the base scored table or manifest, annotation source when file-backed, mapping file when present, reviewed override file when present, and segmentation artifact metadata reference.
+- [ ] 3.7 Ensure no optional feature-table merge can overwrite the canonical resolved label columns with stale score columns.
 
 ## 4. Entrypoint Migration
 
@@ -43,6 +45,8 @@
 - [ ] 6.3 Add unit coverage proving `output/quantification_results/...` override paths are rejected in committed config validation.
 - [ ] 6.4 Add unit coverage for duplicate, unmatched, nonnumeric, and unrecognized reviewed override rows.
 - [ ] 6.5 Add unit coverage proving P3 metadata and final verdict include the resolved label contract.
+- [ ] 6.6 Add parser-level regression coverage proving `eq quant-endo` and `eq prepare-quant-contract` cannot reach label-dependent quantification execution unless they expose and pass the full resolved label contract or fail before label loading.
+- [ ] 6.7 Add regression coverage proving grouping identity and target-defining input hashes are recorded and that changed hashes/target-definition versions invalidate direct metric comparability.
 
 ## 7. Documentation And Validation
 
@@ -53,3 +57,12 @@
 - [ ] 7.5 Run `OPENSPEC_TELEMETRY=0 openspec validate oracle-canonical-quantification-input-contract --strict`.
 - [ ] 7.6 Run `python3 scripts/check_openspec_explicitness.py oracle-canonical-quantification-input-contract`.
 - [ ] 7.7 Record final validation results, migrated callers, any rejected duplicate surfaces, and residual risks in the implementation closeout.
+
+## 8. Postflight And Archive Lifecycle
+
+- [ ] 8.1 Complete the per-change postflight required by `openspec/changes/ACTIVE_EXECUTION_ORDER.md`, including spec-to-diff review, completed-task evidence review, `git diff --check`, `git diff --stat`, and unrelated-edit inspection.
+- [ ] 8.2 Commit the implementation as `implement oracle-canonical-quantification-input-contract`.
+- [ ] 8.3 Archive/sync with `openspec archive oracle-canonical-quantification-input-contract --yes`.
+- [ ] 8.4 Run `openspec validate --specs --strict` after archive/sync.
+- [ ] 8.5 Revalidate every remaining active change with `openspec validate <remaining-change> --strict` and `python3 scripts/check_openspec_explicitness.py <remaining-change>`.
+- [ ] 8.6 Commit the archive/sync as `archive oracle-canonical-quantification-input-contract`.

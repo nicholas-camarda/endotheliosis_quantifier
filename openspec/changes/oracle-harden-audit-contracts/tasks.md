@@ -1,3 +1,11 @@
+## 0. Reuse-First Contract Inventory
+
+- [ ] 0.1 Inventory existing owners before adding or centralizing helpers for segmentation preprocessing, threshold provenance, Label Studio grade extraction, canonical naming, manifest pairing, candidate provenance, config validation, run logging, quantification estimability, source-confounding diagnostics, and sklearn serialization.
+- [ ] 0.2 Record for each owner whether the change will reuse, extend, or replace the existing surface, and why any new helper is required.
+- [ ] 0.3 Confirm this change consumes the completed canonical quantification input contract for resolved labels, grouping identity, target-defining hashes, and override provenance rather than creating a second target-definition path.
+- [ ] 0.4 Record the canonical-input handoff: this change owns current Label Studio extraction and historical backfill rejection, but it must not change the canonical target-definition version without updating provenance and tests.
+- [ ] 0.5 Audit `configs/*.yaml`, `analysis_registry.yaml`, and active runtime artifact metadata to produce a key-by-key exact-artifact-handoff plan before config edits proceed; committed defaults must not depend on local-only runtime paths.
+
 ## 1. Confirm And Invert Fail-Open Tests
 
 - [ ] 1.1 Audit tests that currently assert historical Label Studio backfill, latest-artifact selection, resize-screening fallback, fallback provenance, permissive mask lookup, or global MPS fallback behavior.
@@ -55,7 +63,9 @@
 - [ ] 7.3 Refactor severe and ordinal P3 candidate fitting so each grouped training fold is checked for required target-class support before sklearn fitting; unestimable folds or candidates must be recorded as hard blockers or skipped diagnostics, not uncaught sklearn errors.
 - [ ] 7.4 Replace `pickle.dump` writes for `model/final_model.joblib` with the shared supported sklearn serialization helper, or rename the artifact contract to `.pkl` everywhere in code, specs, docs, and tests.
 - [ ] 7.5 Add regression coverage for no estimable candidate features, one-class grouped severe folds, one-class grouped ordinal folds, supported `.joblib` serialization/loadability, and hard-blocker propagation into `summary/final_product_verdict.json` plus family diagnostics.
-- [ ] 7.6 Record in the implementation closeout which non-P3 quantification evaluators should be migrated next to the shared modeling-contract helpers; do not refactor older evaluators in this change unless needed to remove a fail-open path touched here.
+- [ ] 7.6 Add shared source/cohort confounding diagnostics and source-stratified minimum-support checks to the reusable modeling-contract helpers where supported by the current evaluator inputs.
+- [ ] 7.7 Add tests proving a candidate or fold dominated by one source/cohort is blocked, downgraded, or explicitly diagnosed rather than promoted as deployable evidence.
+- [ ] 7.8 Record in the implementation closeout which non-P3 quantification evaluators should be migrated next to the shared modeling-contract helpers; do not refactor older evaluators in this change unless needed to remove a fail-open path touched here.
 
 ## 8. Harden CLI Startup, Canonical Naming, And MPS Scope
 
@@ -74,3 +84,12 @@
 - [ ] 9.5 Run `ruff check .` and fix actionable lint failures introduced by this change.
 - [ ] 9.6 Run `openspec validate oracle-harden-audit-contracts --strict`.
 - [ ] 9.7 Run `python3 scripts/check_openspec_explicitness.py oracle-harden-audit-contracts`.
+
+## 10. Postflight And Archive Lifecycle
+
+- [ ] 10.1 Complete the per-change postflight required by `openspec/changes/ACTIVE_EXECUTION_ORDER.md`, including spec-to-diff review, completed-task evidence review, `git diff --check`, `git diff --stat`, and unrelated-edit inspection.
+- [ ] 10.2 Commit the implementation as `implement oracle-harden-audit-contracts`.
+- [ ] 10.3 Archive/sync with `openspec archive oracle-harden-audit-contracts --yes`.
+- [ ] 10.4 Run `openspec validate --specs --strict` after archive/sync.
+- [ ] 10.5 Revalidate every remaining active change with `openspec validate <remaining-change> --strict` and `python3 scripts/check_openspec_explicitness.py <remaining-change>`.
+- [ ] 10.6 Commit the archive/sync as `archive oracle-harden-audit-contracts`.

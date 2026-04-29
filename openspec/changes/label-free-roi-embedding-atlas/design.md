@@ -72,7 +72,7 @@ Alternatives considered:
 
 ### 3. Use explicit label blinding
 
-The atlas will construct feature matrices from approved feature columns only. It will explicitly exclude:
+The atlas will construct feature matrices from approved feature columns only. Approval requires both a safe column name and approved feature lineage. Numeric columns without provenance proving they derive from frozen encoder embeddings, ROI/QC measurements, or learned ROI features are rejected even when the column name does not look label-like. The atlas will explicitly exclude:
 
 - `score`
 - banded labels and severe indicators
@@ -90,6 +90,12 @@ Alternatives considered:
 
 - Allow grade-stratified dimensionality reduction. Rejected because it would contaminate the label-free claim.
 - Allow cohort-aware clustering. Rejected for the clustering phase because cohort/source separation is a confounding diagnostic, not the target structure.
+
+### 3a. Require hardened ROI and embedding provenance
+
+Atlas input tables must carry the completed fail-closed ROI geometry, preprocessing, threshold, ROI status, and artifact-provenance fields from `oracle-harden-audit-contracts`. Inputs generated before that contract, or inputs missing those provenance fields, are stale for atlas purposes and fail before clustering with blockers in `summary/atlas_verdict.json`.
+
+Rationale: stable clusters are not meaningful if they were built from all-positive fallback ROIs, shape-mismatched masks, non-comparable preprocessing, or undocumented threshold behavior.
 
 ### 4. Use PCA-denoised and standardized spaces for clustering, not t-SNE
 
@@ -163,6 +169,8 @@ The atlas verdict will classify clusters as one of:
 - `source_sensitive_group`
 - `unstable_group`
 - `insufficient_support`
+
+Before any cluster is labeled `candidate_severity_like_group`, the implementation must apply predeclared thresholds for minimum row/subject support, cluster stability, source imbalance, ROI/QC artifact dominance, grade-association strength, and missing representative-asset tolerance. Failing any threshold keeps the cluster in `candidate_morphology_group`, `artifact_or_quality_group`, `source_sensitive_group`, `unstable_group`, or `insufficient_support`.
 
 Rationale: a cluster can be biologically interesting, severity-like, or merely an artifact/source separator. The workflow should make that distinction explicit before review artifacts are used to guide a rubric.
 

@@ -57,7 +57,6 @@ This solves a different problem than the current grade model. It does not try to
 
 - Affected modules:
   - `src/eq/run_config.py`
-  - `src/eq/__main__.py` if a direct CLI alias is added
   - `src/eq/quantification/embedding_atlas.py`
   - `src/eq/quantification/embeddings.py`
   - `src/eq/quantification/learned_roi.py`
@@ -78,7 +77,8 @@ This solves a different problem than the current grade model. It does not try to
   - Atlas outputs remain generated runtime artifacts under the configured quantification output root.
 - Data contract changes:
   - No existing supervised grade-model schema is replaced.
-  - Atlas inputs require row identity columns sufficient to preserve `subject_id`, `subject_image_id`, `cohort_id`, `score` when present, ROI path provenance, and feature-column provenance.
+  - Atlas inputs require row identity columns sufficient to preserve `subject_id`, `subject_image_id`, `cohort_id`, `score` when present, ROI path provenance, hardened ROI geometry/preprocessing/threshold provenance, and feature-column provenance.
+  - Atlas feature columns require approved lineage proving they derive from frozen encoder embeddings, ROI/QC measurements, or learned ROI features rather than labels, source metadata, review queues, post hoc diagnostics, supervised predictions, or targets.
   - Human label columns may be present in input tables but must be excluded from clustering feature matrices and used only in post hoc diagnostics.
 - Scientific claim boundary:
   - Descriptive: the atlas may describe reproducible ROI morphology clusters, cluster stability, and cluster-level feature distributions.
@@ -87,6 +87,7 @@ This solves a different problem than the current grade model. It does not try to
   - Causal: the atlas must not claim that clusters cause, prove, or mechanistically establish endotheliosis.
 - Compatibility risks:
   - Missing embedding tables, missing ROI path provenance, duplicate row identity, or nonfinite feature columns must fail closed with explicit diagnostics.
+  - Stale ROI or embedding artifacts that do not carry the completed fail-closed ROI geometry, preprocessing, threshold, and artifact provenance contract must fail before clustering.
   - Existing supervised burden, learned ROI, source-aware, severe-aware, and P3 grade-model artifacts must continue to run without requiring atlas artifacts.
   - Optional packages such as `umap-learn` or `hdbscan` may be absent; their absence should be recorded as method unavailability rather than silently replacing the approved method under the same method ID.
 
@@ -105,6 +106,7 @@ Docs must add current-state guidance for `eq run-config --config configs/label_f
 - Config path: `configs/label_free_roi_embedding_atlas.yaml`.
 - Primary implementation owner: `src/eq/quantification/embedding_atlas.py`.
 - Run-config dispatcher owner: `src/eq/run_config.py`.
+- Entry point: `eq run-config --config configs/label_free_roi_embedding_atlas.yaml` only. This change will not add a direct `eq` CLI alias.
 - Runtime output subtree: `burden_model/embedding_atlas/`.
 - First-read artifacts:
   - `burden_model/embedding_atlas/INDEX.md`
@@ -112,7 +114,9 @@ Docs must add current-state guidance for `eq run-config --config configs/label_f
   - `burden_model/embedding_atlas/summary/atlas_summary.md`
   - `burden_model/embedding_atlas/summary/artifact_manifest.json`
 - Cluster-feature matrices must exclude human grade, cohort/source/treatment, reviewer, and outcome columns during clustering.
+- Cluster-feature matrices must reject unapproved derived-feature lineage, not only suspicious column names.
 - Human grade and source metadata may be joined only after cluster assignments are finalized for interpretation and artifact/confounding diagnostics.
+- `candidate_severity_like_group` requires explicit predeclared thresholds for stability, subject support, source imbalance, ROI/QC artifact dominance, grade-association strength, and missing-asset tolerance.
 - t-SNE is not an approved primary clustering method or probability surface for this change.
 - The atlas does not replace `endotheliosis_grade_model`, `learned_roi`, `source_aware_estimator`, or `primary_burden_index` artifacts.
 

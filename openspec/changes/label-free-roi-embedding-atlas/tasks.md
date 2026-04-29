@@ -9,7 +9,7 @@
 
 - [ ] 2.1 Add `configs/label_free_roi_embedding_atlas.yaml` with workflow ID `label_free_roi_embedding_atlas`, active quantification output root inputs, method settings, feature-space settings, review limits, and output root settings.
 - [ ] 2.2 Extend `src/eq/run_config.py` to dispatch `label_free_roi_embedding_atlas` to the atlas runner without changing existing workflow IDs.
-- [ ] 2.3 Add a direct CLI alias in `src/eq/__main__.py` only if it follows existing CLI conventions; otherwise keep `eq run-config` as the sole supported entrypoint.
+- [ ] 2.3 Keep `eq run-config --config configs/label_free_roi_embedding_atlas.yaml` as the sole supported atlas entrypoint for this change; do not add a direct CLI alias.
 - [ ] 2.4 Ensure run logging captures the atlas command, config path, runtime root, output root, and terminal output through the existing durable logging contract.
 
 ## 3. Atlas Module and Artifact Layout
@@ -25,7 +25,10 @@
 - [ ] 4.2 Validate required identity/provenance columns, including `subject_id`, row identity, ROI image path, and feature provenance; fail closed with explicit `atlas_verdict.json` blockers when required columns are missing.
 - [ ] 4.3 Implement feature allow-lists and denied metadata/label column checks so `score`, grade bands, severe indicators, cohort/source/treatment fields, reviewer fields, label overrides, path strings, and targets cannot enter clustering matrices.
 - [ ] 4.4 Write `diagnostics/label_blinding_audit.json` listing approved feature columns, denied columns, metadata-only columns, excluded label-like columns, and leakage status.
-- [ ] 4.5 Add regression tests where leaked label/source columns in the feature allow-list fail before clustering.
+- [ ] 4.5 Require input artifacts to carry hardened ROI geometry, embedding preprocessing, threshold, ROI status, and artifact-provenance fields from the completed Oracle hardening change; stale or provenance-incomplete inputs must fail before clustering with blockers in `atlas_verdict.json`.
+- [ ] 4.6 Require approved feature lineage for every numeric clustering feature. Reject feature columns without provenance proving they are derived from frozen encoder embeddings, ROI/QC measurements, or learned ROI features rather than labels, source metadata, review queues, post hoc diagnostics, supervised predictions, or target columns.
+- [ ] 4.7 Add regression tests where leaked label/source columns in the feature allow-list fail before clustering.
+- [ ] 4.8 Add regression tests where stale ROI/embedding artifacts or feature columns without approved lineage fail before clustering.
 
 ## 5. Feature Spaces and Method Availability
 
@@ -49,8 +52,9 @@
 - [ ] 7.1 Implement subject-aware cluster stability resampling with `subject_id` as the primary biological grouping unit when present.
 - [ ] 7.2 Write `stability/cluster_stability.json` with resampling unit, number of resamples, row count, subject count, feature-space ID, method ID, stability metrics, and non-estimable reasons.
 - [ ] 7.3 Implement post hoc cluster diagnostics that reveal score, severe/nonsevere, cohort/source, treatment/source proxy, ROI/QC, mask adequacy, and reviewed-anchor distributions only after assignments are finalized.
-- [ ] 7.4 Write `diagnostics/cluster_posthoc_diagnostics.json` and cluster interpretation labels: `candidate_morphology_group`, `candidate_severity_like_group`, `artifact_or_quality_group`, `source_sensitive_group`, `unstable_group`, and `insufficient_support`.
-- [ ] 7.5 Add tests that unstable, source-sensitive, or artifact-dominated clusters cannot be marked severity-like.
+- [ ] 7.4 Define explicit interpretation thresholds for cluster support, subject count, stability, source imbalance, ROI/QC artifact dominance, grade-association strength, and missing-asset tolerance before assigning `candidate_severity_like_group`.
+- [ ] 7.5 Write `diagnostics/cluster_posthoc_diagnostics.json` and cluster interpretation labels: `candidate_morphology_group`, `candidate_severity_like_group`, `artifact_or_quality_group`, `source_sensitive_group`, `unstable_group`, and `insufficient_support`.
+- [ ] 7.6 Add tests that unstable, source-sensitive, artifact-dominated, under-supported, or threshold-incomplete clusters cannot be marked severity-like.
 
 ## 8. Review Evidence and Adjudication Queues
 
@@ -83,3 +87,12 @@
 - [ ] 11.5 Run focused integration tests for `eq run-config --config configs/label_free_roi_embedding_atlas.yaml`.
 - [ ] 11.6 Run relevant existing quantification tests to verify supervised workflows remain independent of atlas artifacts.
 - [ ] 11.7 Run `ruff check .` and `ruff format .` after implementation edits.
+
+## 12. Postflight And Archive Lifecycle
+
+- [ ] 12.1 Complete the per-change postflight required by `openspec/changes/ACTIVE_EXECUTION_ORDER.md`, including spec-to-diff review, completed-task evidence review, `git diff --check`, `git diff --stat`, and unrelated-edit inspection.
+- [ ] 12.2 Commit the implementation as `implement label-free-roi-embedding-atlas`.
+- [ ] 12.3 Archive/sync with `openspec archive label-free-roi-embedding-atlas --yes`.
+- [ ] 12.4 Run `openspec validate --specs --strict` after archive/sync.
+- [ ] 12.5 Revalidate every remaining active change with `openspec validate <remaining-change> --strict` and `python3 scripts/check_openspec_explicitness.py <remaining-change>`.
+- [ ] 12.6 Commit the archive/sync as `archive label-free-roi-embedding-atlas`.

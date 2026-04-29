@@ -44,3 +44,12 @@
 - [ ] 6.4 Run `OPENSPEC_TELEMETRY=0 openspec validate oracle-current-docs-quarantine --strict`.
 - [ ] 6.5 Run `python3 scripts/check_openspec_explicitness.py oracle-current-docs-quarantine`.
 - [ ] 6.6 Record archived files, active docs rewritten, docs-check surface reused or added, validation results, and residual risks in the implementation closeout.
+
+## 7. Postflight And Archive Lifecycle
+
+- [ ] 7.1 Complete the per-change postflight required by `openspec/changes/ACTIVE_EXECUTION_ORDER.md`, including spec-to-diff review, completed-task evidence review, `git diff --check`, `git diff --stat`, and unrelated-edit inspection.
+- [ ] 7.2 Commit the implementation as `implement oracle-current-docs-quarantine`.
+- [ ] 7.3 Archive/sync with `openspec archive oracle-current-docs-quarantine --yes`.
+- [ ] 7.4 Run `openspec validate --specs --strict` after archive/sync.
+- [ ] 7.5 Revalidate every remaining active change with `openspec validate <remaining-change> --strict` and `python3 scripts/check_openspec_explicitness.py <remaining-change>`.
+- [ ] 7.6 Commit the archive/sync as `archive oracle-current-docs-quarantine`.

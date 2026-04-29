@@ -9,6 +9,11 @@ The system SHALL expose a `label_free_roi_embedding_atlas` workflow through `eq 
 - **AND** it SHALL write artifacts under `burden_model/embedding_atlas/`
 - **AND** it SHALL use the configured runtime root and quantification output root rather than writing generated artifacts under the Git checkout
 
+#### Scenario: No direct CLI alias is added
+- **WHEN** this change is implemented
+- **THEN** the atlas SHALL use `eq run-config --config configs/label_free_roi_embedding_atlas.yaml` as the sole supported entrypoint
+- **AND** it SHALL NOT add a direct `eq` CLI alias for the atlas workflow
+
 #### Scenario: Existing quantification remains independent
 - **WHEN** `eq run-config --config configs/endotheliosis_quantification.yaml` is executed without atlas configuration
 - **THEN** the supervised quantification workflow SHALL NOT require `burden_model/embedding_atlas/` artifacts
@@ -21,6 +26,11 @@ The atlas workflow SHALL read existing ROI, embedding, and learned ROI artifacts
 - **WHEN** the atlas workflow starts from a completed quantification run
 - **THEN** it SHALL load an embedding table such as `embeddings/roi_embeddings.csv`
 - **AND** the table SHALL include finite embedding feature columns and row identity sufficient to preserve `subject_id`, `subject_image_id`, `cohort_id` when present, ROI image path provenance, and original `score` when present
+
+#### Scenario: Stale ROI or embedding provenance blocks clustering
+- **WHEN** ROI or embedding input artifacts lack hardened ROI geometry, preprocessing, threshold, ROI status, or artifact-provenance fields from the completed fail-closed quantification contract
+- **THEN** the atlas SHALL fail before clustering
+- **AND** `burden_model/embedding_atlas/summary/atlas_verdict.json` SHALL record the stale or incomplete provenance fields
 
 #### Scenario: Missing identity fails closed
 - **WHEN** the atlas input table lacks required identity columns needed for subject-aware stability or ROI review evidence
@@ -51,6 +61,11 @@ The atlas workflow SHALL exclude human labels and source-identifying metadata fr
 - **WHEN** a denied label, source, treatment, reviewer, path, or target column is detected in a cluster feature matrix
 - **THEN** the workflow SHALL stop before cluster fitting
 - **AND** the atlas verdict SHALL mark the run failed with a label-leakage or source-leakage reason
+
+#### Scenario: Unapproved feature lineage blocks clustering
+- **WHEN** a numeric clustering feature lacks approved lineage proving it derives from frozen encoder embeddings, ROI/QC measurements, or learned ROI features
+- **THEN** the workflow SHALL stop before cluster fitting
+- **AND** the label-blinding audit SHALL record the unapproved feature and its source artifact
 
 ### Requirement: Atlas feature spaces are explicit and finite
 The atlas SHALL generate named feature-space artifacts with finite numeric matrices and diagnostics before clustering.
@@ -143,6 +158,11 @@ The atlas SHALL reveal labels, source metadata, and ROI/QC summaries only after 
 - **WHEN** a cluster is stable and post hoc label distributions suggest a severity gradient
 - **THEN** the cluster MAY be labeled `candidate_severity_like_group`
 - **AND** the report SHALL state that this is descriptive and associational evidence, not calibrated severity probability, causal mechanism, or externally validated disease severity
+
+#### Scenario: Severity-like interpretation requires explicit thresholds
+- **WHEN** a cluster fails predeclared thresholds for minimum row/subject support, stability, source imbalance, ROI/QC artifact dominance, grade-association strength, or representative-asset completeness
+- **THEN** the atlas SHALL NOT label the cluster `candidate_severity_like_group`
+- **AND** the post hoc diagnostics SHALL record which threshold blocked the label
 
 ### Requirement: Atlas review evidence is generated
 The atlas SHALL generate reviewer-facing evidence that makes cluster structure inspectable without requiring manual path chasing.
