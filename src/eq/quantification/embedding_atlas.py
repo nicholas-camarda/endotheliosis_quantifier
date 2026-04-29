@@ -1512,7 +1512,11 @@ def _write_evidence_and_review_queue(
                     'roi_usability': '',
                     'morphology_assessment': '',
                     'score_plausibility': '',
+                    'case_cluster_fit': '',
+                    'review_action': '',
                     'cluster_interpretation': '',
+                    'cluster_review_confidence': '',
+                    'cluster_notes': '',
                     'reviewer_notes': '',
                     'reviewer_id': '',
                     'reviewed_at': '',
@@ -1726,11 +1730,16 @@ textarea {{ grid-column: 1 / -1; min-height: 58px; resize: vertical; }}
 const data = JSON.parse(document.getElementById('atlas-data').textContent);
 const storageKey = 'eq.embedding_atlas_review.' + location.pathname;
 const saved = JSON.parse(localStorage.getItem(storageKey) || '{{}}');
-const fields = {{
+const caseFields = {{
   roi_usability: ['','usable','bad_crop','bad_mask','tissue_or_image_artifact','unclear'],
   morphology_assessment: ['','mostly_open_lumina','collapsed_or_closed_capillaries','endotheliosis_like_swelling','rbc_heavy','poor_tissue_quality_or_artifact','not_enough_information'],
   score_plausibility: ['','too_low','plausible','too_high','cannot_judge'],
+  case_cluster_fit: ['','representative','atypical_but_valid','outlier_or_wrong_cluster','unclear'],
+  review_action: ['','accept','flag_score_review','flag_roi_mask_review','exclude_from_anchor','unclear'],
+}};
+const clusterFields = {{
   cluster_interpretation: ['','real_morphology_cluster','source_or_batch_artifact','roi_or_mask_artifact','mixed_or_uninterpretable'],
+  cluster_review_confidence: ['','high','moderate','low'],
 }};
 function esc(value) {{
   return String(value ?? '').replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
@@ -1764,9 +1773,18 @@ function renderCases() {{
   const root = document.getElementById('cases');
   root.innerHTML = '';
   for (const [cluster, rows] of byCluster.entries()) {{
+    const clusterId = 'cluster:' + cluster;
+    const clusterState = rowState(clusterId);
     const section = document.createElement('section');
     section.className = 'cluster-block';
-    section.innerHTML = `<h2>${{esc(cluster)}}</h2><div class="case-grid"></div>`;
+    section.innerHTML = `<h2>${{esc(cluster)}}</h2>
+      <div class="case-card">
+        <div class="controls">
+          ${{Object.entries(clusterFields).map(([key, options]) => `<label>${{key.replaceAll('_',' ')}}<select data-review-id="${{esc(clusterId)}}" data-key="${{key}}">${{options.map(value => optionHtml(value, clusterState[key] || '')).join('')}}</select></label>`).join('')}}
+          <label>cluster notes<textarea data-review-id="${{esc(clusterId)}}" data-key="cluster_notes">${{esc(clusterState.cluster_notes || '')}}</textarea></label>
+        </div>
+      </div>
+      <div class="case-grid"></div>`;
     const grid = section.querySelector('.case-grid');
     for (const item of rows) {{
       const state = rowState(item.review_id);
@@ -1782,7 +1800,7 @@ function renderCases() {{
           <figure><figcaption>ROI mask</figcaption><img src="${{esc(item.roi_mask_src)}}" alt="ROI mask for atlas row ${{esc(item.atlas_row_id)}}"></figure>
         </div>
         <div class="controls">
-          ${{Object.entries(fields).map(([key, options]) => `<label>${{key.replaceAll('_',' ')}}<select data-review-id="${{esc(item.review_id)}}" data-key="${{key}}">${{options.map(value => optionHtml(value, state[key] || '')).join('')}}</select></label>`).join('')}}
+          ${{Object.entries(caseFields).map(([key, options]) => `<label>${{key.replaceAll('_',' ')}}<select data-review-id="${{esc(item.review_id)}}" data-key="${{key}}">${{options.map(value => optionHtml(value, state[key] || '')).join('')}}</select></label>`).join('')}}
           <label>reviewer id<input data-review-id="${{esc(item.review_id)}}" data-key="reviewer_id" value="${{esc(state.reviewer_id || '')}}"></label>
           <label>review notes<textarea data-review-id="${{esc(item.review_id)}}" data-key="reviewer_notes">${{esc(state.reviewer_notes || '')}}</textarea></label>
           <div class="path">Image: ${{esc(item.roi_image_path)}}<br>Mask: ${{esc(item.roi_mask_path)}}</div>
@@ -1797,10 +1815,11 @@ function renderCases() {{
   }});
 }}
 function exportCsv() {{
-  const columns = ['review_id','atlas_row_id','subject_id','subject_image_id','glomerulus_id','feature_space_id','method_id','cluster_id','original_score','nearest_neighbor_atlas_row_id','roi_usability','morphology_assessment','score_plausibility','cluster_interpretation','reviewer_notes','reviewer_id','reviewed_at','roi_image_path','roi_mask_path'];
+  const columns = ['review_id','atlas_row_id','subject_id','subject_image_id','glomerulus_id','feature_space_id','method_id','cluster_id','original_score','nearest_neighbor_atlas_row_id','roi_usability','morphology_assessment','score_plausibility','case_cluster_fit','review_action','cluster_interpretation','cluster_review_confidence','cluster_notes','reviewer_notes','reviewer_id','reviewed_at','roi_image_path','roi_mask_path'];
   const rows = data.cases.map(item => {{
     const state = rowState(item.review_id);
-    return {{...item, ...state, reviewed_at: state.reviewed_at || new Date().toISOString()}};
+    const clusterState = rowState(`cluster:${{item.feature_space_id}} / ${{item.method_id}} / cluster ${{item.cluster_id}}`);
+    return {{...item, ...clusterState, ...state, reviewed_at: state.reviewed_at || new Date().toISOString()}};
   }});
   const csv = [columns.join(',')].concat(rows.map(row => columns.map(col => `"${{String(row[col] ?? '').replaceAll('"','""')}}"`).join(','))).join('\\n');
   const blob = new Blob([csv], {{type: 'text/csv'}});

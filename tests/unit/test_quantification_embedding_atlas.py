@@ -494,7 +494,11 @@ def test_review_queue_first_read_artifacts_and_no_label_overrides(tmp_path):
         'roi_usability',
         'morphology_assessment',
         'score_plausibility',
+        'case_cluster_fit',
+        'review_action',
         'cluster_interpretation',
+        'cluster_review_confidence',
+        'cluster_notes',
         'reviewer_notes',
         'reviewer_id',
         'reviewed_at',
@@ -510,7 +514,10 @@ def test_review_queue_first_read_artifacts_and_no_label_overrides(tmp_path):
     assert 'roi_usability' in html
     assert 'morphology_assessment' in html
     assert 'score_plausibility' in html
+    assert 'case_cluster_fit' in html
+    assert 'review_action' in html
     assert 'cluster_interpretation' in html
+    assert 'cluster_review_confidence' in html
     assert '<select' in html
 
 
