@@ -62,7 +62,7 @@
 
 - [x] 8.1 Complete the per-change postflight required by `openspec/changes/ACTIVE_EXECUTION_ORDER.md`, including spec-to-diff review, completed-task evidence review, `git diff --check`, `git diff --stat`, and unrelated-edit inspection.
 - [x] 8.2 Commit the implementation as `implement oracle-canonical-quantification-input-contract`.
-- [ ] 8.3 Archive/sync with `openspec archive oracle-canonical-quantification-input-contract --yes`.
-- [ ] 8.4 Run `openspec validate --specs --strict` after archive/sync.
-- [ ] 8.5 Revalidate every remaining active change with `openspec validate <remaining-change> --strict` and `python3 scripts/check_openspec_explicitness.py <remaining-change>`.
-- [ ] 8.6 Commit the archive/sync as `archive oracle-canonical-quantification-input-contract`.
+- [x] 8.3 Archive/sync with `openspec archive oracle-canonical-quantification-input-contract --yes`.
+- [x] 8.4 Run `openspec validate --specs --strict` after archive/sync.
+- [x] 8.5 Revalidate every remaining active change with `openspec validate <remaining-change> --strict` and `python3 scripts/check_openspec_explicitness.py <remaining-change>`.
+- [x] 8.6 Commit the archive/sync as `archive oracle-canonical-quantification-input-contract`.

@@ -50,6 +50,18 @@ Implemented on 2026-04-29.
 - `OPENSPEC_TELEMETRY=0 openspec validate oracle-canonical-quantification-input-contract --strict` passed.
 - `python3 scripts/check_openspec_explicitness.py oracle-canonical-quantification-input-contract` passed.
 
+## Archive Sync
+
+- `openspec archive oracle-canonical-quantification-input-contract --yes` archived the change as `openspec/changes/archive/2026-04-29-oracle-canonical-quantification-input-contract/`.
+- Archive sync updated:
+  - `openspec/specs/endotheliosis-grade-model/spec.md`
+  - `openspec/specs/scored-only-quantification-cohort/spec.md`
+  - `openspec/specs/workflow-config-entrypoints/spec.md`
+- `openspec validate --specs --strict` passed after archive sync: `21 passed, 0 failed`.
+- Remaining active changes revalidated cleanly after archive sync:
+  - `oracle-harden-audit-contracts`
+  - `label-free-roi-embedding-atlas`
+
 ## Residual Risk
 
 - This change standardizes target-definition provenance and direct/YAML behavior; it does not change the reviewed rubric itself.
