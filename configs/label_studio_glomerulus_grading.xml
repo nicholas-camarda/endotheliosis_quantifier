@@ -1,0 +1,23 @@
+<View>
+  <Header value="Endotheliosis glomerulus-instance grading" />
+  <Text name="instructions" value="Mark each complete glomerulus and assign one grade to that selected region. Mark cut-off or partial glomeruli as cutoff_partial_glomerulus and do not assign a grade to those excluded regions. Model grades, confidence, and disagreement fields are intentionally absent during primary grading." />
+
+  <Image name="image" value="$image" zoom="true" />
+
+  <BrushLabels name="glomerulus_roi" toName="image">
+    <Label value="complete_glomerulus" background="#2ca02c" />
+    <Label value="cutoff_partial_glomerulus" background="#d62728" />
+  </BrushLabels>
+
+  <View visibleWhen="region-selected">
+    <Header value="Grade the selected complete glomerulus" />
+    <Choices name="endotheliosis_grade" toName="image" perRegion="true" showInLine="true">
+      <Choice value="0" />
+      <Choice value="0.5" />
+      <Choice value="1" />
+      <Choice value="1.5" />
+      <Choice value="2" />
+      <Choice value="3" />
+    </Choices>
+  </View>
+</View>

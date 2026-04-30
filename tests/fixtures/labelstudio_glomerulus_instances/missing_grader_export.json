@@ -1,0 +1,41 @@
+[
+  {
+    "id": 105,
+    "file_upload": "qrst-T19_Image4.jpg",
+    "data": {
+      "image": "/data/upload/1/T19_Image4.jpg"
+    },
+    "annotations": [
+      {
+        "id": 5005,
+        "created_at": "2026-04-30T13:00:00.000000Z",
+        "updated_at": "2026-04-30T13:05:00.000000Z",
+        "lead_time": 42.0,
+        "result": [
+          {
+            "id": "missing_grader",
+            "from_name": "glomerulus_roi",
+            "to_name": "image",
+            "type": "brushlabels",
+            "original_width": 1024,
+            "original_height": 768,
+            "value": {
+              "format": "rle",
+              "rle": [0, 18, 1, 8],
+              "brushlabels": ["complete_glomerulus"]
+            }
+          },
+          {
+            "id": "missing_grader",
+            "from_name": "endotheliosis_grade",
+            "to_name": "image",
+            "type": "choices",
+            "value": {
+              "choices": ["3"]
+            }
+          }
+        ]
+      }
+    ]
+  }
+]
