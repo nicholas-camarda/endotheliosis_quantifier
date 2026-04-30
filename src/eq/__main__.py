@@ -495,7 +495,6 @@ def cohort_manifest_command(args):
     print(f'  lane_counts: {result.lane_counts}')
 
 
-@log_function_call
 def run_config_command(args):
     """Run a repository workflow YAML config."""
     from eq.run_config import run_config

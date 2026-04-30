@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import numpy as np
@@ -10,14 +11,18 @@ from eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow import (
     _build_adaptation_command,
     _build_checkpoint_provenance,
     _build_deterministic_splits,
+    _build_finetuned_comparison_summary,
     _classify_generated_mask_adoption,
     _package_generated_mask_release,
     _preflight_training_dependencies,
     _prepare_medsam_npy_data,
     _run_external_fixed_split_baselines,
+    _run_finetuned_fixed_split_evaluation,
     _training_command_for_config,
+    _trivial_baseline_aggregate,
     _update_generated_mask_registry,
     _validate_split_manifest,
+    run_medsam_glomeruli_fine_tuning_workflow,
 )
 from eq.utils.paths import ensure_not_under_runtime_raw_data
 
@@ -106,6 +111,43 @@ def test_trivial_baseline_rows_have_metric_schema():
     }
     assert all("dice" in row and "jaccard" in row for row in rows)
     assert rows[0]["candidate_artifact"] == "trivial_baseline"
+
+
+def test_trivial_baseline_aggregate_fail_closed_for_empty_csv(tmp_path: Path) -> None:
+    grouped_csv = tmp_path / "trivial_grouped.csv"
+    grouped_csv.write_text("", encoding="utf-8")
+
+    aggregate = _trivial_baseline_aggregate(
+        {"trivial_baseline_metric_by_source": str(grouped_csv)}
+    )
+
+    assert aggregate == {"dice": 0.0, "jaccard": 0.0}
+
+
+def test_trivial_baseline_aggregate_fail_closed_for_missing_metric_columns(
+    tmp_path: Path,
+) -> None:
+    grouped_csv = tmp_path / "trivial_grouped.csv"
+    pd.DataFrame([{"source_sample_id": "s1", "foo": "1.0"}]).to_csv(
+        grouped_csv, index=False
+    )
+
+    aggregate = _trivial_baseline_aggregate(
+        {"trivial_baseline_metric_by_source": str(grouped_csv)}
+    )
+
+    assert aggregate == {"dice": 0.0, "jaccard": 0.0}
+
+
+def test_trivial_baseline_aggregate_fail_closed_for_malformed_csv(tmp_path: Path) -> None:
+    grouped_csv = tmp_path / "trivial_grouped.csv"
+    grouped_csv.write_text('dice,jaccard\n"0.5,0.4\n', encoding="utf-8")
+
+    aggregate = _trivial_baseline_aggregate(
+        {"trivial_baseline_metric_by_source": str(grouped_csv)}
+    )
+
+    assert aggregate == {"dice": 0.0, "jaccard": 0.0}
 
 
 def test_adoption_gate_distinguishes_oracle_level_candidate_and_blocked():
@@ -408,3 +450,601 @@ def test_external_fixed_split_oracle_only_invokes_medsam_batch(
     assert len(calls) == 1
     assert out["status"] == "completed"
     assert "oracle_medsam_metrics_csv" in out
+
+
+def test_workflow_summary_marks_finetuned_evaluation_completed_when_real_inference_runs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runtime_root = tmp_path
+    image_path = runtime_root / "raw_data/cohorts/demo/images/img.png"
+    mask_path = runtime_root / "raw_data/cohorts/demo/masks/mask.png"
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    mask_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(np.zeros((12, 12, 3), dtype=np.uint8)).save(image_path)
+    mask = np.zeros((12, 12), dtype=np.uint8)
+    mask[3:9, 3:9] = 1
+    _write_png(mask_path, mask)
+
+    split_row = {
+        "manifest_row_id": "row-1",
+        "cohort_id": "demo",
+        "lane_assignment": "manual_mask_core",
+        "source_sample_id": "sample-1",
+        "split_group_id": "sample-1",
+        "image_path": "raw_data/cohorts/demo/images/img.png",
+        "mask_path": "raw_data/cohorts/demo/masks/mask.png",
+        "split": "train",
+        "selection_rank": 1,
+        "selection_reason": "test",
+    }
+    split_dir = runtime_root / "splits"
+    split_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([split_row]).to_csv(split_dir / "train.csv", index=False)
+    pd.DataFrame([{**split_row, "split": "validation"}]).to_csv(
+        split_dir / "validation.csv", index=False
+    )
+    pd.DataFrame([{**split_row, "split": "test"}]).to_csv(
+        split_dir / "test.csv", index=False
+    )
+
+    manifest_path = runtime_root / "raw_data/cohorts/manifest.csv"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([split_row]).to_csv(manifest_path, index=False)
+
+    base_checkpoint = runtime_root / "models/medsam/base.pth"
+    base_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    base_checkpoint.write_bytes(b"base")
+    medsam_repo = runtime_root / "vendor/MedSAM"
+    medsam_repo.mkdir(parents=True, exist_ok=True)
+    (medsam_repo / "MedSAM_Inference.py").write_text("# stub\n", encoding="utf-8")
+    medsam_python = runtime_root / "bin/python"
+    medsam_python.parent.mkdir(parents=True, exist_ok=True)
+    medsam_python.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+
+    checkpoint_root = runtime_root / "models/medsam_glomeruli/test-run"
+    checkpoint_root.mkdir(parents=True, exist_ok=True)
+    (checkpoint_root / "finetuned_epoch_1.pth").write_bytes(b"finetuned")
+    transfer_model = runtime_root / "models/current/transfer.pkl"
+    scratch_model = runtime_root / "models/current/scratch.pkl"
+    transfer_model.parent.mkdir(parents=True, exist_ok=True)
+    transfer_model.write_bytes(b"transfer")
+    scratch_model.write_bytes(b"scratch")
+
+    class _FakeLearner:
+        class _Model:
+            def eval(self) -> None:
+                return None
+
+        model = _Model()
+
+    monkeypatch.setattr(
+        "eq.data_management.model_loading.load_model_safely",
+        lambda *_args, **_kwargs: _FakeLearner(),
+    )
+    monkeypatch.setattr(
+        "eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow._predict_probability",
+        lambda **_kwargs: (np.ones((12, 12), dtype=np.float32), {}),
+    )
+
+    def _fake_batch(**kwargs):
+        for item in kwargs["items"]:
+            Path(item["output_path"]).parent.mkdir(parents=True, exist_ok=True)
+            Image.fromarray(np.ones((12, 12), dtype=np.uint8) * 255).save(
+                item["output_path"]
+            )
+        failures_path = Path(kwargs["output_dir"]) / "medsam_batch_failures.json"
+        failures_path.write_text("[]", encoding="utf-8")
+        return []
+
+    monkeypatch.setattr(
+        "eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow._run_medsam_batch",
+        _fake_batch,
+    )
+
+    monkeypatch.setattr(
+        "eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow._preflight_training_dependencies",
+        lambda _cfg: {
+            "medsam_python": str(medsam_python),
+            "medsam_repo": str(medsam_repo),
+            "base_checkpoint": str(base_checkpoint),
+            "entrypoint": "",
+            "adaptation_mode": "frozen_image_encoder_mask_decoder",
+            "training_backend": "eq_native_adapter",
+        },
+    )
+    monkeypatch.setattr(
+        "eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow._training_command_for_config",
+        lambda **_kwargs: ["python", "-m", "eq.evaluation.medsam_glomeruli_adapter"],
+    )
+
+    config_path = runtime_root / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "workflow: medsam_glomeruli_fine_tuning",
+                "run:",
+                "  name: test-run",
+                f"  runtime_root_default: {runtime_root}",
+                "medsam:",
+                f"  python: {medsam_python}",
+                f"  repo: {medsam_repo}",
+                f"  base_checkpoint: {base_checkpoint}",
+                "  device: cpu",
+                "  adaptation_mode: frozen_image_encoder_mask_decoder",
+                "  frozen_components: [image_encoder, prompt_encoder]",
+                "  trainable_components: [mask_decoder]",
+                "inputs:",
+                f"  manifest_path: {manifest_path.relative_to(runtime_root)}",
+                "  lane_assignments: [manual_mask_core]",
+                "  split_manifests:",
+                f"    train: { (split_dir / 'train.csv').relative_to(runtime_root) }",
+                f"    validation: { (split_dir / 'validation.csv').relative_to(runtime_root) }",
+                f"    test: { (split_dir / 'test.csv').relative_to(runtime_root) }",
+                "outputs:",
+                "  evaluation_dir: output/test-eval",
+                f"  checkpoint_root: {checkpoint_root.relative_to(runtime_root)}",
+                f"  generated_mask_release_root: {(runtime_root / 'derived_data/generated_masks/glomeruli/medsam_finetuned/test-run').relative_to(runtime_root)}",
+                f"  generated_mask_registry_path: {(runtime_root / 'derived_data/generated_masks/glomeruli/manifest.csv').relative_to(runtime_root)}",
+                "baseline_evaluation:",
+                "  external_baselines: false",
+                "current_segmenter:",
+                f"  transfer_model_path: {transfer_model}",
+                f"  scratch_model_path: {scratch_model}",
+                "training:",
+                "  image_size: 32",
+                "adoption_gates: {}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = run_medsam_glomeruli_fine_tuning_workflow(config_path, dry_run=False)
+    summary = json.loads(result["summary"].read_text(encoding="utf-8"))
+    finetuned = dict(summary["finetuned_evaluation"])
+    comparison = dict(summary["finetuned_comparison"])
+
+    assert finetuned["status"] == "completed"
+    assert "metric_rows" in finetuned
+    assert "expected_metric_rows" in finetuned
+    assert "metrics_csv" in finetuned
+    assert "masks_dir" in finetuned
+    assert "overlays_dir" in finetuned
+    assert "proposal_boxes_csv" in finetuned
+    assert "proposal_recall_csv" in finetuned
+    assert "prompt_failure_count" in finetuned
+    assert "prompt_failures_csv" in finetuned
+    assert "prompt_failures_json" in finetuned
+    assert finetuned["overlay_review_status"] == "passed"
+    assert Path(finetuned["metrics_csv"]).exists()
+    assert Path(finetuned["prompt_failures_csv"]).exists()
+    assert Path(finetuned["proposal_boxes_csv"]).exists()
+    assert Path(finetuned["proposal_recall_csv"]).exists()
+    assert Path(finetuned["overlays_dir"]).exists()
+    assert Path(finetuned["masks_dir"]).exists()
+    assert "oracle_dice_gap" in comparison
+    assert "adoption_tier" in comparison
+    assert "improves_current_auto" in comparison
+    assert "improves_current_segmenter" in comparison
+    assert "beats_trivial_baseline" in comparison
+    assert comparison["improves_current_auto"] is True
+    assert comparison["improves_current_segmenter"] is True
+    assert comparison["adoption_tier"] == "blocked"
+    assert comparison["failure_mode"] == "training_quality"
+
+
+def test_workflow_summary_fails_closed_when_finetuned_inference_is_partial(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runtime_root = tmp_path
+    image_path = runtime_root / "raw_data/cohorts/demo/images/img.png"
+    mask_path = runtime_root / "raw_data/cohorts/demo/masks/mask.png"
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    mask_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(np.zeros((12, 12, 3), dtype=np.uint8)).save(image_path)
+    mask = np.zeros((12, 12), dtype=np.uint8)
+    mask[3:9, 3:9] = 1
+    _write_png(mask_path, mask)
+
+    split_row = {
+        "manifest_row_id": "row-1",
+        "cohort_id": "demo",
+        "lane_assignment": "manual_mask_core",
+        "source_sample_id": "sample-1",
+        "split_group_id": "sample-1",
+        "image_path": "raw_data/cohorts/demo/images/img.png",
+        "mask_path": "raw_data/cohorts/demo/masks/mask.png",
+        "split": "train",
+        "selection_rank": 1,
+        "selection_reason": "test",
+    }
+    split_dir = runtime_root / "splits"
+    split_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([split_row]).to_csv(split_dir / "train.csv", index=False)
+    pd.DataFrame([{**split_row, "split": "validation"}]).to_csv(
+        split_dir / "validation.csv", index=False
+    )
+    pd.DataFrame([{**split_row, "split": "test"}]).to_csv(
+        split_dir / "test.csv", index=False
+    )
+
+    manifest_path = runtime_root / "raw_data/cohorts/manifest.csv"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([split_row]).to_csv(manifest_path, index=False)
+
+    base_checkpoint = runtime_root / "models/medsam/base.pth"
+    base_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    base_checkpoint.write_bytes(b"base")
+    medsam_repo = runtime_root / "vendor/MedSAM"
+    medsam_repo.mkdir(parents=True, exist_ok=True)
+    (medsam_repo / "MedSAM_Inference.py").write_text("# stub\n", encoding="utf-8")
+    medsam_python = runtime_root / "bin/python"
+    medsam_python.parent.mkdir(parents=True, exist_ok=True)
+    medsam_python.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+
+    checkpoint_root = runtime_root / "models/medsam_glomeruli/test-run"
+    checkpoint_root.mkdir(parents=True, exist_ok=True)
+    (checkpoint_root / "finetuned_epoch_1.pth").write_bytes(b"finetuned")
+    transfer_model = runtime_root / "models/current/transfer.pkl"
+    scratch_model = runtime_root / "models/current/scratch.pkl"
+    transfer_model.parent.mkdir(parents=True, exist_ok=True)
+    transfer_model.write_bytes(b"transfer")
+    scratch_model.write_bytes(b"scratch")
+
+    class _FakeLearner:
+        class _Model:
+            def eval(self) -> None:
+                return None
+
+        model = _Model()
+
+    monkeypatch.setattr(
+        "eq.data_management.model_loading.load_model_safely",
+        lambda *_args, **_kwargs: _FakeLearner(),
+    )
+    monkeypatch.setattr(
+        "eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow._predict_probability",
+        lambda **_kwargs: (np.ones((12, 12), dtype=np.float32), {}),
+    )
+
+    def _fake_partial_batch(**kwargs):
+        failures_path = Path(kwargs["output_dir"]) / "medsam_batch_failures.json"
+        failures_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "manifest_row_id": "row-1",
+                        "image_path": str(image_path),
+                        "failure_reason": "simulated prompt failure",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return [
+            {
+                "manifest_row_id": "row-1",
+                "image_path": str(image_path),
+                "failure_reason": "simulated prompt failure",
+            }
+        ]
+
+    monkeypatch.setattr(
+        "eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow._run_medsam_batch",
+        _fake_partial_batch,
+    )
+    monkeypatch.setattr(
+        "eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow._preflight_training_dependencies",
+        lambda _cfg: {
+            "medsam_python": str(medsam_python),
+            "medsam_repo": str(medsam_repo),
+            "base_checkpoint": str(base_checkpoint),
+            "entrypoint": "",
+            "adaptation_mode": "frozen_image_encoder_mask_decoder",
+            "training_backend": "eq_native_adapter",
+        },
+    )
+    monkeypatch.setattr(
+        "eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow._training_command_for_config",
+        lambda **_kwargs: ["python", "-m", "eq.evaluation.medsam_glomeruli_adapter"],
+    )
+
+    config_path = runtime_root / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "workflow: medsam_glomeruli_fine_tuning",
+                "run:",
+                "  name: test-run",
+                f"  runtime_root_default: {runtime_root}",
+                "medsam:",
+                f"  python: {medsam_python}",
+                f"  repo: {medsam_repo}",
+                f"  base_checkpoint: {base_checkpoint}",
+                "  device: cpu",
+                "  adaptation_mode: frozen_image_encoder_mask_decoder",
+                "  frozen_components: [image_encoder, prompt_encoder]",
+                "  trainable_components: [mask_decoder]",
+                "inputs:",
+                f"  manifest_path: {manifest_path.relative_to(runtime_root)}",
+                "  lane_assignments: [manual_mask_core]",
+                "  split_manifests:",
+                f"    train: { (split_dir / 'train.csv').relative_to(runtime_root) }",
+                f"    validation: { (split_dir / 'validation.csv').relative_to(runtime_root) }",
+                f"    test: { (split_dir / 'test.csv').relative_to(runtime_root) }",
+                "outputs:",
+                "  evaluation_dir: output/test-eval",
+                f"  checkpoint_root: {checkpoint_root.relative_to(runtime_root)}",
+                "baseline_evaluation:",
+                "  external_baselines: false",
+                "current_segmenter:",
+                f"  transfer_model_path: {transfer_model}",
+                f"  scratch_model_path: {scratch_model}",
+                "training:",
+                "  image_size: 32",
+                "adoption_gates: {}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = run_medsam_glomeruli_fine_tuning_workflow(config_path, dry_run=False)
+    summary = json.loads(result["summary"].read_text(encoding="utf-8"))
+
+    assert summary["finetuned_evaluation"]["status"] == "failed_no_predictions"
+    assert summary["finetuned_evaluation"]["prompt_failure_count"] == 1
+    assert summary["finetuned_comparison"]["adoption_tier"] == "blocked"
+    assert summary["finetuned_comparison"]["failure_mode"] == "failed_no_predictions"
+
+
+def test_finetuned_comparison_blocks_and_preserves_failed_partial_predictions() -> None:
+    comparison = _build_finetuned_comparison_summary(
+        finetuned_evaluation={
+            "status": "failed_partial_predictions",
+            "metrics_csv": "",
+            "overlay_review_status": "not_run",
+            "prompt_failure_count": 0,
+        },
+        external_baselines_summary={},
+        baseline_outputs={},
+        adoption_gates={},
+    )
+
+    assert comparison["adoption_tier"] == "blocked"
+    assert comparison["primary_generated_mask_transition_status"] == "blocked"
+    assert comparison["recommended_generated_mask_source"] == ""
+    assert comparison["failure_mode"] == "failed_partial_predictions"
+
+
+def test_finetuned_evaluation_sets_failed_partial_predictions_when_some_masks_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    image_a = tmp_path / "raw_data/cohorts/demo/images/img-a.png"
+    image_b = tmp_path / "raw_data/cohorts/demo/images/img-b.png"
+    mask_a = tmp_path / "raw_data/cohorts/demo/masks/mask-a.png"
+    mask_b = tmp_path / "raw_data/cohorts/demo/masks/mask-b.png"
+    image_a.parent.mkdir(parents=True, exist_ok=True)
+    mask_a.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(np.zeros((12, 12, 3), dtype=np.uint8)).save(image_a)
+    Image.fromarray(np.zeros((12, 12, 3), dtype=np.uint8)).save(image_b)
+    binary_mask = np.zeros((12, 12), dtype=np.uint8)
+    binary_mask[2:10, 2:10] = 1
+    _write_png(mask_a, binary_mask)
+    _write_png(mask_b, binary_mask)
+
+    transfer_model = tmp_path / "models/current/transfer.pkl"
+    scratch_model = tmp_path / "models/current/scratch.pkl"
+    transfer_model.parent.mkdir(parents=True, exist_ok=True)
+    transfer_model.write_bytes(b"transfer")
+    scratch_model.write_bytes(b"scratch")
+
+    checkpoint = tmp_path / "models/medsam_glomeruli/ckpt/final.pth"
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint.write_bytes(b"finetuned")
+
+    class _FakeLearner:
+        class _Model:
+            def eval(self) -> None:
+                return None
+
+        model = _Model()
+
+    monkeypatch.setattr(
+        "eq.data_management.model_loading.load_model_safely",
+        lambda *_args, **_kwargs: _FakeLearner(),
+    )
+    monkeypatch.setattr(
+        "eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow._predict_probability",
+        lambda **_kwargs: (np.ones((12, 12), dtype=np.float32), {}),
+    )
+    monkeypatch.setattr(
+        "eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow._preflight_medsam_inference_paths",
+        lambda _cfg: {
+            "medsam_python": tmp_path / "bin/python",
+            "medsam_repo": tmp_path / "vendor/MedSAM",
+            "checkpoint": tmp_path / "models/medsam/base.pth",
+            "medsam_script": tmp_path / "vendor/MedSAM/MedSAM_Inference.py",
+        },
+    )
+
+    def _fake_partial_batch(**kwargs):
+        for index, item in enumerate(kwargs["items"]):
+            if index > 0:
+                break
+            Path(item["output_path"]).parent.mkdir(parents=True, exist_ok=True)
+            Image.fromarray(np.ones((12, 12), dtype=np.uint8) * 255).save(
+                item["output_path"]
+            )
+        failures_path = Path(kwargs["output_dir"]) / "medsam_batch_failures.json"
+        failures_path.parent.mkdir(parents=True, exist_ok=True)
+        failures_path.write_text("[]", encoding="utf-8")
+        return []
+
+    monkeypatch.setattr(
+        "eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow._run_medsam_batch",
+        _fake_partial_batch,
+    )
+
+    fixed_rows = pd.DataFrame(
+        [
+            {
+                "manifest_row_id": "row-1",
+                "cohort_id": "demo",
+                "lane_assignment": "manual_mask_core",
+                "source_sample_id": "sample-1",
+                "image_path": str(image_a),
+                "mask_path": str(mask_a),
+                "image_path_resolved": str(image_a),
+                "mask_path_resolved": str(mask_a),
+                "selection_rank": 1,
+                "selection_reason": "test",
+            },
+            {
+                "manifest_row_id": "row-2",
+                "cohort_id": "demo",
+                "lane_assignment": "manual_mask_core",
+                "source_sample_id": "sample-2",
+                "image_path": str(image_b),
+                "mask_path": str(mask_b),
+                "image_path_resolved": str(image_b),
+                "mask_path_resolved": str(mask_b),
+                "selection_rank": 2,
+                "selection_reason": "test",
+            },
+        ]
+    )
+    summary = _run_finetuned_fixed_split_evaluation(
+        fixed_rows=fixed_rows,
+        evaluation_dir=tmp_path / "output/test-eval",
+        config={
+            "proposal": {"thresholds": [0.35]},
+            "tiling": {},
+            "current_segmenter": {
+                "transfer_model_path": str(transfer_model),
+                "scratch_model_path": str(scratch_model),
+            },
+            "medsam": {"device": "cpu"},
+        },
+        checkpoint_provenance={
+            "supported_checkpoint": True,
+            "checkpoint_files": [str(checkpoint)],
+        },
+        dry_run=False,
+    )
+
+    assert summary["status"] == "failed_partial_predictions"
+    assert summary["metric_rows"] == 1
+    assert summary["expected_metric_rows"] == 2
+    assert summary["prompt_failure_count"] == 0
+
+
+def test_workflow_summary_marks_finetuned_evaluation_skipped_without_supported_checkpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runtime_root = tmp_path
+    image_path = runtime_root / "raw_data/cohorts/demo/images/img.png"
+    mask_path = runtime_root / "raw_data/cohorts/demo/masks/mask.png"
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    mask_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(np.zeros((12, 12, 3), dtype=np.uint8)).save(image_path)
+    mask = np.zeros((12, 12), dtype=np.uint8)
+    mask[3:9, 3:9] = 1
+    _write_png(mask_path, mask)
+
+    split_row = {
+        "manifest_row_id": "row-1",
+        "cohort_id": "demo",
+        "lane_assignment": "manual_mask_core",
+        "source_sample_id": "sample-1",
+        "split_group_id": "sample-1",
+        "image_path": "raw_data/cohorts/demo/images/img.png",
+        "mask_path": "raw_data/cohorts/demo/masks/mask.png",
+        "split": "train",
+        "selection_rank": 1,
+        "selection_reason": "test",
+    }
+    split_dir = runtime_root / "splits"
+    split_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([split_row]).to_csv(split_dir / "train.csv", index=False)
+    pd.DataFrame([{**split_row, "split": "validation"}]).to_csv(
+        split_dir / "validation.csv", index=False
+    )
+    pd.DataFrame([{**split_row, "split": "test"}]).to_csv(
+        split_dir / "test.csv", index=False
+    )
+
+    manifest_path = runtime_root / "raw_data/cohorts/manifest.csv"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([split_row]).to_csv(manifest_path, index=False)
+
+    base_checkpoint = runtime_root / "models/medsam/base.pth"
+    base_checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    base_checkpoint.write_bytes(b"base")
+    medsam_repo = runtime_root / "vendor/MedSAM"
+    medsam_repo.mkdir(parents=True, exist_ok=True)
+    medsam_python = runtime_root / "bin/python"
+    medsam_python.parent.mkdir(parents=True, exist_ok=True)
+    medsam_python.write_text("#!/usr/bin/env python\n", encoding="utf-8")
+
+    checkpoint_root = runtime_root / "models/medsam_glomeruli/test-run"
+    checkpoint_root.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(
+        "eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow._preflight_training_dependencies",
+        lambda _cfg: {
+            "medsam_python": str(medsam_python),
+            "medsam_repo": str(medsam_repo),
+            "base_checkpoint": str(base_checkpoint),
+            "entrypoint": "",
+            "adaptation_mode": "frozen_image_encoder_mask_decoder",
+            "training_backend": "eq_native_adapter",
+        },
+    )
+    monkeypatch.setattr(
+        "eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow._training_command_for_config",
+        lambda **_kwargs: ["python", "-m", "eq.evaluation.medsam_glomeruli_adapter"],
+    )
+
+    config_path = runtime_root / "config.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "workflow: medsam_glomeruli_fine_tuning",
+                "run:",
+                "  name: test-run",
+                f"  runtime_root_default: {runtime_root}",
+                "medsam:",
+                f"  base_checkpoint: {base_checkpoint}",
+                "  device: cpu",
+                "  adaptation_mode: frozen_image_encoder_mask_decoder",
+                "  frozen_components: [image_encoder, prompt_encoder]",
+                "  trainable_components: [mask_decoder]",
+                "inputs:",
+                f"  manifest_path: {manifest_path.relative_to(runtime_root)}",
+                "  lane_assignments: [manual_mask_core]",
+                "  split_manifests:",
+                f"    train: { (split_dir / 'train.csv').relative_to(runtime_root) }",
+                f"    validation: { (split_dir / 'validation.csv').relative_to(runtime_root) }",
+                f"    test: { (split_dir / 'test.csv').relative_to(runtime_root) }",
+                "outputs:",
+                "  evaluation_dir: output/test-eval",
+                f"  checkpoint_root: {checkpoint_root.relative_to(runtime_root)}",
+                "baseline_evaluation:",
+                "  external_baselines: false",
+                "training:",
+                "  image_size: 32",
+                "adoption_gates: {}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = run_medsam_glomeruli_fine_tuning_workflow(config_path, dry_run=False)
+    summary = json.loads(result["summary"].read_text(encoding="utf-8"))
+
+    assert (
+        summary["finetuned_evaluation"]["status"]
+        == "skipped_missing_supported_checkpoint"
+    )

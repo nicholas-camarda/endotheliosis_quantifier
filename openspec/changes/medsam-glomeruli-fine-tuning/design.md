@@ -43,7 +43,7 @@ Reusable masks intended for downstream workflows SHALL live under `derived_data/
 
 Alternative considered: write generated masks under `raw_data/cohorts/**/masks`. Rejected because it would make generated masks visually indistinguishable from manual/reference masks and would undermine downstream provenance.
 
-Alternative considered: leave generated masks under `output/segmentation_evaluation/**`. Rejected for reusable releases because those directories are run diagnostics and are already complex to navigate.
+Alternative considered: leave generated masks under `output/segmentation_evaluation/`**. Rejected for reusable releases because those directories are run diagnostics and are already complex to navigate.
 
 ### Decision: Use adoption tiers rather than a single pass/fail label
 

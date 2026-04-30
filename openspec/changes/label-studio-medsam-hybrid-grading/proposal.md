@@ -19,6 +19,7 @@ Fine-tuned MedSAM generated-mask releases from `medsam-glomeruli-fine-tuning` wi
 
 - `label-studio-local-bootstrap`: Collaborator CLI shape (positional `<image-dir>`), YAML-backed parameters, optional MedSAM preload from `derived_data/generated_masks/glomeruli/medsam_finetuned/<mask_release_id>/`, startup health gates for hybrid mode including ML backend.
 - `label-studio-glomerulus-grading`: Exported record shape and validation rules to include mask release lineage, proposal kind (`auto` vs `box_assisted`), human edit classification, versioning fields for latest authoritative grade/mask references, consistent `region_id` / `glomerulus_instance_id`.
+- `medsam-glomeruli-fine-tuning`: Generated-mask releases intended for Label Studio hybrid review MUST expose import-ready manifest fields and stable release identifiers consumable by bootstrap preload construction.
 
 ## Impact
 
@@ -35,6 +36,8 @@ Fine-tuned MedSAM generated-mask releases from `medsam-glomeruli-fine-tuning` wi
 - Cold-import policy (**B**): images may ship with zero preload masks; graders recover via box-assisted MedSAM or manual contours; bootstrap does not refuse the project solely for absent preload predictions.
 - Box-assist is a **production dependency** whenever hybrid grading is enabled: health-check before usable labeling; labeling cannot silently pretend multi-glomerulus work remains easy if companion is unreachable (fail closed for that labeling session/profile).
 - Versioning stance: authoritative exports expose **latest** committed annotation state with explicit lineage fields permitting audit; finer-grained LC history deferred unless LS export makes it trivial.
+- Release-selection stance: implementation MUST audit the generated-mask registry first and choose the latest eligible MedSAM release by explicit ordering rules (status + timestamp), not by assuming a fixed release name.
+- Required region source states for downstream ingestion: `auto_medsam`, `human_edited_medsam`, `box_assisted_medsam`, `excluded_partial_glomerulus`, and `rejected_medsam_candidate`.
 
 ## Open Questions
 

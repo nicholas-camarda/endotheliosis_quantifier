@@ -1,8 +1,9 @@
 ## 1. Spec and contract foundation
 
 - [ ] 1.1 Audit Label Studio image version + JSON export fields for predictions vs annotations (document findings in `implementation-notes.md`)
-- [ ] 1.2 Finalize `configs/label_studio_medsam_hybrid.yaml` schema (mask release binding, companion URLs, enforcement flags) and add example file to Git
-- [ ] 1.3 Add path helpers in `src/eq/utils/paths.py` for YAML + generated-mask release resolution (reuse existing helpers when present)
+- [ ] 1.2 Audit available generated-mask releases in `derived_data/generated_masks/glomeruli/manifest.csv` and document latest-valid selection criteria
+- [ ] 1.3 Finalize `configs/label_studio_medsam_hybrid.yaml` schema (release selection mode + optional pinned mask release, companion URLs, enforcement flags) and add example file to Git
+- [ ] 1.4 Add path helpers in `src/eq/utils/paths.py` for YAML + generated-mask release resolution (reuse existing helpers when present)
 
 ## 2. CLI ergonomics
 

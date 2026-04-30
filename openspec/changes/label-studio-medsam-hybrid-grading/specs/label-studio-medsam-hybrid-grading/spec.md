@@ -16,6 +16,22 @@ When hybrid grading is enabled, the system SHALL import Label Studio tasks with 
 - **THEN** bootstrap MUST still create a Label Studio task for that image unless an explicit YAML policy rejects missing rows
 - **AND** lineage MUST record absent preload artifacts so downstream parsers can distinguish inferred vs hydrated proposals
 
+### Requirement: Bootstrap SHALL audit available releases and default to the latest valid release
+
+Hybrid bootstrap MUST inspect the generated-mask registry before task construction, determine the latest valid release using explicit ordering rules, and use that release when no pinned `mask_release_id` is provided.
+
+#### Scenario: No release pinned in YAML
+
+- **WHEN** `configs/label_studio_medsam_hybrid.yaml` omits a pinned `mask_release_id`
+- **THEN** bootstrap MUST audit `derived_data/generated_masks/glomeruli/manifest.csv`
+- **AND** select the latest valid release by documented precedence
+- **AND** emit the selected `mask_release_id` in startup logs and provenance metadata
+
+#### Scenario: Pinned release missing or invalid
+
+- **WHEN** YAML pins `mask_release_id` that is absent or invalid in the registry
+- **THEN** bootstrap MUST fail closed with an actionable error listing audit results and candidate valid releases
+
 ### Requirement: Box-assisted MedSAM MUST be reachable when hybrid mode requires interactive proposals
 
 When hybrid grading is configured with companion enforcement (default-on), startup MUST probe the companion health endpoint referenced in YAML and MUST refuse to finalize bootstrap if the probe fails unless `offline_manual_only_allowed: true` is explicitly enabled for admin-only contingency.

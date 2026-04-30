@@ -97,6 +97,15 @@ Execution logs SHALL help an operator determine what ran, what inputs and output
 - **THEN** the durable log records artifact paths, data counts, model artifact references, backend/device, run status, and elapsed time
 - **AND** the log does not describe model convergence, MPS execution, or output generation as evidence of scientific promotion unless a separate promotion gate records that conclusion
 
+### Requirement: New run-config workflows SHALL emit workflow-level execution milestones
+Any workflow added to `SUPPORTED_WORKFLOWS` in `src/eq/run_config.py` SHALL emit workflow-level operational milestones into the active execution log context.
+
+#### Scenario: New workflow starts under run-config
+- **WHEN** a workflow runner is dispatched by `eq run-config --config <config>` for a workflow added after this logging contract
+- **THEN** the workflow log includes `EXECUTION_LOG=<path>` when an execution log context is active
+- **AND** includes phase-level start/completion events for split/input resolution, dependency preflight, major baseline/evaluation blocks, and summary artifact writes
+- **AND** avoids creating parallel ad-hoc log files outside the active execution logging context
+
 ### Requirement: CLI setup failures are visible
 The `eq` CLI SHALL fail visibly when mode setup or runtime directory setup fails for commands that require those resources.
 

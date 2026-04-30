@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
+import os
 import shutil
 import subprocess
 import time
@@ -15,7 +17,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import yaml
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from eq.evaluation.medsam_glomeruli_workflow import (
     _file_hash,
@@ -46,6 +48,7 @@ from eq.evaluation.run_medsam_manual_glomeruli_comparison_workflow import (
     _run_medsam_batch,
     derive_oracle_boxes,
 )
+from eq.utils.execution_logging import current_execution_log_context
 from eq.utils.paths import (
     ensure_not_under_runtime_raw_data,
     get_runtime_generated_masks_glomeruli_manifest_path,
@@ -58,6 +61,11 @@ DEFAULT_RUN_ID = "pilot_medsam_glomeruli_fine_tuning"
 DEFAULT_OUTPUT_DIR = "output/segmentation_evaluation/medsam_glomeruli_fine_tuning"
 DEFAULT_MANIFEST_PATH = "raw_data/cohorts/manifest.csv"
 MASK_SOURCE = "medsam_finetuned_glomeruli"
+LOGGER = logging.getLogger("eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow")
+
+
+def _emit(message: str) -> None:
+    LOGGER.info("%s", message)
 
 
 def _load_config(config_path: Path) -> dict[str, Any]:
@@ -838,6 +846,91 @@ def _mean_metric(metrics: dict[str, Any], key: str) -> float:
     return 0.0 if value in ("", None) else float(value)
 
 
+def _metric_aggregate(mean_dice: Any, mean_jaccard: Any) -> dict[str, float]:
+    return {
+        "dice": 0.0 if mean_dice in ("", None) else float(mean_dice),
+        "jaccard": 0.0 if mean_jaccard in ("", None) else float(mean_jaccard),
+    }
+
+
+def _trivial_baseline_aggregate(baseline_outputs: dict[str, Any]) -> dict[str, float]:
+    grouped_path_text = str(
+        baseline_outputs.get("trivial_baseline_metric_by_source", "")
+    ).strip()
+    if not grouped_path_text:
+        return {"dice": 0.0, "jaccard": 0.0}
+    grouped_path = Path(grouped_path_text)
+    if not grouped_path.exists() or not grouped_path.is_file():
+        return {"dice": 0.0, "jaccard": 0.0}
+    try:
+        grouped = pd.read_csv(grouped_path).fillna("")
+    except (pd.errors.EmptyDataError, pd.errors.ParserError):
+        return {"dice": 0.0, "jaccard": 0.0}
+    if grouped.empty or "dice" not in grouped.columns or "jaccard" not in grouped.columns:
+        return {"dice": 0.0, "jaccard": 0.0}
+    dice = pd.to_numeric(grouped["dice"], errors="coerce").fillna(0.0)
+    jaccard = pd.to_numeric(grouped["jaccard"], errors="coerce").fillna(0.0)
+    return {"dice": float(dice.max()), "jaccard": float(jaccard.max())}
+
+
+def _finetuned_metric_aggregate(finetuned_evaluation: dict[str, Any]) -> dict[str, float]:
+    metrics_csv_text = str(finetuned_evaluation.get("metrics_csv", "")).strip()
+    if not metrics_csv_text:
+        return {"dice": 0.0, "jaccard": 0.0}
+    metrics_csv = Path(metrics_csv_text)
+    if not metrics_csv.exists() or not metrics_csv.is_file():
+        return {"dice": 0.0, "jaccard": 0.0}
+    try:
+        frame = pd.read_csv(metrics_csv).fillna("")
+    except pd.errors.EmptyDataError:
+        return {"dice": 0.0, "jaccard": 0.0}
+    if frame.empty or "dice" not in frame.columns or "jaccard" not in frame.columns:
+        return {"dice": 0.0, "jaccard": 0.0}
+    dice = pd.to_numeric(frame["dice"], errors="coerce").fillna(0.0)
+    jaccard = pd.to_numeric(frame["jaccard"], errors="coerce").fillna(0.0)
+    return {"dice": float(dice.mean()), "jaccard": float(jaccard.mean())}
+
+
+def _build_finetuned_comparison_summary(
+    *,
+    finetuned_evaluation: dict[str, Any],
+    external_baselines_summary: dict[str, Any],
+    baseline_outputs: dict[str, Any],
+    adoption_gates: dict[str, Any],
+) -> dict[str, Any]:
+    comparison = _classify_generated_mask_adoption(
+        fine_tuned_metrics=_finetuned_metric_aggregate(finetuned_evaluation),
+        oracle_metrics=_metric_aggregate(
+            external_baselines_summary.get("oracle_prompt_medsam", {}).get("mean_dice", 0.0),
+            external_baselines_summary.get("oracle_prompt_medsam", {}).get("mean_jaccard", 0.0),
+        ),
+        current_auto_metrics=_metric_aggregate(
+            external_baselines_summary.get("automatic_medsam", {}).get("mean_dice", 0.0),
+            external_baselines_summary.get("automatic_medsam", {}).get("mean_jaccard", 0.0),
+        ),
+        current_segmenter_metrics=_metric_aggregate(
+            external_baselines_summary.get("current_segmenter", {}).get("mean_dice", 0.0),
+            external_baselines_summary.get("current_segmenter", {}).get("mean_jaccard", 0.0),
+        ),
+        trivial_baseline_metrics=_trivial_baseline_aggregate(baseline_outputs),
+        prompt_failure_count=int(finetuned_evaluation.get("prompt_failure_count", 0) or 0),
+        gates=adoption_gates,
+        overlay_review_status="passed"
+        if str(finetuned_evaluation.get("overlay_review_status", "")) == "passed"
+        else "not_run",
+    )
+    finetuned_status = str(finetuned_evaluation.get("status", ""))
+    inference_ran = finetuned_status == "completed"
+    if not inference_ran:
+        comparison["adoption_tier"] = "blocked"
+        comparison["primary_generated_mask_transition_status"] = "blocked"
+        comparison["recommended_generated_mask_source"] = ""
+        comparison["failure_mode"] = (
+            finetuned_status if finetuned_status else "finetuned_inference_not_run"
+        )
+    return comparison
+
+
 def _classify_generated_mask_adoption(
     *,
     fine_tuned_metrics: dict[str, Any],
@@ -1078,6 +1171,294 @@ def _build_checkpoint_provenance(
     }
 
 
+def _run_finetuned_fixed_split_evaluation(
+    *,
+    fixed_rows: pd.DataFrame,
+    evaluation_dir: Path,
+    config: dict[str, Any],
+    checkpoint_provenance: dict[str, Any],
+    dry_run: bool,
+) -> dict[str, Any]:
+    finetuned_dir = evaluation_dir / "finetuned_evaluation"
+    masks_dir = finetuned_dir / "masks"
+    overlays_dir = finetuned_dir / "overlays"
+    batch_dir = finetuned_dir / "medsam_batch"
+    metrics_csv = finetuned_dir / "metrics.csv"
+    prompt_failures_csv = finetuned_dir / "prompt_failures.csv"
+    prompt_failures_json = batch_dir / "medsam_batch_failures.json"
+    proposal_boxes_csv = finetuned_dir / "proposal_boxes.csv"
+    proposal_recall_csv = finetuned_dir / "proposal_recall.csv"
+    summary: dict[str, Any] = {
+        "status": "skipped_missing_supported_checkpoint",
+        "metric_rows": 0,
+        "metrics_csv": str(metrics_csv),
+        "masks_dir": str(masks_dir),
+        "overlays_dir": str(overlays_dir),
+        "prompt_failures_csv": str(prompt_failures_csv),
+        "prompt_failures_json": str(prompt_failures_json),
+        "proposal_boxes_csv": str(proposal_boxes_csv),
+        "proposal_recall_csv": str(proposal_recall_csv),
+        "prompt_failure_count": 0,
+        "overlay_review_status": "not_run",
+    }
+    if not bool(checkpoint_provenance.get("supported_checkpoint", False)):
+        return summary
+
+    def _resolve_inference_checkpoint(path: Path) -> Path:
+        """Normalize adapter checkpoints to SAM-compatible state dicts for inference."""
+        try:
+            import torch
+
+            payload = torch.load(path, map_location="cpu")
+        except Exception:
+            return path
+        if not isinstance(payload, dict):
+            return path
+        model_state = payload.get("model")
+        if not isinstance(model_state, dict):
+            return path
+        converted = finetuned_dir / f"{path.stem}_sam_state_dict.pth"
+        torch.save(model_state, converted)
+        return converted
+
+    for directory in (finetuned_dir, masks_dir, overlays_dir, batch_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+    _write_csv(metrics_csv, [], fieldnames=AUTOMATIC_METRIC_FIELDS)
+    _write_csv(
+        prompt_failures_csv,
+        [],
+        fieldnames=["manifest_row_id", "image_path", "failure_reason"],
+    )
+    _write_csv(proposal_boxes_csv, [], fieldnames=PROPOSAL_BOX_FIELDS)
+    _write_csv(proposal_recall_csv, [], fieldnames=[])
+    if dry_run:
+        summary["status"] = "skipped_dry_run"
+        return summary
+    if fixed_rows.empty:
+        summary["status"] = "skipped_empty_fixed_split"
+        return summary
+
+    medsam_bundle = _preflight_medsam_inference_paths(config)
+    checkpoint_candidates = [
+        Path(str(path))
+        for path in checkpoint_provenance.get("checkpoint_files", [])
+        if str(path).strip()
+    ]
+    checkpoint_candidates = [path for path in checkpoint_candidates if path.exists()]
+    if not checkpoint_candidates:
+        summary["status"] = "failed_missing_supported_checkpoint_artifact"
+        return summary
+    checkpoint_candidates.sort(key=lambda path: (path.stat().st_mtime, str(path)))
+    finetuned_checkpoint = _resolve_inference_checkpoint(checkpoint_candidates[-1])
+
+    proposal_cfg = _mapping(config, "proposal")
+    tiling_cfg = _mapping(config, "tiling")
+    current_segmenter_cfg = _mapping(config, "current_segmenter")
+    tile_size = int(tiling_cfg.get("tile_size", 512))
+    stride = int(tiling_cfg.get("stride", 512))
+    expected_size = int(tiling_cfg.get("expected_size", 256))
+    thresholds = [float(value) for value in proposal_cfg.get("thresholds", [0.2, 0.35, 0.5])]
+    min_area = int(proposal_cfg.get("min_component_area", 2000))
+    max_area = int(proposal_cfg.get("max_component_area", 750000))
+    padding = int(proposal_cfg.get("padding", 16))
+    merge_iou = float(proposal_cfg.get("merge_iou", 0.25))
+    max_boxes = int(proposal_cfg.get("max_boxes_per_image", 20))
+
+    from eq.data_management.model_loading import load_model_safely
+
+    candidate_paths = _candidate_paths(current_segmenter_cfg)
+    current_models: dict[str, Any] = {}
+    for _, model_path in candidate_paths.items():
+        if not model_path.exists():
+            raise FileNotFoundError(f"Missing current segmenter artifact: {model_path}")
+    for family, model_path in candidate_paths.items():
+        learner = load_model_safely(str(model_path), model_type="glomeruli")
+        learner.model.eval()
+        current_models[family] = learner.model
+
+    recall_rows: list[dict[str, Any]] = []
+    proposal_rows: list[dict[str, Any]] = []
+    proposal_by_setting: dict[tuple[str, str, float], list[dict[str, Any]]] = {}
+    manual_masks: dict[str, np.ndarray] = {}
+    fixed_records = fixed_rows.fillna("").to_dict(orient="records")
+    for record in fixed_records:
+        row_id = str(record["manifest_row_id"])
+        image_path = Path(str(record["image_path_resolved"]))
+        manual_mask = load_binary_mask(Path(str(record["mask_path_resolved"])))
+        manual_masks[row_id] = manual_mask
+        base_record = {field: record.get(field, "") for field in _FIXED_SPLIT_ROW_FIELDS}
+        for family, model in current_models.items():
+            model_path = candidate_paths[family]
+            probability, _audit = _predict_probability(
+                model=model,
+                image_path=image_path,
+                tile_size=tile_size,
+                stride=stride,
+                expected_size=expected_size,
+            )
+            for threshold in thresholds:
+                boxes, decisions = derive_proposal_boxes(
+                    probability,
+                    threshold=threshold,
+                    min_component_area=min_area,
+                    max_component_area=max_area,
+                    padding=padding,
+                    merge_iou=merge_iou,
+                    max_boxes=max_boxes,
+                )
+                proposal_by_setting[(row_id, family, threshold)] = boxes
+                overflow_count = sum(
+                    1 for decision in decisions if decision.get("decision") == "overflow"
+                )
+                for decision in decisions:
+                    proposal_rows.append(
+                        {
+                            **base_record,
+                            "candidate_family": family,
+                            "candidate_artifact": str(model_path),
+                            "threshold": threshold,
+                            **decision,
+                        }
+                    )
+                recall_row = proposal_recall_row(
+                    manual_mask=manual_mask,
+                    proposal_boxes=boxes,
+                    manifest_row_id=row_id,
+                    cohort_id=str(record["cohort_id"]),
+                    lane_assignment=str(record["lane_assignment"]),
+                    candidate_family=family,
+                    candidate_artifact=str(model_path),
+                    threshold=threshold,
+                    min_component_area=min_area,
+                )
+                recall_row["overflow_count"] = int(overflow_count)
+                recall_rows.append(recall_row)
+
+    if proposal_rows:
+        pd.DataFrame(proposal_rows).reindex(columns=PROPOSAL_BOX_FIELDS).to_csv(
+            proposal_boxes_csv, index=False
+        )
+    if recall_rows:
+        pd.DataFrame(recall_rows).to_csv(proposal_recall_csv, index=False)
+    if not recall_rows:
+        summary["status"] = "skipped_no_proposals"
+        return summary
+
+    best_family, best_threshold = _select_best_setting(recall_rows)
+    medsam_items: list[dict[str, Any]] = []
+    for record in fixed_records:
+        row_id = str(record["manifest_row_id"])
+        manual_mask = manual_masks[row_id]
+        boxes = proposal_by_setting.get((row_id, best_family, best_threshold), [])
+        medsam_items.append(
+            {
+                "manifest_row_id": row_id,
+                "image_path": str(record["image_path_resolved"]),
+                "height": int(manual_mask.shape[0]),
+                "width": int(manual_mask.shape[1]),
+                "boxes": boxes,
+                "output_path": str(
+                    masks_dir
+                    / f"{row_id}_{best_family}_{best_threshold:g}_medsam_finetuned_auto.png"
+                ),
+            }
+        )
+    prompt_failures = _run_medsam_batch(
+        medsam_python=medsam_bundle["medsam_python"],
+        medsam_repo=medsam_bundle["medsam_repo"],
+        checkpoint=finetuned_checkpoint,
+        device=str(_mapping(config, "medsam").get("device", "cpu")),
+        items=medsam_items,
+        output_dir=batch_dir,
+    )
+    _write_csv(
+        prompt_failures_csv,
+        prompt_failures,
+        fieldnames=["manifest_row_id", "image_path", "failure_reason"],
+    )
+
+    rows: list[dict[str, Any]] = []
+    item_by_id = {item["manifest_row_id"]: item for item in medsam_items}
+    for record in fixed_records:
+        row_id = str(record["manifest_row_id"])
+        manual_mask = manual_masks[row_id]
+        predicted_path = Path(item_by_id[row_id]["output_path"])
+        if not predicted_path.exists():
+            continue
+        predicted_mask = load_binary_mask(predicted_path)
+        rows.append(
+            _automatic_metric_row(
+                prompt_mode="automatic_current_segmenter_boxes",
+                proposal_threshold=float(best_threshold),
+                candidate_family=str(best_family),
+                mask_source=MASK_SOURCE,
+                method="medsam_finetuned_automatic",
+                candidate_artifact=str(finetuned_checkpoint),
+                manifest_row_id=row_id,
+                cohort_id=str(record["cohort_id"]),
+                lane_assignment=str(record["lane_assignment"]),
+                manual_mask=manual_mask,
+                predicted_mask=predicted_mask,
+            )
+        )
+        image = Image.open(Path(str(record["image_path_resolved"]))).convert("RGB")
+        overlay = image.copy().convert("RGBA")
+        for mask, color in ((manual_mask, (0, 255, 0, 90)), (predicted_mask, (255, 0, 0, 90))):
+            alpha = (np.asarray(mask) > 0).astype(np.uint8) * color[3]
+            color_arr = np.zeros((alpha.shape[0], alpha.shape[1], 4), dtype=np.uint8)
+            color_arr[..., 0] = color[0]
+            color_arr[..., 1] = color[1]
+            color_arr[..., 2] = color[2]
+            color_arr[..., 3] = alpha
+            overlay = Image.alpha_composite(overlay, Image.fromarray(color_arr, mode="RGBA"))
+        draw = ImageDraw.Draw(overlay)
+        for box in proposal_by_setting.get((row_id, best_family, best_threshold), []):
+            draw.rectangle(
+                [box["bbox_x0"], box["bbox_y0"], box["bbox_x1"], box["bbox_y1"]],
+                outline=(0, 0, 255, 255),
+                width=3,
+            )
+        draw.text(
+            (8, 8),
+            "manual=green finetuned=red proposal_box=blue",
+            fill=(255, 255, 255, 255),
+        )
+        overlay.convert("RGB").save(overlays_dir / f"{row_id}_overlay.png")
+
+    _write_csv(metrics_csv, rows, fieldnames=AUTOMATIC_METRIC_FIELDS)
+    expected_rows = int(len(fixed_records))
+    produced_rows = int(len(rows))
+    prompt_failure_count = int(len(prompt_failures))
+    status = "completed"
+    if produced_rows < expected_rows:
+        status = "failed_partial_predictions"
+    if prompt_failure_count > 0:
+        status = "failed_prompt_failures"
+    if produced_rows == 0:
+        status = "failed_no_predictions"
+
+    summary.update(
+        {
+            "status": status,
+            "selected_candidate_family": str(best_family),
+            "selected_threshold": float(best_threshold),
+            "checkpoint_path": str(finetuned_checkpoint),
+            "expected_metric_rows": expected_rows,
+            "metric_rows": produced_rows,
+            "metrics_csv": str(metrics_csv),
+            "masks_dir": str(masks_dir),
+            "overlays_dir": str(overlays_dir),
+            "prompt_failures_csv": str(prompt_failures_csv),
+            "prompt_failures_json": str(prompt_failures_json),
+            "proposal_boxes_csv": str(proposal_boxes_csv),
+            "proposal_recall_csv": str(proposal_recall_csv),
+            "prompt_failure_count": prompt_failure_count,
+            "overlay_review_status": "passed" if status == "completed" else "not_run",
+        }
+    )
+    return summary
+
+
 def _build_adaptation_command(
     *,
     medsam_python: Path,
@@ -1167,6 +1548,10 @@ def _training_command_for_config(
             str(int(training_cfg.get("max_examples", 0))),
             "--seed",
             str(int(training_cfg.get("seed", 2023))),
+            "--lr-scheduler",
+            str(training_cfg.get("lr_scheduler", "none")),
+            "--min-lr",
+            str(float(training_cfg.get("min_lr", 0.0))),
         ]
     entrypoint = Path(preflight["entrypoint"])
     return _build_adaptation_command(
@@ -1276,11 +1661,37 @@ def _preflight_training_dependencies(config: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def _full_training_skip_reason(
+    *,
+    dry_run: bool,
+    training_cfg: dict[str, Any],
+    local_feasibility: dict[str, Any],
+) -> str:
+    if dry_run:
+        return "dry_run"
+    if not bool(training_cfg.get("run_training", True)):
+        return "run_training_disabled"
+    if bool(training_cfg.get("local_feasibility_required", False)) and bool(
+        training_cfg.get("run_local_feasibility_smoke", False)
+    ):
+        if (
+            str(local_feasibility.get("local_feasibility_status", ""))
+            != "local_feasible"
+        ):
+            return "local_feasibility_gate"
+    return ""
+
+
 def run_medsam_glomeruli_fine_tuning_workflow(
     config_path: Path, *, dry_run: bool = False
 ) -> dict[str, Path]:
     config = _load_config(config_path)
     runtime_root = _runtime_root(config)
+    log_context = current_execution_log_context()
+    if log_context is not None:
+        _emit(f"EXECUTION_LOG={log_context.log_path}")
+    _emit(f"WORKFLOW={WORKFLOW_ID}")
+    _emit("PHASE=load_config status=started")
     medsam = _mapping(config, "medsam")
     inputs = _mapping(config, "inputs")
     split_cfg = _mapping(inputs, "split_manifests")
@@ -1295,6 +1706,7 @@ def run_medsam_glomeruli_fine_tuning_workflow(
     generated_splits = False
     split_hashes: dict[str, str] = {}
     split_paths: dict[str, str] = {}
+    _emit("PHASE=resolve_splits status=started")
     explicit_train = str(split_cfg.get("train", "")).strip()
     explicit_validation = str(split_cfg.get("validation", "")).strip()
     explicit_test = str(split_cfg.get("test", "")).strip()
@@ -1322,7 +1734,16 @@ def run_medsam_glomeruli_fine_tuning_workflow(
             split_hashes[key] = _hash_file(manifest_file)
             split_paths[key] = str(manifest_file)
         generated_splits = True
+    _emit(
+        "PHASE=resolve_splits status=completed generated_splits=%s"
+        % str(generated_splits)
+    )
+    _emit("PHASE=dependency_preflight status=started")
     preflight = _preflight_training_dependencies(config)
+    _emit(
+        "PHASE=dependency_preflight status=completed backend=%s"
+        % str(preflight.get("training_backend", ""))
+    )
     training_cfg = _mapping(config, "training")
     fixed_rows = _fixed_evaluation_rows(split_paths, runtime_root)
     train_rows = _split_rows(split_paths, runtime_root, "train")
@@ -1356,12 +1777,14 @@ def run_medsam_glomeruli_fine_tuning_workflow(
             "reason": "baseline_evaluation.external_baselines=false",
         }
     else:
+        _emit("PHASE=baseline_evaluation status=started")
         external_baselines_summary = _run_external_fixed_split_baselines(
             fixed_rows=fixed_rows,
             config=config,
             baseline_dir=paths["evaluation_dir"] / "baseline_metrics",
             _runtime_root=runtime_root,
         )
+        _emit("PHASE=baseline_evaluation status=completed")
     training_command = _training_command_for_config(
         config=config,
         preflight=preflight,
@@ -1379,6 +1802,7 @@ def run_medsam_glomeruli_fine_tuning_workflow(
         else "Local feasibility smoke command not requested.",
     }
     if (not dry_run) and bool(training_cfg.get("run_local_feasibility_smoke", False)):
+        _emit("PHASE=local_feasibility status=started")
         backend = preflight.get("training_backend", "upstream_medsam")
         smoke_env = {
             **medsam_subprocess_extra_env(device=str(medsam.get("device", "cpu"))),
@@ -1410,10 +1834,51 @@ def run_medsam_glomeruli_fine_tuning_workflow(
             image_size=int(training_cfg.get("image_size", 1024)),
             batch_size=int(training_cfg.get("smoke_batch_size", 1)),
         )
-    checkpoint_files = list(paths["checkpoint_root"].glob("*.pth")) if paths["checkpoint_root"].exists() else []
-    training_status = "not_started_dry_run" if dry_run else "not_started"
-    if checkpoint_files:
-        training_status = "completed"
+        _emit(
+            "PHASE=local_feasibility status=completed local_feasibility_status=%s"
+            % str(local_feasibility.get("local_feasibility_status", ""))
+        )
+    skip_reason = _full_training_skip_reason(
+        dry_run=dry_run,
+        training_cfg=training_cfg,
+        local_feasibility=local_feasibility,
+    )
+    paths["checkpoint_root"].mkdir(parents=True, exist_ok=True)
+    training_process_exit: int | None = None
+    if dry_run:
+        training_status = "not_started_dry_run"
+    elif skip_reason == "run_training_disabled":
+        training_status = "skipped_run_training_disabled"
+    elif skip_reason == "local_feasibility_gate":
+        training_status = "skipped_local_feasibility_gate"
+    elif skip_reason == "dry_run":
+        training_status = "not_started_dry_run"
+    elif skip_reason:
+        training_status = "skipped"
+    else:
+        train_env = os.environ.copy()
+        train_env.update(
+            medsam_subprocess_extra_env(device=str(medsam.get("device", "cpu")))
+        )
+        train_env["PYTORCH_DEVICE"] = str(medsam.get("device", "cpu"))
+        _emit("PHASE=training status=started")
+        completed = subprocess.run(
+            training_command,
+            env=train_env,
+            check=False,
+            text=True,
+            cwd=str(runtime_root),
+        )
+        training_process_exit = int(completed.returncode)
+        _emit(
+            "PHASE=training status=finished returncode=%s" % str(completed.returncode)
+        )
+        training_status = "completed" if completed.returncode == 0 else "failed"
+
+    checkpoint_files = sorted(
+        (path for path in paths["checkpoint_root"].glob("*.pth") if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+    )
     checkpoint_provenance = _build_checkpoint_provenance(
         training_command=training_command,
         environment={
@@ -1436,10 +1901,23 @@ def run_medsam_glomeruli_fine_tuning_workflow(
             local_feasibility.get("local_feasibility_status", "")
         ),
     )
-    paths["checkpoint_root"].mkdir(parents=True, exist_ok=True)
     checkpoint_provenance_path = paths["checkpoint_root"] / "provenance.json"
     checkpoint_provenance_path.write_text(
         json.dumps(checkpoint_provenance, indent=2), encoding="utf-8"
+    )
+    finetuned_evaluation = _run_finetuned_fixed_split_evaluation(
+        fixed_rows=fixed_rows,
+        evaluation_dir=paths["evaluation_dir"],
+        config=config,
+        checkpoint_provenance=checkpoint_provenance,
+        dry_run=dry_run,
+    )
+    adoption_gates = _mapping(config, "adoption_gates")
+    finetuned_comparison = _build_finetuned_comparison_summary(
+        finetuned_evaluation=finetuned_evaluation,
+        external_baselines_summary=external_baselines_summary,
+        baseline_outputs=baseline_outputs,
+        adoption_gates=adoption_gates,
     )
     summary = {
         "workflow": WORKFLOW_ID,
@@ -1461,7 +1939,7 @@ def run_medsam_glomeruli_fine_tuning_workflow(
             "generated_release_root": str(paths["generated_release_root"]),
             "generated_registry_path": str(paths["generated_registry_path"]),
         },
-        "adoption_gates": _mapping(config, "adoption_gates"),
+        "adoption_gates": adoption_gates,
         "dependency_preflight": preflight,
         "baseline_evaluation": {
             **baseline_plan,
@@ -1483,6 +1961,8 @@ def run_medsam_glomeruli_fine_tuning_workflow(
         "split_manifests": split_paths,
         "split_manifest_hashes": split_hashes,
         "generated_splits": generated_splits,
+        "finetuned_evaluation": finetuned_evaluation,
+        "finetuned_comparison": finetuned_comparison,
         "note": "Fine-tuned checkpoint inference/evaluation tasks run after training produces supported checkpoint artifacts.",
     }
     summary_path = paths["evaluation_dir"] / "summary.json"

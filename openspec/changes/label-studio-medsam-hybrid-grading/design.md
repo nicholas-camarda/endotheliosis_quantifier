@@ -30,7 +30,7 @@
 
 ### Decision: YAML carries integration bindings
 
-**Choice:** Provide `configs/label_studio_medsam_hybrid.yaml` documenting `mask_release_id`, ML companion base URL, auth token reference (env-backed), Docker/LS defaults, hybrid enablement.
+**Choice:** Provide `configs/label_studio_medsam_hybrid.yaml` documenting release-selection policy (`selection_mode: latest_valid` by default), optional pinned `mask_release_id`, ML companion base URL, auth token reference (env-backed), Docker/LS defaults, hybrid enablement.
 
 **Alternative:** Environment variables exclusively → simpler shell but brittle for onboarding; YAML remains authoritative with optional overrides.
 
@@ -54,6 +54,12 @@
 
 Extend `glomerulus_grading.py` parsers (or refactor into shared labelstudio contract helpers) versus duplicating ingestion script—reuse existing ingestion surface.
 
+### Decision: Audit registry and select latest valid release before bootstrap
+
+**Choice:** Before task construction, bootstrap audits `derived_data/generated_masks/glomeruli/manifest.csv`, filters release rows by validity status required for Label Studio consumption, and selects the latest candidate using explicit sort precedence (for example: `is_current`/release status then `created_at` descending). A pinned `mask_release_id` in YAML or admin override is allowed but not required.
+
+**Alternative:** Require a hard-coded release id in every run. Rejected because release names are fluid during fine-tuning iteration and this burdens collaborators.
+
 ## Risks / Trade-offs
 
 - **[Risk]** Label Studio version drift changes prediction API → mitigation: pin container tag or document audited API + contract tests referencing fixture exports.
@@ -64,8 +70,9 @@ Extend `glomerulus_grading.py` parsers (or refactor into shared labelstudio cont
 ## Migration Plan
 
 1. Land YAML config + parsers + bootstrap wiring after MedSAM releases exist (`depends_on` sequencing with fine-tuning change).
-2. Introduce staging profile for collaborators; document rotation between releases referencing registry manifest.
-3. Rollback by pointing YAML `mask_release_id` null or disabling hybrid block to revert manual-only Stage 1.
+2. Add pre-bootstrap registry audit step and deterministic latest-valid selection logging.
+3. Introduce staging profile for collaborators; document rotation between releases referencing registry manifest.
+4. Rollback by pinning a prior `mask_release_id`, setting YAML to manual-only mode, or disabling hybrid block.
 
 ## Explicit Decisions
 
