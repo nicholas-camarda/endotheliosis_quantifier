@@ -30,16 +30,7 @@ The tag identifies the exact source code, configs, tests, docs, and OpenSpec arc
 
 ## Canonical Commands
 
-Install the supported environment for the machine, then run from the repository root.
-
-macOS:
-
-```bash
-/Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq run-config --config configs/endotheliosis_quantification.yaml
-/Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq run-config --config configs/label_free_roi_embedding_atlas.yaml
-```
-
-Generic installed environment:
+Install the supported environment for the machine, then run from the repository root:
 
 ```bash
 eq run-config --config configs/endotheliosis_quantification.yaml
@@ -53,16 +44,16 @@ The atlas config expects the configured quantification output root to contain RO
 Current atlas and binary-triage evidence root:
 
 ```text
-/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/quantification_results/endotheliosis_quantification_full_cohort_transfer_p0_adjudicated/burden_model/embedding_atlas
+$EQ_RUNTIME_ROOT/output/quantification_results/endotheliosis_quantification_full_cohort_transfer_p0_adjudicated/burden_model/embedding_atlas
 ```
 
 Current run logs:
 
 ```text
-/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/logs/run_config/label_free_roi_embedding_atlas_full_cohort_transfer_p0_adjudicated/
+$EQ_RUNTIME_ROOT/logs/run_config/label_free_roi_embedding_atlas_full_cohort_transfer_p0_adjudicated/
 ```
 
-These runtime paths are not portable public paths. They identify the local evidence bundle used for this handoff.
+These paths are runtime-root relative. They identify the evidence bundle used for this handoff without committing generated artifacts to Git.
 
 ## Primary Runtime Artifacts
 
