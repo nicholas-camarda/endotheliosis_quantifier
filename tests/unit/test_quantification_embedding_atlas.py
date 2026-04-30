@@ -698,8 +698,13 @@ def test_adjudication_ingestion_anchor_outputs_and_binary_triage(tmp_path):
     assert '<article class="case">' in review_html
     assert '<img' in review_html
     assert '<select' in review_html
-    assert 'Export binary triage review CSV' in review_html
-    assert 'P(moderate/severe)' in review_html
+    assert 'Save review CSV' in review_html
+    assert 'Model recommendation' in review_html
+    assert 'Your decision' in review_html
+    assert 'Follow-up status' in review_html
+    assert 'model_recommendation' in review_html
+    assert 'review_urgency' in review_html
+    assert 'Model probability of moderate/severe' in review_html
 
 
 @pytest.mark.parametrize(

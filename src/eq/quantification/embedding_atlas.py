@@ -32,8 +32,8 @@ ATLAS_SUBTREE = Path('burden_model') / 'embedding_atlas'
 CLAIM_BOUNDARY = (
     'This atlas supports descriptive morphology clustering and review '
     'prioritization only. It does not provide calibrated severity '
-    'probabilities, external validity, causal mechanism evidence, or automatic '
-    'replacement of human review.'
+    'probabilities, independent validation evidence, causal mechanism '
+    'evidence, or automatic replacement of human review.'
 )
 REQUIRED_IDENTITY_COLUMNS = ['subject_id', 'subject_image_id', 'glomerulus_id']
 REQUIRED_ROI_PROVENANCE_COLUMNS = [
@@ -102,9 +102,9 @@ ROI_QC_COLUMNS = [
 BINARY_TRIAGE_SUBTREE = Path('binary_review_triage')
 BINARY_TRIAGE_CLAIM_BOUNDARY = (
     'Binary triage outputs prioritize no/low versus moderate/severe review. '
-    'They are current-data grouped-development evidence, not external '
-    'validation, calibrated clinical probabilities, causal explanations, or '
-    'autonomous endotheliosis grades.'
+    'They are current-data grouped-development evidence, not independent '
+    'validation evidence, calibrated clinical probabilities, causal '
+    'explanations, or autonomous endotheliosis grades.'
 )
 
 
@@ -4124,22 +4124,27 @@ def _write_binary_triage_review_html(
     output_dir.mkdir(parents=True, exist_ok=True)
     rows = _binary_review_rows(predictions, explanations)
     cards = '\n'.join(_binary_review_card(row) for row in rows)
-    payload = html.escape(json.dumps(_json_ready({'rows': rows}), allow_nan=False), quote=False)
+    payload = html.escape(
+        json.dumps(_json_ready({'rows': rows}), allow_nan=False), quote=False
+    )
     document = f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>Binary endotheliosis review triage</title>
 <style>
 body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f6f7f9;color:#1f2933}}
 header{{position:sticky;top:0;background:#fff;border-bottom:1px solid #d8dde6;padding:14px 20px;z-index:10}}
-h1{{font-size:22px;margin:0 0 6px}}p{{margin:4px 0;color:#52606d}}main{{padding:18px 20px 40px}}
+h1{{font-size:22px;margin:0 0 6px}}h2{{font-size:15px;margin:0 0 5px}}p{{margin:4px 0;color:#52606d}}main{{padding:18px 20px 40px}}
 button{{border:1px solid #9fb3c8;background:#fff;border-radius:6px;padding:7px 10px;cursor:pointer}}button.primary{{background:#1f5eff;color:#fff;border-color:#1f5eff}}
 .case{{background:white;border:1px solid #d8dde6;border-radius:8px;margin:0 0 16px;overflow:hidden}}
-.head{{background:#eef2f7;padding:10px 12px}}.grid{{display:grid;grid-template-columns:1fr 1fr 360px;gap:10px;padding:10px}}
+.head{{background:#eef2f7;padding:10px 12px}}.grid{{display:grid;grid-template-columns:1fr 1fr minmax(360px,440px);gap:10px;padding:10px}}
 figure{{margin:0}}figcaption{{font-size:12px;color:#52606d;margin-bottom:4px}}img{{width:100%;max-height:360px;object-fit:contain;background:#111827;border-radius:4px}}
 .meta{{font-size:13px;color:#52606d;line-height:1.45}}.route{{font-weight:700;color:#1f2933}}.explain{{font-size:12px;color:#334e68;overflow-wrap:anywhere}}
+.recommendation{{border:1px solid #bcccdc;background:#f8fafc;border-radius:6px;padding:10px;margin-bottom:10px}}
+.answer{{font-size:15px;font-weight:700;color:#102a43}}.action{{font-size:13px;color:#334e68;line-height:1.45}}
+.details{{border-top:1px solid #d8dde6;margin-top:10px;padding-top:8px}}summary{{cursor:pointer;color:#334e68;font-weight:600}}
 .controls{{display:grid;gap:8px;margin-top:10px}}label{{display:grid;gap:3px;font-size:12px;color:#334e68}}select,textarea{{width:100%;box-sizing:border-box;border:1px solid #bcccdc;border-radius:5px;padding:6px;font:inherit;background:white}}textarea{{min-height:72px;resize:vertical}}
 @media(max-width:1000px){{.grid{{grid-template-columns:1fr}}}}
 </style></head><body>
-<header><h1>Binary endotheliosis review triage</h1><p>{html.escape(BINARY_TRIAGE_CLAIM_BOUNDARY)}</p><button class="primary" id="downloadCsv" type="button">Export binary triage review CSV</button> <button id="clearSaved" type="button">Clear saved values</button> <span id="status">Autosaves in this browser.</span></header>
+<header><h1>Binary endotheliosis review triage</h1><p>{html.escape(BINARY_TRIAGE_CLAIM_BOUNDARY)}</p><p>Use the images to accept, correct, request another human review, or exclude each case. Exported CSVs should be saved next to this HTML file in the same review folder.</p><button class="primary" id="downloadCsv" type="button">Save review CSV</button> <button id="clearSaved" type="button">Clear saved values</button> <span id="status">Autosaves in this browser. Static HTML cannot silently write files beside itself; the save button will ask where to put the CSV when the browser allows it.</span></header>
 <main>{cards or '<p>No binary triage rows were generated.</p>'}</main>
 <script id="data" type="application/json">{payload}</script>
 <script>
@@ -4157,20 +4162,42 @@ document.querySelectorAll('select,textarea').forEach(el => {{
   el.addEventListener('change', ev => persist(ev.target.dataset.id, ev.target.dataset.key, ev.target.value));
   el.addEventListener('input', ev => persist(ev.target.dataset.id, ev.target.dataset.key, ev.target.value));
 }});
-function exportCsv() {{
-  const cols = ['review_id','atlas_row_id','subject_id','subject_image_id','score','binary_target_primary','predicted_probability_moderate_severe','binary_decision','uncertainty_label','final_review_route','triage_review_decision','review_priority_override','reviewer_notes','reviewed_at','roi_image_path','roi_mask_path'];
+function csvText() {{
+  const cols = ['review_id','atlas_row_id','subject_id','subject_image_id','score','binary_target_primary','model_recommendation','recommended_human_action','predicted_probability_moderate_severe','binary_decision','uncertainty_label','final_review_route','triage_review_decision','review_urgency','reviewer_notes','reviewed_at','roi_image_path','roi_mask_path'];
   const rows = data.rows.map(row => {{
     const id = 'triage-' + row.atlas_row_id;
     const state = saved[id] || {{}};
     return {{...row, ...state, review_id: id, reviewed_at: new Date().toISOString()}};
   }});
-  const csv = [cols.join(',')].concat(rows.map(row => cols.map(col => `"${{String(row[col] ?? '').replaceAll('"','""')}}"`).join(','))).join('\\n');
+  return [cols.join(',')].concat(rows.map(row => cols.map(col => `"${{String(row[col] ?? '').replaceAll('"','""')}}"`).join(','))).join('\\n');
+}}
+function downloadCsv(csv) {{
   const blob = new Blob([csv], {{type: 'text/csv'}});
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = 'binary_triage_review_export.csv';
   link.click();
   URL.revokeObjectURL(link.href);
+}}
+async function exportCsv() {{
+  const csv = csvText();
+  if (window.showSaveFilePicker) {{
+    try {{
+      const handle = await window.showSaveFilePicker({{
+        suggestedName: 'binary_triage_review_export.csv',
+        types: [{{description: 'CSV review export', accept: {{'text/csv': ['.csv']}}}}],
+      }});
+      const writable = await handle.createWritable();
+      await writable.write(csv);
+      await writable.close();
+      document.getElementById('status').textContent = 'Review CSV saved. Keep it next to this HTML file.';
+      return;
+    }} catch (error) {{
+      if (error && error.name === 'AbortError') return;
+    }}
+  }}
+  downloadCsv(csv);
+  document.getElementById('status').textContent = 'Review CSV downloaded. Move it next to this HTML file before rerunning the workflow.';
 }}
 document.getElementById('downloadCsv').addEventListener('click', exportCsv);
 document.getElementById('clearSaved').addEventListener('click', () => {{ if (confirm('Clear saved review values?')) {{ localStorage.removeItem(storageKey); location.reload(); }} }});
@@ -4206,8 +4233,46 @@ def _binary_review_rows(
     )
     rows: list[dict[str, Any]] = []
     for _, row in selected.iterrows():
-        rows.append({key: row.get(key, '') for key in selected.columns})
+        payload = {key: row.get(key, '') for key in selected.columns}
+        recommendation, action = _binary_review_plain_language(payload)
+        payload['model_recommendation'] = recommendation
+        payload['recommended_human_action'] = action
+        rows.append(payload)
     return rows
+
+
+def _binary_review_plain_language(row: dict[str, Any]) -> tuple[str, str]:
+    route = str(row.get('final_review_route', ''))
+    decision = str(row.get('binary_decision', ''))
+    if route == 'blocked_cluster_manual_review':
+        return (
+            'Model is not trusted for this case because the atlas cluster or ROI/mask evidence is problematic.',
+            'Review the ROI and mask first. Exclude it if the crop or mask is not gradeable; otherwise choose the human grade group.',
+        )
+    if route == 'borderline_score_review':
+        return (
+            'Original score is 1.0, so this case is intentionally not forced into the primary binary model.',
+            'Use the images to decide whether this should remain borderline, be corrected to no/low, or be corrected to moderate/severe.',
+        )
+    if route == 'likely_moderate_severe_review':
+        return (
+            'Model thinks this case is likely moderate/severe.',
+            'Accept the model only if the ROI image and mask show moderate/severe endotheliosis; otherwise correct it.',
+        )
+    if route == 'likely_no_low_review':
+        return (
+            'Model thinks this case is likely no/low.',
+            'Accept the model only if the ROI image and mask show no/low endotheliosis; otherwise correct it.',
+        )
+    if route == 'uncertain_binary_review':
+        return (
+            'Model is uncertain and is asking for human review.',
+            'Choose the human grade group from the images, or request another human review if you cannot decide confidently.',
+        )
+    return (
+        f'Model decision is {decision or "not available"}.',
+        'Use the ROI image and mask as the source of truth for the review decision.',
+    )
 
 
 def _binary_review_card(row: dict[str, Any]) -> str:
@@ -4215,7 +4280,11 @@ def _binary_review_card(row: dict[str, Any]) -> str:
         pd.Series([row.get('predicted_probability_moderate_severe')]),
         errors='coerce',
     ).iloc[0]
-    probability_text = '' if pd.isna(probability) else f'{float(probability):.3f}'
+    probability_text = (
+        'not estimated' if pd.isna(probability) else f'{float(probability) * 100:.0f}%'
+    )
+    recommendation = str(row.get('model_recommendation', ''))
+    action = str(row.get('recommended_human_action', ''))
     return f"""
 <article class="case">
   <div class="head"><strong>Atlas row {html.escape(str(row.get('atlas_row_id', '')))} | score {html.escape(str(row.get('score', '')))}</strong><div class="meta">subject {html.escape(str(row.get('subject_id', '')))} | image {html.escape(str(row.get('subject_image_id', '')))}</div></div>
@@ -4223,19 +4292,26 @@ def _binary_review_card(row: dict[str, Any]) -> str:
     <figure><figcaption>ROI image</figcaption><img src="{html.escape(_review_image_src(row.get('roi_image_path', '')))}" alt="ROI image"></figure>
     <figure><figcaption>ROI mask</figcaption><img src="{html.escape(_review_image_src(row.get('roi_mask_path', '')))}" alt="ROI mask"></figure>
     <section>
-      <p class="route">{html.escape(str(row.get('final_review_route', '')))}</p>
-      <p class="meta">P(moderate/severe): {html.escape(probability_text)} | decision: {html.escape(str(row.get('binary_decision', '')))} | uncertainty: {html.escape(str(row.get('uncertainty_label', '')))}</p>
-      <p class="meta">Primary target: {html.escape(str(row.get('binary_target_primary', '')))} | sensitivity target: {html.escape(str(row.get('binary_target_sensitivity', '')))}</p>
-      <p class="meta">Nearest anchor: row {html.escape(str(row.get('nearest_anchor_atlas_row_id', '')))} ({html.escape(str(row.get('nearest_anchor_class', '')))}) distance {html.escape(str(row.get('nearest_anchor_distance', '')))}</p>
-      <p class="meta">Warnings: {html.escape(str(row.get('source_cohort_warning', row.get('source_warning', ''))))}</p>
-      <p class="explain"><strong>Top feature evidence:</strong> {html.escape(str(row.get('top_feature_contributions', '')))}</p>
-      <p class="explain"><strong>Feature-family evidence:</strong> {html.escape(str(row.get('feature_family_contributions', '')))}</p>
-      <p class="explain">{html.escape(str(row.get('explanation_claim_boundary', '')))}</p>
+      <div class="recommendation">
+        <h2>Model recommendation</h2>
+        <p class="answer">{html.escape(recommendation)}</p>
+        <p class="action">{html.escape(action)}</p>
+      </div>
+      <p class="route">Route: {html.escape(str(row.get('final_review_route', '')))}</p>
+      <p class="meta">Model probability of moderate/severe: {html.escape(probability_text)} | model class: {html.escape(str(row.get('binary_decision', '')))} | confidence: {html.escape(str(row.get('uncertainty_label', '')))}</p>
       <div class="controls">
-        <label>triage review decision<select data-id="triage-{html.escape(str(row.get('atlas_row_id', '')))}" data-key="triage_review_decision"><option value="">choose</option><option value="accept_route">accept route</option><option value="correct_to_no_low">correct to no/low</option><option value="correct_to_moderate_severe">correct to moderate/severe</option><option value="escalate_second_reviewer">escalate second reviewer</option><option value="exclude_bad_roi_or_mask">exclude bad ROI or mask</option></select></label>
-        <label>review priority override<select data-id="triage-{html.escape(str(row.get('atlas_row_id', '')))}" data-key="review_priority_override"><option value="">choose</option><option value="routine">routine</option><option value="high_priority">high priority</option><option value="defer">defer</option></select></label>
+        <label>Your decision<select data-id="triage-{html.escape(str(row.get('atlas_row_id', '')))}" data-key="triage_review_decision"><option value="">choose</option><option value="accept_model_recommendation">accept model recommendation</option><option value="human_no_low">human says no/low</option><option value="human_moderate_severe">human says moderate/severe</option><option value="needs_second_human_review">needs second human review</option><option value="exclude_bad_roi_or_mask">exclude: bad ROI or mask</option></select></label>
+        <label>Follow-up status<select data-id="triage-{html.escape(str(row.get('atlas_row_id', '')))}" data-key="review_urgency"><option value="">choose</option><option value="routine">routine</option><option value="urgent_possible_model_error">urgent: possible model error</option><option value="defer_not_useful_now">defer: not useful now</option></select></label>
         <label>reviewer notes<textarea data-id="triage-{html.escape(str(row.get('atlas_row_id', '')))}" data-key="reviewer_notes"></textarea></label>
       </div>
+      <details class="details"><summary>Model diagnostics</summary>
+        <p class="meta">Primary target: {html.escape(str(row.get('binary_target_primary', '')))} | sensitivity target: {html.escape(str(row.get('binary_target_sensitivity', '')))}</p>
+        <p class="meta">Nearest anchor: row {html.escape(str(row.get('nearest_anchor_atlas_row_id', '')))} ({html.escape(str(row.get('nearest_anchor_class', '')))}) distance {html.escape(str(row.get('nearest_anchor_distance', '')))}</p>
+        <p class="meta">Warnings: {html.escape(str(row.get('source_cohort_warning', row.get('source_warning', ''))))}</p>
+        <p class="explain"><strong>Top feature evidence:</strong> {html.escape(str(row.get('top_feature_contributions', '')))}</p>
+        <p class="explain"><strong>Feature-family evidence:</strong> {html.escape(str(row.get('feature_family_contributions', '')))}</p>
+        <p class="explain">{html.escape(str(row.get('explanation_claim_boundary', '')))}</p>
+      </details>
     </section>
   </div>
 </article>"""

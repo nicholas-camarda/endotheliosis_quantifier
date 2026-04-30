@@ -264,7 +264,7 @@ In this repo, that behavior is controlled in `src/eq/data_management/datablock_l
 
 #### Current Segmentation Training Snapshot
 
-These checked-in figures come from the April 25, 2026 P0 segmentation workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/production_glomeruli_candidate_p0_contract_20260425_adjudicated/`. They show repository training outputs and adjudication-aware internal candidate-comparison evidence. They do **not** by themselves establish external validity, scientific readiness, or an unconditional promotion claim.
+These checked-in figures come from the April 25, 2026 P0 segmentation workflow artifacts under `$EQ_RUNTIME_ROOT/models/segmentation/` and `$EQ_RUNTIME_ROOT/output/segmentation_evaluation/glomeruli_candidate_comparison/production_glomeruli_candidate_p0_contract_20260425_adjudicated/`. They show repository training outputs and adjudication-aware internal candidate-comparison evidence. They do **not** by themselves establish independent validity, scientific readiness, or an unconditional promotion claim.
 
 Current candidate artifacts are identified by the comparison report and model sidecars under the runtime model root.
 

@@ -38,7 +38,9 @@ Open these files in this order:
 4. `burden_model/embedding_atlas/binary_review_triage/evidence/binary_triage_review.html`
 5. `burden_model/embedding_atlas/binary_review_triage/summary/binary_triage_verdict.md`
 
-Every review HTML page contains static case cards, ROI images, ROI masks, dropdown controls, reviewer notes, and a CSV export button. If a review HTML page opens with no visible cases, that artifact is invalid and the workflow should be rerun after fixing the generator.
+Every review HTML page contains static case cards, ROI images, ROI masks, dropdown controls, reviewer notes, and a CSV export button. The export belongs in the same folder as the HTML file. A static HTML page cannot silently write into its own directory because browsers block that for security; the page uses a save-file prompt when the browser supports it and otherwise downloads the CSV. If it downloads automatically, move the exported CSV next to the HTML file before rerunning the workflow.
+
+If a review HTML page opens with no visible cases, that artifact is invalid and the workflow should be rerun after fixing the generator.
 
 ## How To Review
 
@@ -49,13 +51,21 @@ Every review HTML page contains static case cards, ROI images, ROI masks, dropdo
 
 `atlas_flagged_case_review.html` is the focused cleanup page. Use it for selected rows that need a score correction, anchor recovery, second review, or exclusion.
 
-`binary_triage_review.html` is the final usability surface. Each case shows the original score, primary binary target status, sensitivity target status, predicted probability of `moderate_severe`, selected route, uncertainty label, nearest reviewed anchor, source/cohort warning, feature evidence, ROI image, and ROI mask. Use the dropdowns as follows:
+`binary_triage_review.html` is the final usability surface. Each case starts with `Model recommendation`, which is the plain-language model answer or warning. The ROI image and ROI mask are the source of truth for the human answer. Numeric model details are kept under `Model diagnostics`.
 
-- `accept_route`: the predicted route is reasonable for review-prioritization.
-- `correct_to_no_low`: the case should be handled as no/low.
-- `correct_to_moderate_severe`: the case should be handled as moderate/severe.
-- `escalate_second_reviewer`: the case needs another human decision.
-- `exclude_bad_roi_or_mask`: the ROI or mask is not usable for grading.
+Use `Your decision` as follows:
+
+- `accept model recommendation`: the model recommendation matches the ROI image and mask.
+- `human says no/low`: the human reviewer decides the case belongs in the no/low group.
+- `human says moderate/severe`: the human reviewer decides the case belongs in the moderate/severe group.
+- `needs second human review`: the current reviewer cannot confidently decide from the images and wants an independent human review.
+- `exclude: bad ROI or mask`: the ROI crop or mask is not gradeable.
+
+Use `Follow-up status` only as workflow-routing metadata:
+
+- `routine`: ordinary review item.
+- `urgent: possible model error`: prioritize because the model looks wrong or the case is scientifically important.
+- `defer: not useful now`: keep the record but do not spend more review time on it now.
 
 ## Primary Artifacts
 
