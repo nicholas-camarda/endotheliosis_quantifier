@@ -31,7 +31,8 @@ The system SHALL preserve each imported image's relative path metadata so later 
 
 #### Scenario: Flat image directory is imported
 - **WHEN** the image root contains `image_001.tif`
-- **THEN** the generated task includes `subject_hint = image_001`
+- **THEN** dry-run task generation includes `subject_hint = image_001`
+- **AND** full Label Studio API bootstrap fails with an actionable error requiring images to be placed in at least one subfolder under `--images`
 
 ### Requirement: Runtime artifacts SHALL stay outside Git
 The system SHALL write Label Studio runtime files under the active runtime root by default and SHALL NOT create raw images, databases, imports, or exports under Git-tracked repo data roots.
@@ -52,9 +53,27 @@ The system SHALL run Label Studio as a separate Docker service and SHALL NOT ins
 - **WHEN** Docker cannot be found or cannot run and the command is not in dry-run mode
 - **THEN** the command fails with an actionable Docker availability error before attempting project import
 
+#### Scenario: Docker Desktop is installed but stopped on macOS
+- **WHEN** Docker Desktop is installed at `/Applications/Docker.app` but `docker info` reports that the daemon is unavailable
+- **THEN** the command attempts to start Docker Desktop with `open -a Docker`
+- **AND** waits for Docker to become available before attempting project import
+
+#### Scenario: Docker Desktop is missing on macOS
+- **WHEN** Docker is not installed on macOS
+- **THEN** the command fails with the install command `brew install --cask docker`
+
 #### Scenario: Docker command is planned
 - **WHEN** the command prepares Label Studio startup
 - **THEN** the Docker invocation includes the configured port, runtime data mount, read-only image media mount, local file serving environment variables, username, password, and API token
+
+#### Scenario: Login credentials are reported
+- **WHEN** the command starts or dry-runs a local Label Studio project
+- **THEN** the command output includes the configured login email and password
+
+#### Scenario: Local image files are served to the labeling UI
+- **WHEN** the command imports image tasks from a nested image directory
+- **THEN** the command creates Local Files import storage entries for the project before task import
+- **AND** each imported task image URL resolves through `/data/local-files/?d=...`
 
 ### Requirement: Bootstrap SHALL configure and import through Label Studio API
 The system SHALL create or reuse a Label Studio project, apply the glomerulus grading XML config, and import generated image tasks through the Label Studio HTTP API.

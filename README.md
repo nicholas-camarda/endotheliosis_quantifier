@@ -42,6 +42,41 @@ eq capabilities
 eq mode --show
 ```
 
+## Start A Label Studio Grading Project
+
+Use this when collaborators need to grade complete glomeruli from a directory of images. Docker Desktop is required because Label Studio runs as a separate local web app, not inside the `eq-mac` environment.
+
+macOS setup:
+
+```bash
+brew install --cask docker
+open -a Docker
+```
+
+Wait for Docker Desktop to finish starting, then run:
+
+```bash
+conda activate eq-mac
+eq labelstudio start --images /path/to/images
+```
+
+The command recursively imports `.jpg`, `.jpeg`, `.png`, `.tif`, and `.tiff` files, creates a local Label Studio project with `configs/label_studio_glomerulus_grading.xml`, and prints the Label Studio URL plus project URL.
+
+Default local login:
+
+```text
+Email: eq-admin@example.local
+Password: eq-labelstudio
+```
+
+Preview without starting Docker or importing tasks:
+
+```bash
+eq labelstudio start --images /path/to/images --dry-run
+```
+
+For details, see [docs/LABEL_STUDIO_GLOMERULUS_GRADING.md](docs/LABEL_STUDIO_GLOMERULUS_GRADING.md).
+
 ## Run The Current Quantification Workflow
 
 The main entrypoint is YAML-first:

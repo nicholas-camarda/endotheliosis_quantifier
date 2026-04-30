@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import http.client
 import json
+import platform
 import shutil
 import subprocess
 import time
@@ -23,6 +25,8 @@ DEFAULT_PASSWORD = 'eq-labelstudio'
 DEFAULT_API_TOKEN = 'eq-local-token'
 DEFAULT_PORT = 8080
 DEFAULT_TIMEOUT_SECONDS = 60
+DOCKER_DESKTOP_APP_PATH = Path('/Applications/Docker.app')
+CONTAINER_LOCAL_FILES_ROOT = '/label-studio/media'
 
 
 class BootstrapError(RuntimeError):
@@ -189,7 +193,7 @@ def run_bootstrap(
         )
 
     runner = docker_runner or _run_command
-    ensure_docker_available(runner)
+    ensure_docker_available(runner, timeout_seconds=plan.timeout_seconds)
     start_labelstudio_container(plan, runner)
     client = api_client or LabelStudioApiClient(plan.url, plan.api_token)
     project_id = client.bootstrap_project(
@@ -210,16 +214,33 @@ def run_bootstrap(
     )
 
 
-def ensure_docker_available(runner: DockerRunner | None = None) -> None:
-    """Fail early if Docker is not available."""
+def ensure_docker_available(
+    runner: DockerRunner | None = None, *, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
+) -> None:
+    """Fail early if Docker is missing, and start Docker Desktop on macOS when possible."""
     if shutil.which('docker') is None:
-        raise BootstrapError('Docker executable not found. Install Docker or use --dry-run.')
+        raise BootstrapError(_docker_install_message())
     runner = runner or _run_command
-    result = runner(['docker', 'version'])
-    if result.returncode != 0:
+    if runner(['docker', 'info']).returncode == 0:
+        return
+    if _can_start_docker_desktop():
+        start = runner(['open', '-a', 'Docker'])
+        if start.returncode != 0:
+            raise BootstrapError(
+                'Docker Desktop is installed but could not be started. Open Docker Desktop manually and rerun the command.'
+            )
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            if runner(['docker', 'info']).returncode == 0:
+                return
+            time.sleep(2)
         raise BootstrapError(
-            'Docker is not available. Start Docker and rerun the command.'
+            'Docker Desktop was started but the Docker daemon did not become ready. '
+            'Open Docker Desktop and wait for it to finish starting, then rerun the command.'
         )
+    raise BootstrapError(
+        'Docker is installed but the daemon is not running. Start Docker and rerun the command.'
+    )
 
 
 def start_labelstudio_container(plan: BootstrapPlan, runner: DockerRunner | None = None) -> None:
@@ -227,6 +248,15 @@ def start_labelstudio_container(plan: BootstrapPlan, runner: DockerRunner | None
     runner = runner or _run_command
     inspect = runner(['docker', 'inspect', plan.container_name])
     if inspect.returncode == 0:
+        if not _container_matches_plan(inspect.stdout):
+            remove = runner(['docker', 'rm', '-f', plan.container_name])
+            if remove.returncode != 0:
+                raise BootstrapError(f'Failed to replace container {plan.container_name}')
+            command = docker_run_command(plan)
+            result = runner(command)
+            if result.returncode != 0:
+                raise BootstrapError(f'Failed to start Label Studio Docker container: {result.stderr}')
+            return
         start = runner(['docker', 'start', plan.container_name])
         if start.returncode != 0:
             raise BootstrapError(f'Failed to start container {plan.container_name}')
@@ -252,11 +282,11 @@ def docker_run_command(plan: BootstrapPlan) -> list[str]:
         '-v',
         f'{plan.data_dir}:/label-studio/data',
         '-v',
-        f'{plan.media_dir}:/label-studio/media:ro',
+        f'{plan.media_dir}:{CONTAINER_LOCAL_FILES_ROOT}:ro',
         '-e',
         'LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true',
         '-e',
-        'LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=/label-studio/media',
+        f'LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT={CONTAINER_LOCAL_FILES_ROOT}',
         '-e',
         f'LABEL_STUDIO_USERNAME={plan.username}',
         '-e',
@@ -267,6 +297,33 @@ def docker_run_command(plan: BootstrapPlan) -> list[str]:
         'LABEL_STUDIO_ENABLE_LEGACY_API_TOKEN=true',
         plan.docker_image,
     ]
+
+
+def _container_matches_plan(inspect_stdout: str) -> bool:
+    try:
+        details = json.loads(inspect_stdout)
+    except json.JSONDecodeError:
+        return False
+    container = details[0] if isinstance(details, list) and details else {}
+    mounts = container.get('Mounts', []) if isinstance(container, dict) else []
+    destinations = {mount.get('Destination') for mount in mounts if isinstance(mount, dict)}
+    return (
+        CONTAINER_LOCAL_FILES_ROOT in destinations
+        and f'{CONTAINER_LOCAL_FILES_ROOT}/images' not in destinations
+    )
+
+
+def _can_start_docker_desktop() -> bool:
+    return platform.system() == 'Darwin' and DOCKER_DESKTOP_APP_PATH.exists()
+
+
+def _docker_install_message() -> str:
+    if platform.system() == 'Darwin':
+        return (
+            'Docker Desktop is not installed. Install it with '
+            '`brew install --cask docker`, open Docker Desktop once, then rerun this command.'
+        )
+    return 'Docker executable not found. Install Docker or use --dry-run.'
 
 
 class LabelStudioApiClient:
@@ -299,6 +356,7 @@ class LabelStudioApiClient:
                 f'/api/projects/{project_id}/',
                 {'label_config': label_config},
             )
+        self._ensure_local_file_storages(project_id, tasks)
         self._request_json('POST', f'/api/projects/{project_id}/import', tasks)
         return project_id
 
@@ -308,7 +366,7 @@ class LabelStudioApiClient:
             try:
                 self._request_json('GET', '/api/projects/')
                 return
-            except (BootstrapError, urllib.error.URLError):
+            except (BootstrapError, http.client.RemoteDisconnected, urllib.error.URLError):
                 time.sleep(1)
         raise BootstrapError(
             f'Label Studio did not become reachable at {self.base_url} within '
@@ -317,11 +375,30 @@ class LabelStudioApiClient:
 
     def _find_project(self, project_title: str) -> int | None:
         response = self._request_json('GET', '/api/projects/')
-        projects = response.get('results', response if isinstance(response, list) else [])
+        projects = _list_response_items(response)
         for project in projects:
             if project.get('title') == project_title:
                 return int(project['id'])
         return None
+
+    def _ensure_local_file_storages(self, project_id: int, tasks: list[dict[str, Any]]) -> None:
+        response = self._request_json('GET', f'/api/storages/localfiles/?project={project_id}')
+        storages = _list_response_items(response)
+        existing_paths = {storage.get('path') for storage in storages}
+        for storage_path in _local_file_storage_paths(tasks):
+            if storage_path in existing_paths:
+                continue
+            self._request_json(
+                'POST',
+                '/api/storages/localfiles/',
+                {
+                    'project': project_id,
+                    'path': storage_path,
+                    'title': f'EQ Image Media {Path(storage_path).name}',
+                    'use_blob_urls': True,
+                    'recursive_scan': True,
+                },
+            )
 
     def _request_json(
         self, method: str, path: str, payload: Any | None = None
@@ -343,6 +420,36 @@ class LabelStudioApiClient:
                 f'Label Studio API {method} {path} failed: {exc.code} {body}'
             ) from exc
         return json.loads(raw) if raw else {}
+
+
+def _list_response_items(response: Any) -> list[Any]:
+    if isinstance(response, list):
+        return response
+    if isinstance(response, dict):
+        results = response.get('results')
+        return results if isinstance(results, list) else []
+    return []
+
+
+def _local_file_storage_paths(tasks: list[dict[str, Any]]) -> list[str]:
+    storage_paths: set[str] = set()
+    flat_files: list[str] = []
+    for task in tasks:
+        relative = task.get('data', {}).get('source_relative_path')
+        if not isinstance(relative, str):
+            continue
+        parts = Path(relative).parts
+        if len(parts) < 2:
+            flat_files.append(relative)
+            continue
+        storage_paths.add(f'{CONTAINER_LOCAL_FILES_ROOT}/{parts[0]}')
+    if flat_files:
+        examples = ', '.join(flat_files[:3])
+        raise BootstrapError(
+            'Label Studio local-file serving requires images to be inside at least one subfolder '
+            f'under --images. Move flat image files into a subject/batch folder first. Examples: {examples}'
+        )
+    return sorted(storage_paths)
 
 
 def _write_task_manifest(plan: BootstrapPlan, tasks: list[dict[str, Any]]) -> None:

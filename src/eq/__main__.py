@@ -523,6 +523,8 @@ def labelstudio_start_command(args):
     print(result.message)
     print(f'Task manifest: {result.task_manifest_path}')
     print(f'Label Studio URL: {result.plan.url}')
+    print(f'Login email: {args.username}')
+    print(f'Login password: {args.password}')
     if result.project_url:
         print(f'Project URL: {result.project_url}')
 

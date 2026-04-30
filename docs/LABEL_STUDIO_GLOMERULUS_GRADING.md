@@ -7,10 +7,27 @@ This document describes the Stage 1 Label Studio grading contract for complete g
 Start from a directory of images:
 
 ```bash
+conda activate eq-mac
 eq labelstudio start --images /path/to/images
 ```
 
 The command recursively imports `.jpg`, `.jpeg`, `.png`, `.tif`, and `.tiff` files, starts a local Docker Label Studio instance, creates or reuses the `EQ Glomerulus Grading` project, applies `configs/label_studio_glomerulus_grading.xml`, imports the image tasks, and prints the Label Studio URL plus the project URL.
+
+On macOS, if Docker Desktop is installed but not running, the command tries to start it. If Docker Desktop is missing, install it first:
+
+```bash
+brew install --cask docker
+open -a Docker
+```
+
+The default local Docker login is:
+
+```text
+Email: eq-admin@example.local
+Password: eq-labelstudio
+```
+
+These credentials belong to the `eq` Docker-backed Label Studio instance. A separate conda `label-studio` environment uses a different data directory and cannot reset this Docker instance's password.
 
 To inspect the plan without starting Docker or calling Label Studio:
 
