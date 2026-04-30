@@ -10,7 +10,7 @@ The current endotheliosis-grading direction is binary review triage:
 - `moderate_severe`: score `1.5`, `2`, or `3`
 - `borderline_review`: score `1.0`, routed for review and excluded from the primary binary target
 
-This is a review-prioritization workflow. It is not an externally validated diagnostic model, autonomous grading system, causal morphology explanation, or calibrated multi-ordinal classifier.
+This is a working review-prioritization workflow. The current model separates no/low from moderate/severe well enough to be useful for triage and QA, while keeping the claim boundary honest. It is not an externally validated diagnostic model, autonomous grading system, causal morphology explanation, or calibrated multi-ordinal classifier.
 
 ## Source Checkpoint
 
@@ -127,6 +127,25 @@ false_positive_count: 145
 
 These are grouped-development, current-data metrics. They do not establish external validity.
 
+## What This Result Is Good For
+
+This checkpoint is a real usable endpoint for the repository:
+
+- prioritizing glomeruli that are more likely to need moderate/severe review
+- separating obvious no/low cases from likely higher-grade cases well enough to speed human QA
+- surfacing uncertain, borderline, blocked-cluster, and likely model-error cases in a bounded review HTML
+- preserving all row-level predictions for audit without requiring a reviewer to adjudicate every row
+- giving future work a fixed, reproducible baseline instead of another moving target
+
+Public-safe visual summaries are tracked under:
+
+```text
+assets/quantification/binary_triage_performance.svg
+assets/quantification/binary_triage_review_queue.svg
+```
+
+The performance summary is appropriate for explaining the current triage result. The wording should remain review-triage focused unless an external validation dataset is added.
+
 ## What Belongs In Git
 
 Commit and keep synchronized:
@@ -188,6 +207,15 @@ Confirm:
 - `binary_review_triage/evidence/binary_triage_review.html` shows the bounded QA sample and exports a review CSV.
 - Runtime logs are present under the run-config log directory.
 
-## Next Work After This Handoff
+## Where To Resume
 
-The next methodological work is source/batch-effect handling. The current atlas shows source-sensitive clusters, so the binary triage result should remain claim-bounded until a dedicated batch-effect correction and post-correction review spec is implemented.
+The repo can be resumed from this checkpoint without starting over. The current best endpoint is the binary no/low versus moderate/severe triage workflow, with the atlas and adjudication evidence used as supporting QA surfaces.
+
+Reasonable future work builds on this result rather than replacing it:
+
+- Review the bounded QA sample exported from `binary_triage_review.html`.
+- If the sample looks acceptable, use this checkpoint as the current triage baseline.
+- If the sample shows a repeated source or batch failure, add source/batch correction as the next modeling improvement and compare it directly against this baseline.
+- If a model artifact is promoted, promote it with the manifest, validation bundle, schema, and claim boundary instead of committing an unversioned runtime binary.
+
+The important point is that this handoff preserves a working, reproducible triage product. Batch-effect work is a refinement path, not a statement that the current result is useless.

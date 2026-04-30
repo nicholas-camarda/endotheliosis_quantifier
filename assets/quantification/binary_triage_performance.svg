@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Binary endotheliosis review-triage performance summary</title>
+  <desc id="desc">Current-data grouped-development performance for no-low versus moderate-severe endotheliosis review triage.</desc>
+  <rect width="1200" height="675" fill="#f7f8fb"/>
+  <rect x="44" y="40" width="1112" height="595" rx="14" fill="#ffffff" stroke="#d7dee8"/>
+
+  <text x="80" y="100" fill="#102033" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="700">Binary endotheliosis review triage</text>
+  <text x="80" y="137" fill="#52606d" font-family="Arial, Helvetica, sans-serif" font-size="20">Current-data grouped-development result: no/low versus moderate/severe</text>
+
+  <g transform="translate(80 185)">
+    <rect width="320" height="120" rx="10" fill="#e8f1ff" stroke="#b8cdf5"/>
+    <text x="24" y="38" fill="#334e68" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Balanced accuracy</text>
+    <text x="24" y="92" fill="#103a74" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700">0.657</text>
+  </g>
+  <g transform="translate(440 185)">
+    <rect width="320" height="120" rx="10" fill="#ecfdf3" stroke="#b7e4c7"/>
+    <text x="24" y="38" fill="#334e68" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Moderate/severe recall</text>
+    <text x="24" y="92" fill="#146c43" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700">0.705</text>
+  </g>
+  <g transform="translate(800 185)">
+    <rect width="320" height="120" rx="10" fill="#fff7e6" stroke="#f4c77b"/>
+    <text x="24" y="38" fill="#334e68" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">AUROC</text>
+    <text x="24" y="92" fill="#8a4b00" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700">0.695</text>
+  </g>
+
+  <g transform="translate(80 350)">
+    <text x="0" y="0" fill="#102033" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">Selected model</text>
+    <text x="0" y="34" fill="#52606d" font-family="Arial, Helvetica, sans-serif" font-size="18">roi_qc_binary_logistic, threshold 0.45</text>
+    <text x="0" y="68" fill="#52606d" font-family="Arial, Helvetica, sans-serif" font-size="18">Primary target support: no/low 371, moderate/severe 220, borderline review 116</text>
+  </g>
+
+  <g transform="translate(80 455)">
+    <text x="0" y="0" fill="#102033" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">Confusion matrix at selected threshold</text>
+    <rect x="0" y="28" width="214" height="64" fill="#e8f1ff" stroke="#d7dee8"/>
+    <rect x="214" y="28" width="214" height="64" fill="#ffecec" stroke="#d7dee8"/>
+    <rect x="0" y="92" width="214" height="64" fill="#ffecec" stroke="#d7dee8"/>
+    <rect x="214" y="92" width="214" height="64" fill="#ecfdf3" stroke="#d7dee8"/>
+    <text x="24" y="66" fill="#103a74" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">TN 226</text>
+    <text x="238" y="66" fill="#9b1c1c" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">FP 145</text>
+    <text x="24" y="130" fill="#9b1c1c" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">FN 65</text>
+    <text x="238" y="130" fill="#146c43" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">TP 155</text>
+  </g>
+
+  <g transform="translate(640 455)">
+    <text x="0" y="0" fill="#102033" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">Interpretation</text>
+    <text x="0" y="36" fill="#52606d" font-family="Arial, Helvetica, sans-serif" font-size="18">Useful current-data triage signal for speeding review.</text>
+    <text x="0" y="68" fill="#52606d" font-family="Arial, Helvetica, sans-serif" font-size="18">Not a replacement for human grading or external validation.</text>
+    <text x="0" y="100" fill="#52606d" font-family="Arial, Helvetica, sans-serif" font-size="18">Best use: prioritize and audit no/low versus moderate/severe cases.</text>
+  </g>
+</svg>

@@ -5,7 +5,11 @@ Endotheliosis Quantifier (`eq`) is a FastAI/PyTorch toolkit for glomeruli segmen
 If you want the friendlier long-form introduction and workflow explanation, see [docs/ONBOARDING_GUIDE.md](docs/ONBOARDING_GUIDE.md).
 For the full curated documentation set, see [docs/README.md](docs/README.md).
 
-Current quantification handoff: binary no/low versus moderate/severe review triage. Use [docs/BINARY_REVIEW_TRIAGE_GUIDE.md](docs/BINARY_REVIEW_TRIAGE_GUIDE.md) for reviewer workflow and [docs/REPRODUCIBILITY_HANDOFF_2026-04-30.md](docs/REPRODUCIBILITY_HANDOFF_2026-04-30.md) for the reproducibility checkpoint.
+Current quantification handoff: binary no/low versus moderate/severe review triage. The current grouped-development result is useful for review prioritization and QA, with honest limits around external validation and autonomous grading. Use [docs/BINARY_REVIEW_TRIAGE_GUIDE.md](docs/BINARY_REVIEW_TRIAGE_GUIDE.md) for reviewer workflow and [docs/REPRODUCIBILITY_HANDOFF_2026-04-30.md](docs/REPRODUCIBILITY_HANDOFF_2026-04-30.md) for the reproducibility checkpoint.
+
+![Binary triage performance](assets/quantification/binary_triage_performance.svg)
+
+![Binary triage review queue](assets/quantification/binary_triage_review_queue.svg)
 
 ## Quick Start
 

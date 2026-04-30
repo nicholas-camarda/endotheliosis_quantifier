@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Binary triage review queue summary</title>
+  <desc id="desc">Bounded QA review queue summary for the binary endotheliosis triage HTML.</desc>
+  <rect width="1200" height="675" fill="#f7f8fb"/>
+  <rect x="44" y="40" width="1112" height="595" rx="14" fill="#ffffff" stroke="#d7dee8"/>
+
+  <text x="80" y="100" fill="#102033" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="700">Reviewer workload is bounded</text>
+  <text x="80" y="137" fill="#52606d" font-family="Arial, Helvetica, sans-serif" font-size="20">The HTML review surface samples QA cards instead of asking for every prediction row.</text>
+
+  <g transform="translate(80 190)">
+    <rect width="420" height="180" rx="12" fill="#e8f1ff" stroke="#b8cdf5"/>
+    <text x="28" y="56" fill="#334e68" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700">Review cards shown</text>
+    <text x="28" y="130" fill="#103a74" font-family="Arial, Helvetica, sans-serif" font-size="72" font-weight="700">29</text>
+  </g>
+
+  <g transform="translate(560 190)">
+    <rect width="560" height="180" rx="12" fill="#f9fafb" stroke="#d7dee8"/>
+    <text x="28" y="56" fill="#334e68" font-family="Arial, Helvetica, sans-serif" font-size="19" font-weight="700">Total prediction rows retained for audit</text>
+    <text x="28" y="130" fill="#102033" font-family="Arial, Helvetica, sans-serif" font-size="72" font-weight="700">707</text>
+  </g>
+
+  <g transform="translate(80 430)" font-family="Arial, Helvetica, sans-serif">
+    <text x="0" y="0" fill="#102033" font-size="22" font-weight="700">Route distribution in full prediction table</text>
+    <g transform="translate(0 35)">
+      <rect width="520" height="28" fill="#335c81"/>
+      <text x="535" y="21" fill="#334e68" font-size="17">blocked/manual review: 360</text>
+    </g>
+    <g transform="translate(0 80)">
+      <rect width="168" height="28" fill="#9d5c63"/>
+      <text x="183" y="21" fill="#334e68" font-size="17">likely moderate/severe: 116</text>
+    </g>
+    <g transform="translate(0 125)">
+      <rect width="168" height="28" fill="#e09f3e"/>
+      <text x="183" y="21" fill="#334e68" font-size="17">borderline score review: 116</text>
+    </g>
+    <g transform="translate(0 170)">
+      <rect width="159" height="28" fill="#5b8c5a"/>
+      <text x="174" y="21" fill="#334e68" font-size="17">uncertain model review: 110</text>
+    </g>
+    <g transform="translate(0 215)">
+      <rect width="12" height="28" fill="#7d8597"/>
+      <text x="27" y="21" fill="#334e68" font-size="17">likely no/low: 5</text>
+    </g>
+  </g>
+
+  <g transform="translate(750 438)" font-family="Arial, Helvetica, sans-serif">
+    <text x="0" y="0" fill="#102033" font-size="22" font-weight="700">Stop rule</text>
+    <text x="0" y="40" fill="#52606d" font-size="18">Review the sampled cards.</text>
+    <text x="0" y="72" fill="#52606d" font-size="18">Export the CSV beside the HTML.</text>
+    <text x="0" y="104" fill="#52606d" font-size="18">Only inspect all predictions if QA finds a pattern.</text>
+  </g>
+</svg>
