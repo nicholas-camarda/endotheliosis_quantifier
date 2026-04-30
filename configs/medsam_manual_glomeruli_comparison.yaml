@@ -1,0 +1,42 @@
+# Runnable with:
+#   eq run-config --config configs/medsam_manual_glomeruli_comparison.yaml
+#
+# Purpose:
+#   Pilot an isolated MedSAM oracle-box audit against existing admitted manual
+#   glomeruli masks without writing generated masks into raw_data.
+
+workflow: medsam_manual_glomeruli_comparison
+
+run:
+  name: pilot_medsam_manual_glomeruli_comparison
+  runtime_root_env: EQ_RUNTIME_ROOT
+  runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
+  python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
+
+inputs:
+  manifest_path: raw_data/cohorts/manifest.csv
+
+pilot:
+  size: 20
+  min_component_area: 2000
+  box_padding: 16
+  prompt_mode: oracle_component_boxes_from_manual_mask
+
+medsam:
+  python: /Users/ncamarda/mambaforge/envs/medsam/bin/python
+  repo: /Users/ncamarda/Projects/MedSAM
+  checkpoint: /Users/ncamarda/Projects/MedSAM/work_dir/MedSAM/medsam_vit_b.pth
+  device: cpu
+
+current_segmenter:
+  threshold: 0.75
+  transfer_model_path: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli/transfer/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256.pkl
+  scratch_model_path: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli/scratch/glomeruli_candidate_no_mito_base-scratch_e25_b12_lr1e-3_sz256/glomeruli_candidate_no_mito_base-scratch_e25_b12_lr1e-3_sz256.pkl
+
+tiling:
+  tile_size: 512
+  stride: 512
+  expected_size: 256
+
+outputs:
+  evaluation_dir: output/segmentation_evaluation/medsam_manual_glomeruli_comparison/pilot_medsam_manual_glomeruli_comparison

@@ -26,6 +26,8 @@ from eq.utils.logger import get_logger
 
 DEFAULT_PREDICTION_THRESHOLD = 0.5
 IMAGENET_PREPROCESSING_CONTRACT = "imagenet_normalized_fastai"
+MAX_UNLABELED_DIRECT_RESIZE_FACTOR = 2.0
+DIRECT_RESIZE_SAFE_INPUT_ROLES = {"crop", "patch", "roi", "tile"}
 
 
 class PredictionCore:
@@ -46,7 +48,45 @@ class PredictionCore:
         self.expected_size = expected_size
         self.logger = get_logger("eq.prediction_core")
     
-    def preprocess_image(self, image: Union[Image.Image, np.ndarray]) -> torch.Tensor:
+    def _input_size(self, image: Union[Image.Image, np.ndarray]) -> tuple[int, int]:
+        if isinstance(image, Image.Image):
+            return int(image.size[0]), int(image.size[1])
+        arr = np.asarray(image)
+        if arr.ndim < 2:
+            raise ValueError(f"Expected at least 2D image array, got shape {arr.shape}")
+        return int(arr.shape[1]), int(arr.shape[0])
+
+    def _validate_direct_resize_input(
+        self,
+        image: Union[Image.Image, np.ndarray],
+        *,
+        input_role: str,
+        allow_high_resolution_resize: bool,
+    ) -> None:
+        if allow_high_resolution_resize:
+            return
+        role = str(input_role or "").strip().lower()
+        if role in DIRECT_RESIZE_SAFE_INPUT_ROLES:
+            return
+        width, height = self._input_size(image)
+        max_factor = max(width, height) / float(self.expected_size)
+        if max_factor <= MAX_UNLABELED_DIRECT_RESIZE_FACTOR:
+            return
+        raise ValueError(
+            "Refusing high-resolution full-field direct resize through PredictionCore: "
+            f"input={width}x{height}, expected_size={self.expected_size}, "
+            f"resize_factor={max_factor:.2f}. Use tiled inference for full-field "
+            "segmentation, or pass input_role='tile', 'crop', or 'roi' only when "
+            "the caller has already selected a bounded local region."
+        )
+
+    def preprocess_image(
+        self,
+        image: Union[Image.Image, np.ndarray],
+        *,
+        input_role: str = "unknown",
+        allow_high_resolution_resize: bool = False,
+    ) -> torch.Tensor:
         """
         Preprocess image for model input.
         
@@ -56,6 +96,12 @@ class PredictionCore:
         Returns:
             Preprocessed tensor ready for model input
         """
+        self._validate_direct_resize_input(
+            image,
+            input_role=input_role,
+            allow_high_resolution_resize=allow_high_resolution_resize,
+        )
+
         # Convert numpy array to PIL if needed
         if isinstance(image, np.ndarray):
             if image.ndim == 3 and image.shape[-1] == 1:
@@ -85,10 +131,18 @@ class PredictionCore:
         return img_tensor
 
     def preprocess_image_imagenet_normalized(
-        self, image: Union[Image.Image, np.ndarray]
+        self,
+        image: Union[Image.Image, np.ndarray],
+        *,
+        input_role: str = "unknown",
+        allow_high_resolution_resize: bool = False,
     ) -> torch.Tensor:
         """Preprocess an image with the ImageNet normalization used by FastAI exports."""
-        img_tensor = self.preprocess_image(image)
+        img_tensor = self.preprocess_image(
+            image,
+            input_role=input_role,
+            allow_high_resolution_resize=allow_high_resolution_resize,
+        )
         mean = torch.tensor([0.485, 0.456, 0.406], dtype=img_tensor.dtype).view(
             1, 3, 1, 1
         )
@@ -104,12 +158,22 @@ class PredictionCore:
         *,
         foreground_channel: int = 1,
         imagenet_normalize: bool = True,
+        input_role: str = "unknown",
+        allow_high_resolution_resize: bool = False,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         """Predict a foreground probability mask using the shared preprocessing contract."""
         img_tensor = (
-            self.preprocess_image_imagenet_normalized(image)
+            self.preprocess_image_imagenet_normalized(
+                image,
+                input_role=input_role,
+                allow_high_resolution_resize=allow_high_resolution_resize,
+            )
             if imagenet_normalize
-            else self.preprocess_image(image)
+            else self.preprocess_image(
+                image,
+                input_role=input_role,
+                allow_high_resolution_resize=allow_high_resolution_resize,
+            )
         )
         try:
             device = next(model.parameters()).device
@@ -136,11 +200,20 @@ class PredictionCore:
             if imagenet_normalize
             else 'unit_scaled_legacy',
             'device': str(device),
+            'input_role': str(input_role or "unknown"),
+            'high_resolution_direct_resize_allowed': bool(allow_high_resolution_resize),
         }
         return probability, audit
     
-    def predict_with_model(self, model: torch.nn.Module, image: Union[Image.Image, np.ndarray],
-                          threshold: float = 0.5) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def predict_with_model(
+        self,
+        model: torch.nn.Module,
+        image: Union[Image.Image, np.ndarray],
+        threshold: float = 0.5,
+        *,
+        input_role: str = "unknown",
+        allow_high_resolution_resize: bool = False,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Make prediction using a PyTorch model.
         
@@ -153,7 +226,11 @@ class PredictionCore:
             Tuple of (raw_output, probabilities, binary_prediction)
         """
         # Preprocess image
-        img_tensor = self.preprocess_image(image)
+        img_tensor = self.preprocess_image(
+            image,
+            input_role=input_role,
+            allow_high_resolution_resize=allow_high_resolution_resize,
+        )
         
         # Make prediction
         with torch.no_grad():

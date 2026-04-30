@@ -58,7 +58,9 @@ def extract_encoder_embeddings_from_rois(
     with torch.no_grad():
         for embedding_index, row in enumerate(valid_examples.to_dict(orient='records')):
             image = Image.open(Path(str(row['roi_image_path']))).convert('RGB')
-            tensor = core.preprocess_image_imagenet_normalized(image).to(device)
+            tensor = core.preprocess_image_imagenet_normalized(
+                image, input_role='roi'
+            ).to(device)
             features = _resolve_encoder_output(encoder(tensor))
             pooled = F.adaptive_avg_pool2d(features, 1).flatten(1).cpu().numpy()[0]
             embeddings.append(pooled.astype(np.float32))

@@ -1163,9 +1163,9 @@ def extract_embedding_table(
     embeddings: list[np.ndarray] = []
     for row in valid_rows.itertuples(index=False):
         roi_image = Image.open(str(row.roi_image_path)).convert('RGB')
-        tensor = prediction_core.preprocess_image_imagenet_normalized(roi_image).to(
-            device
-        )
+        tensor = prediction_core.preprocess_image_imagenet_normalized(
+            roi_image, input_role='roi'
+        ).to(device)
         with torch.no_grad():
             feature_map = _resolve_feature_map(encoder(tensor))
             pooled = F.adaptive_avg_pool2d(feature_map, output_size=1)

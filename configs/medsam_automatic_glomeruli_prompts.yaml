@@ -1,0 +1,55 @@
+# Runnable with:
+#   eq run-config --config configs/medsam_automatic_glomeruli_prompts.yaml
+#
+# Purpose:
+#   Evaluate MedSAM automatic glomeruli masks from current-segmenter proposal
+#   boxes before any derived-mask generation or downstream opt-in.
+
+workflow: medsam_automatic_glomeruli_prompts
+
+run:
+  name: pilot_medsam_automatic_glomeruli_prompts
+  runtime_root_env: EQ_RUNTIME_ROOT
+  runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
+  python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
+
+inputs:
+  manifest_path: raw_data/cohorts/manifest.csv
+
+pilot:
+  size: 20
+  min_component_area: 2000
+
+medsam:
+  python: /Users/ncamarda/mambaforge/envs/medsam/bin/python
+  repo: /Users/ncamarda/Projects/MedSAM
+  checkpoint: /Users/ncamarda/Projects/MedSAM/work_dir/MedSAM/medsam_vit_b.pth
+  device: cpu
+
+current_segmenter:
+  comparison_threshold: 0.75
+  transfer_model_path: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli/transfer/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256.pkl
+  scratch_model_path: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli/scratch/glomeruli_candidate_no_mito_base-scratch_e25_b12_lr1e-3_sz256/glomeruli_candidate_no_mito_base-scratch_e25_b12_lr1e-3_sz256.pkl
+
+tiling:
+  tile_size: 512
+  stride: 512
+  expected_size: 256
+
+proposal:
+  thresholds: [0.20, 0.35, 0.50]
+  min_component_area: 2000
+  max_component_area: 750000
+  padding: 16
+  merge_iou: 0.25
+  max_boxes_per_image: 20
+
+gates:
+  min_proposal_recall: 0.90
+  min_auto_dice: 0.85
+  max_prompt_failures: 0
+
+outputs:
+  evaluation_dir: output/segmentation_evaluation/medsam_automatic_glomeruli_prompts/pilot_medsam_automatic_glomeruli_prompts
+  derived_masks_dir: output/derived_masks/medsam_automatic_glomeruli/pilot_medsam_automatic_glomeruli_prompts
+  generate_broad_derived_masks: false

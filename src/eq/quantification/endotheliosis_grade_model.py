@@ -2093,6 +2093,7 @@ def _predict_tiled_segmentation_probability(
                 tile,
                 foreground_channel=1,
                 imagenet_normalize=True,
+                input_role='tile',
             )
             tile_probability = core.resize_prediction_to_match(
                 tile_probability.astype(np.float32), (y1 - y0, x1 - x0)
