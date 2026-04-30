@@ -85,6 +85,13 @@ def _load_contract_first_quantification():
     return run_endotheliosis_quantification_inputs
 
 
+def _load_labelstudio_bootstrap():
+    """Import Label Studio bootstrap lazily to keep CLI startup lightweight."""
+    from eq.labelstudio.bootstrap import run_bootstrap
+
+    return run_bootstrap
+
+
 def _load_build_current_accessible_cohorts():
     """Import cohort-manifest build helpers lazily."""
     from eq.quantification import build_current_accessible_cohorts
@@ -494,6 +501,30 @@ def run_config_command(args):
     from eq.run_config import run_config
 
     run_config(Path(args.config), dry_run=args.dry_run)
+
+
+@log_function_call
+def labelstudio_start_command(args):
+    """Start local Label Studio and import image tasks for glomerulus grading."""
+    run_bootstrap = _load_labelstudio_bootstrap()
+    result = run_bootstrap(
+        images_dir=Path(args.images),
+        runtime_root=Path(args.runtime_root) if args.runtime_root else None,
+        project_name=args.project_name,
+        port=args.port,
+        container_name=args.container_name,
+        docker_image=args.docker_image,
+        username=args.username,
+        password=args.password,
+        api_token=args.api_token,
+        timeout_seconds=args.timeout_seconds,
+        dry_run=args.dry_run,
+    )
+    print(result.message)
+    print(f'Task manifest: {result.task_manifest_path}')
+    print(f'Label Studio URL: {result.plan.url}')
+    if result.project_url:
+        print(f'Project URL: {result.project_url}')
 
 
 @log_function_call
@@ -956,6 +987,74 @@ Examples:
         help='Print commands without launching training or analysis.',
     )
     run_config_parser.set_defaults(func=run_config_command)
+
+    labelstudio_parser = subparsers.add_parser(
+        'labelstudio',
+        help='Manage local Label Studio grading workflows',
+        description='Bootstrap local Label Studio projects for glomerulus grading.',
+    )
+    labelstudio_subparsers = labelstudio_parser.add_subparsers(
+        dest='labelstudio_command', help='Label Studio commands'
+    )
+    labelstudio_start_parser = labelstudio_subparsers.add_parser(
+        'start',
+        help='Start local Label Studio and import an image directory',
+        description='Point at an image directory and open a configured local Label Studio glomerulus-grading project.',
+    )
+    labelstudio_start_parser.add_argument(
+        '--images',
+        required=True,
+        help='Directory of images to import recursively into Label Studio.',
+    )
+    labelstudio_start_parser.add_argument(
+        '--project-name',
+        default='EQ Glomerulus Grading',
+        help='Label Studio project title.',
+    )
+    labelstudio_start_parser.add_argument(
+        '--runtime-root',
+        help='Runtime directory for Label Studio files. Defaults to active runtime root/labelstudio.',
+    )
+    labelstudio_start_parser.add_argument(
+        '--port', type=int, default=8080, help='Local host port for Label Studio.'
+    )
+    labelstudio_start_parser.add_argument(
+        '--container-name',
+        default='eq-labelstudio',
+        help='Docker container name for local Label Studio.',
+    )
+    labelstudio_start_parser.add_argument(
+        '--docker-image',
+        default='heartexlabs/label-studio:latest',
+        help='Docker image to use for Label Studio.',
+    )
+    labelstudio_start_parser.add_argument(
+        '--username',
+        default='eq-admin@example.local',
+        help='Local Label Studio admin username.',
+    )
+    labelstudio_start_parser.add_argument(
+        '--password',
+        default='eq-labelstudio',
+        help='Local Label Studio admin password.',
+    )
+    labelstudio_start_parser.add_argument(
+        '--api-token',
+        default='eq-local-token',
+        help='Local Label Studio API token for project bootstrap.',
+    )
+    labelstudio_start_parser.add_argument(
+        '--timeout-seconds',
+        type=int,
+        default=60,
+        help='Seconds to wait for Label Studio API readiness.',
+    )
+    labelstudio_start_parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='Write the task manifest and print the plan without Docker or API calls.',
+    )
+    labelstudio_start_parser.set_defaults(func=labelstudio_start_command)
 
     overcoverage_parser = subparsers.add_parser(
         'glomeruli-overcoverage-audit',

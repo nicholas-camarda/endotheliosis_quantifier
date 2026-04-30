@@ -2,6 +2,34 @@
 
 This document describes the Stage 1 Label Studio grading contract for complete glomeruli. It is a data-collection and validation contract, not a model-assisted second-review workflow.
 
+## One-Command Local Startup
+
+Start from a directory of images:
+
+```bash
+eq labelstudio start --images /path/to/images
+```
+
+The command recursively imports `.jpg`, `.jpeg`, `.png`, `.tif`, and `.tiff` files, starts a local Docker Label Studio instance, creates or reuses the `EQ Glomerulus Grading` project, applies `configs/label_studio_glomerulus_grading.xml`, imports the image tasks, and prints the Label Studio URL plus the project URL.
+
+To inspect the plan without starting Docker or calling Label Studio:
+
+```bash
+eq labelstudio start --images /path/to/images --dry-run
+```
+
+Useful options:
+
+```bash
+eq labelstudio start \
+  --images /path/to/images \
+  --project-name "Kidney Glomerulus Grading" \
+  --port 8080 \
+  --runtime-root /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/labelstudio
+```
+
+The command is local/admin bootstrap only. It does not run segmentation, quantification, MedSAM/SAM, model second review, or adjudication.
+
 ## Purpose
 
 The lab workflow should grade complete glomeruli, not whole images. Each human grade must be linked to the exact glomerulus region it describes so `eq` can later support second review, adjudication, grader variability analysis, and animal-level rollups.
@@ -23,7 +51,15 @@ Primary grading is human-first and model-blind. The primary Label Studio config 
 
 ## Admin And Developer Boundary
 
-Use `configs/label_studio_glomerulus_grading.xml` as the primary grading Label Studio config.
+Use `eq labelstudio start --images /path/to/images` as the primary setup path. Use `configs/label_studio_glomerulus_grading.xml` only when inspecting or manually debugging the Label Studio config.
+
+By default, bootstrap runtime artifacts live under:
+
+```text
+<active-runtime-root>/labelstudio/
+```
+
+That runtime tree contains Label Studio data, generated import manifests, and bootstrap metadata. Keep those generated artifacts out of Git.
 
 The initial ingestion authority is a Label Studio JSON export. The repo-owned parser lives in `src/eq/labelstudio/glomerulus_grading.py` and validates that:
 
