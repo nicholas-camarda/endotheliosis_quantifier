@@ -14,6 +14,7 @@ license = { text = "MIT" }
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.12", "mypy>=1.11"]
+medsam = ["segment-anything>=1.0"]
 
 [project.scripts]
 eq = "eq.__main__:main"

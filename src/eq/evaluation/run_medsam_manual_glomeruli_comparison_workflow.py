@@ -21,6 +21,10 @@ import yaml
 from PIL import Image, ImageDraw
 
 from eq.data_management.model_loading import load_model_safely
+from eq.evaluation.medsam_torch_runtime import (
+    medsam_subprocess_extra_env,
+    resolve_medsam_torch_python,
+)
 from eq.inference.prediction_core import create_prediction_core
 from eq.quantification.endotheliosis_grade_model import (
     _predict_tiled_segmentation_probability,
@@ -420,7 +424,19 @@ from segment_anything import sam_model_registry
 from skimage import io, transform
 
 payload = json.loads(Path("__INPUT_JSON__").read_text(encoding="utf-8"))
-device = payload["device"]
+device_str = str(payload["device"]).strip().lower()
+
+if device_str == "mps":
+    if not torch.backends.mps.is_available():
+        raise RuntimeError(
+            "MedSAM batch inference requested device=mps but torch.backends.mps.is_available() is False"
+        )
+elif device_str == "cuda":
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "MedSAM batch inference requested device=cuda but torch.cuda.is_available() is False"
+        )
+device = torch.device(device_str)
 model = sam_model_registry["vit_b"](checkpoint=payload["checkpoint"])
 model = model.to(device)
 model.eval()
@@ -493,6 +509,7 @@ def _run_medsam_batch(
     script = _medsam_batch_script().replace('__INPUT_JSON__', str(input_json))
     env = os.environ.copy()
     env['PYTHONPATH'] = str(medsam_repo)
+    env.update(medsam_subprocess_extra_env(device=device))
     result = subprocess.run(
         [str(medsam_python), '-c', script],
         cwd=str(medsam_repo),
@@ -539,9 +556,7 @@ def run_medsam_manual_glomeruli_comparison_workflow(
     manifest_path = _runtime_path(
         runtime_root, inputs.get('manifest_path', DEFAULT_MANIFEST_PATH)
     )
-    medsam_python = Path(
-        str(medsam.get('python') or DEFAULT_MEDSAM_PYTHON)
-    ).expanduser()
+    medsam_python = resolve_medsam_torch_python(config)
     medsam_repo = Path(str(medsam.get('repo') or DEFAULT_MEDSAM_REPO)).expanduser()
     medsam_script = medsam_repo / 'MedSAM_Inference.py'
     checkpoint = Path(

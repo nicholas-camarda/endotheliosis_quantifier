@@ -131,6 +131,64 @@ def get_runtime_segmentation_evaluation_path(
     return get_runtime_segmentation_evaluation_root(runtime_root) / str(result_name)
 
 
+def get_runtime_generated_masks_glomeruli_root(
+    runtime_root: Union[str, Path, None] = None
+) -> Path:
+    """Return the runtime root for reusable generated glomeruli masks."""
+    return _runtime_root_or_active(runtime_root) / "derived_data" / "generated_masks" / "glomeruli"
+
+
+def get_runtime_generated_masks_glomeruli_manifest_path(
+    runtime_root: Union[str, Path, None] = None
+) -> Path:
+    """Return the central generated-mask registry for glomeruli releases."""
+    return get_runtime_generated_masks_glomeruli_root(runtime_root) / "manifest.csv"
+
+
+def get_runtime_medsam_finetuned_release_path(
+    mask_release_id: str, runtime_root: Union[str, Path, None] = None
+) -> Path:
+    """Return a reusable MedSAM fine-tuned glomeruli release directory."""
+    return (
+        get_runtime_generated_masks_glomeruli_root(runtime_root)
+        / "medsam_finetuned"
+        / str(mask_release_id)
+    )
+
+
+def get_runtime_medsam_glomeruli_model_root(
+    runtime_root: Union[str, Path, None] = None
+) -> Path:
+    """Return the model root for MedSAM glomeruli adapted checkpoints."""
+    return _runtime_root_or_active(runtime_root) / "models" / "medsam_glomeruli"
+
+
+def get_runtime_medsam_glomeruli_checkpoint_path(
+    checkpoint_id: str, runtime_root: Union[str, Path, None] = None
+) -> Path:
+    """Return a checkpoint directory under the MedSAM glomeruli model root."""
+    return get_runtime_medsam_glomeruli_model_root(runtime_root) / str(checkpoint_id)
+
+
+def ensure_not_under_runtime_raw_data(
+    target_path: Union[str, Path], runtime_root: Union[str, Path, None] = None
+) -> Path:
+    """Fail closed when a path resolves under runtime raw_data."""
+    path_obj = Path(target_path).expanduser()
+    if path_obj.is_absolute():
+        path = path_obj.resolve()
+    else:
+        path = (_runtime_root_or_active(runtime_root) / path_obj).resolve()
+    raw_root = get_runtime_raw_data_path(runtime_root).resolve()
+    try:
+        path.relative_to(raw_root)
+    except ValueError:
+        return path
+    raise ValueError(
+        f"Path must not resolve under runtime raw_data: {path}"
+    )
+
+
 def get_runtime_predictions_root(runtime_root: Union[str, Path, None] = None) -> Path:
     """Return the runtime model-prediction root."""
     if runtime_root is None:

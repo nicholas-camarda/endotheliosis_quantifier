@@ -1,0 +1,90 @@
+# Runnable with:
+#   eq run-config --config configs/medsam_glomeruli_fine_tuning.yaml --dry-run
+#
+# Purpose:
+#   Run fixed-split MedSAM glomeruli domain adaptation with oracle-level
+#   automatic-prompt gate evaluation and reusable generated-mask packaging.
+
+workflow: medsam_glomeruli_fine_tuning
+
+run:
+  name: pilot_medsam_glomeruli_fine_tuning
+  runtime_root_env: EQ_RUNTIME_ROOT
+  runtime_root_default: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier
+  python: /Users/ncamarda/mambaforge/envs/eq-mac/bin/python
+
+inputs:
+  manifest_path: raw_data/cohorts/manifest.csv
+  split_manifests:
+    train: ""
+    validation: ""
+    test: ""
+  lane_assignments: [manual_mask_core, manual_mask_external]
+  split_grouping_key: source_sample_id
+
+# SAM batch + MPS: use eq-mac via run.python when inference_python is empty (see medsam_torch_runtime).
+# Install Meta SAM into eq-mac: pip install -e ".[medsam]" (segment_anything import path).
+medsam:
+  python: /Users/ncamarda/mambaforge/envs/medsam/bin/python
+  inference_python: ""
+  repo: /Users/ncamarda/Projects/MedSAM
+  base_checkpoint: /Users/ncamarda/Projects/MedSAM/work_dir/MedSAM/medsam_vit_b.pth
+  device: mps
+  adaptation_mode: frozen_image_encoder_mask_decoder
+  frozen_components: [image_encoder, prompt_encoder]
+  trainable_components: [mask_decoder]
+
+current_segmenter:
+  comparison_threshold: 0.75
+  transfer_model_path: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli/transfer/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256/glomeruli_candidate_transfer-transfer_loss-custom_s1lr1e-3_s2lr_lrfind_e20_b12_lr1e-3_sz256.pkl
+  scratch_model_path: /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/models/segmentation/glomeruli/scratch/glomeruli_candidate_no_mito_base-scratch_e25_b12_lr1e-3_sz256/glomeruli_candidate_no_mito_base-scratch_e25_b12_lr1e-3_sz256.pkl
+
+proposal:
+  thresholds: [0.20, 0.35, 0.50]
+  min_component_area: 2000
+  max_component_area: 750000
+  padding: 16
+  merge_iou: 0.25
+  max_boxes_per_image: 20
+
+baseline_evaluation:
+  external_baselines: true
+  automatic_medsam: true
+  oracle_prompt_medsam: true
+  current_segmenter: true
+
+tiling:
+  tile_size: 512
+  stride: 512
+  expected_size: 256
+
+training:
+  backend: ""
+  # Empty auto-selects eq_native_adapter on macOS+MPS (Metal PyTorch via run.python),
+  # otherwise upstream MedSAM train_one_gpu.py.
+  preprocessed_npy_root: derived_data/medsam_glomeruli/npy_data
+  epochs: 10
+  batch_size: 2
+  learning_rate: 0.0001
+  image_size: 1024
+  smoke_examples: 2
+  smoke_epochs: 1
+  smoke_batch_size: 1
+  smoke_timeout_seconds: 300
+  run_local_feasibility_smoke: false
+  local_feasibility_required: true
+
+adoption_gates:
+  min_dice: 0.90
+  min_jaccard: 0.82
+  max_oracle_dice_gap: 0.05
+  max_prompt_failures: 0
+
+outputs:
+  evaluation_dir: output/segmentation_evaluation/medsam_glomeruli_fine_tuning/pilot_medsam_glomeruli_fine_tuning
+  checkpoint_id: pilot_medsam_glomeruli_fine_tuning
+  checkpoint_root: models/medsam_glomeruli/pilot_medsam_glomeruli_fine_tuning
+  mask_release_id: pilot_medsam_glomeruli_fine_tuning
+  generated_mask_release_root: derived_data/generated_masks/glomeruli/medsam_finetuned/pilot_medsam_glomeruli_fine_tuning
+  generated_mask_registry_path: derived_data/generated_masks/glomeruli/manifest.csv
+  create_checkpoint_dir_on_start: false

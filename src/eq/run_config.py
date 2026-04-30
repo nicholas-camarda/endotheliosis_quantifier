@@ -21,6 +21,7 @@ from eq.utils.execution_logging import (
 
 SUPPORTED_WORKFLOWS = {
     'endotheliosis_quantification',
+    'medsam_glomeruli_fine_tuning',
     'glomeruli_candidate_comparison',
     'glomeruli_transport_audit',
     'highres_glomeruli_concordance',
@@ -142,6 +143,13 @@ def run_config(config_path: Path, *, dry_run: bool = False) -> None:
                 run_medsam_automatic_glomeruli_prompts_workflow(
                     config_path, dry_run=dry_run
                 )
+                return
+            if workflow == 'medsam_glomeruli_fine_tuning':
+                from eq.evaluation.run_medsam_glomeruli_fine_tuning_workflow import (
+                    run_medsam_glomeruli_fine_tuning_workflow,
+                )
+
+                run_medsam_glomeruli_fine_tuning_workflow(config_path, dry_run=dry_run)
                 return
             if workflow == 'segmentation_mitochondria_pretraining':
                 run_mitochondria_pretraining_config(config, dry_run=dry_run)

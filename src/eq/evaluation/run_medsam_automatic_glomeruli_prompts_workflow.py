@@ -20,7 +20,6 @@ from PIL import Image, ImageDraw
 from eq.data_management.model_loading import load_model_safely
 from eq.evaluation.medsam_glomeruli_workflow import (
     DEFAULT_MEDSAM_CHECKPOINT,
-    DEFAULT_MEDSAM_PYTHON,
     DEFAULT_MEDSAM_REPO,
     DEFAULT_METRIC_FIELDS,
     DEFAULT_SCRATCH_MODEL,
@@ -37,6 +36,7 @@ from eq.evaluation.medsam_glomeruli_workflow import (
     metric_row,
     select_pilot_inputs,
 )
+from eq.evaluation.medsam_torch_runtime import resolve_medsam_torch_python
 from eq.quantification.endotheliosis_grade_model import (
     _predict_tiled_segmentation_probability,
 )
@@ -527,9 +527,7 @@ def run_medsam_automatic_glomeruli_prompts_workflow(
     manifest_path = _runtime_path(
         runtime_root, inputs.get('manifest_path', DEFAULT_MANIFEST_PATH)
     )
-    medsam_python = Path(
-        str(medsam.get('python') or DEFAULT_MEDSAM_PYTHON)
-    ).expanduser()
+    medsam_python = resolve_medsam_torch_python(config)
     medsam_repo = Path(str(medsam.get('repo') or DEFAULT_MEDSAM_REPO)).expanduser()
     medsam_script = medsam_repo / 'MedSAM_Inference.py'
     checkpoint = Path(
