@@ -256,6 +256,100 @@ def _base_atlas_config(quantification_root: Path) -> dict:
     }
 
 
+def _review_export_from_queue(queue: pd.DataFrame) -> pd.DataFrame:
+    work = queue.copy().reset_index(drop=True)
+    work['review_id'] = work['atlas_row_id'].map(lambda value: f'atlas-row-{value}')
+    if 'nearest_neighbor_atlas_row_id' not in work:
+        work['nearest_neighbor_atlas_row_id'] = work.get('nearest_neighbor_evidence', '')
+    cluster_values = work['cluster_id'].astype(str).drop_duplicates().tolist()
+    anchor_cluster = cluster_values[0]
+    blocked_cluster = cluster_values[-1] if len(cluster_values) > 1 else cluster_values[0]
+    work['roi_usability'] = 'usable'
+    work['morphology_assessment'] = np.where(
+        work['cluster_id'].astype(str).eq(anchor_cluster),
+        'mostly_open_lumina',
+        'collapsed_or_closed_capillaries',
+    )
+    work['score_plausibility'] = np.where(
+        work['cluster_id'].astype(str).eq(anchor_cluster), 'plausible', 'too_high'
+    )
+    work['case_cluster_fit'] = np.where(
+        work['cluster_id'].astype(str).eq(anchor_cluster),
+        'representative',
+        'outlier_or_wrong_cluster',
+    )
+    work['review_action'] = np.where(
+        work['cluster_id'].astype(str).eq(anchor_cluster), 'accept', 'flag_score_review'
+    )
+    excluded_index = work[work['cluster_id'].astype(str).eq(blocked_cluster)].index[:1]
+    work.loc[excluded_index, 'review_action'] = 'exclude_from_anchor'
+    work['cluster_interpretation'] = np.where(
+        work['cluster_id'].astype(str).eq(anchor_cluster),
+        'real_morphology_cluster',
+        'roi_or_mask_artifact',
+    )
+    work['cluster_review_confidence'] = 'high'
+    work['cluster_notes'] = np.where(
+        work['cluster_id'].astype(str).eq(anchor_cluster),
+        'low anchor cluster with open lumina',
+        'mixed features and ROI/mask artifact; do not promote cluster',
+    )
+    work['reviewer_notes'] = 'fixture adjudication'
+    work['reviewer_id'] = 'pytest'
+    work['reviewed_at'] = '2026-04-29T00:00:00Z'
+    return work
+
+
+def _flagged_decisions_from_review(review: pd.DataFrame) -> pd.DataFrame:
+    flagged = review[
+        review['review_action'].isin(['flag_score_review', 'exclude_from_anchor'])
+    ].head(2)
+    if len(flagged) < 2:
+        flagged = pd.concat([flagged, review.tail(2)], ignore_index=True).head(2)
+    rows = flagged.copy().reset_index(drop=True)
+    rows['review_id'] = rows['atlas_row_id'].map(lambda value: f'flagged-{value}')
+    rows['score_decision'] = ['change_score', 'keep_original_score'][: len(rows)]
+    rows['corrected_score'] = ['1', 'not_applicable'][: len(rows)]
+    rows['score_error_reason'] = ['mixed_features', 'rbc_confounded'][: len(rows)]
+    rows['anchor_decision'] = [''] * len(rows)
+    rows['anchor_exclusion_reason'] = [''] * len(rows)
+    if len(rows) > 1:
+        rows.loc[1, 'anchor_decision'] = 'allow_as_low_anchor'
+        rows.loc[1, 'anchor_exclusion_reason'] = 'wrong_cluster'
+    rows['final_notes'] = 'fixture focused review'
+    rows['reviewed_at'] = '2026-04-29T00:10:00Z'
+    columns = [
+        'review_id',
+        'atlas_row_id',
+        'subject_image_id',
+        'cluster_id',
+        'original_score',
+        'review_action',
+        'score_plausibility',
+        'case_cluster_fit',
+        'score_decision',
+        'corrected_score',
+        'score_error_reason',
+        'anchor_decision',
+        'anchor_exclusion_reason',
+        'final_notes',
+        'reviewed_at',
+        'roi_image_path',
+        'roi_mask_path',
+    ]
+    return rows.loc[:, columns]
+
+
+def _write_review_inputs(atlas_root: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
+    queue = pd.read_csv(atlas_root / 'review_queue' / 'atlas_adjudication_queue.csv')
+    review = _review_export_from_queue(queue)
+    decisions = _flagged_decisions_from_review(review)
+    evidence = atlas_root / 'evidence'
+    review.to_csv(evidence / 'atlas_adjudication_review_export.csv', index=False)
+    decisions.to_csv(evidence / 'atlas_flagged_case_decisions.csv', index=False)
+    return review, decisions
+
+
 def test_label_blinding_blocks_denied_allowlist_columns_and_writes_audit(tmp_path):
     quantification_root, _ = _write_atlas_inputs(tmp_path)
     config = _base_atlas_config(quantification_root)
@@ -518,7 +612,142 @@ def test_review_queue_first_read_artifacts_and_no_label_overrides(tmp_path):
     assert 'review_action' in html
     assert 'cluster_interpretation' in html
     assert 'cluster_review_confidence' in html
+    assert '<article class="case-card">' in html
+    assert '<img' in html
     assert '<select' in html
+    verdict = _read_json(atlas_root / 'summary' / 'atlas_verdict.json')
+    assert verdict['adjudication_status'] == 'not_provided'
+    assert (
+        atlas_root / 'evidence' / 'atlas_final_adjudication_outcome.json'
+    ).exists()
+    assert (
+        atlas_root / 'binary_review_triage' / 'summary' / 'binary_triage_verdict.json'
+    ).exists()
+    manifest = _read_json(atlas_root / 'summary' / 'artifact_manifest.json')
+    assert 'binary_triage_predictions' in manifest['artifacts']
+
+
+def test_adjudication_ingestion_anchor_outputs_and_binary_triage(tmp_path):
+    quantification_root, frame = _write_atlas_inputs(tmp_path)
+    config = _base_atlas_config(quantification_root)
+
+    _run_atlas(config)
+    atlas_root = _atlas_output_root(quantification_root)
+    _write_review_inputs(atlas_root)
+
+    _run_atlas(config)
+
+    diagnostics = _read_json(atlas_root / 'diagnostics' / 'adjudication_input_diagnostics.json')
+    verdict = _read_json(atlas_root / 'summary' / 'atlas_verdict.json')
+    assert diagnostics['status'] == 'provided'
+    assert diagnostics['score_correction_count'] >= 1
+    assert diagnostics['recovered_anchor_count'] >= 1
+    assert verdict['adjudication_status'] == 'provided'
+    assert verdict['score_change_count'] == diagnostics['score_correction_count']
+
+    corrections = pd.read_csv(atlas_root / 'evidence' / 'atlas_score_corrections.csv')
+    recovered = pd.read_csv(atlas_root / 'evidence' / 'atlas_recovered_anchor_examples.csv')
+    anchors = pd.read_csv(atlas_root / 'evidence' / 'atlas_adjudicated_anchor_manifest.csv')
+    blocked = pd.read_csv(atlas_root / 'evidence' / 'atlas_blocked_cluster_manifest.csv')
+    assert {'original_score', 'adjudicated_score'}.issubset(corrections.columns)
+    assert not recovered.empty
+    assert not anchors.empty
+    assert not blocked.empty
+
+    representatives = pd.read_csv(atlas_root / 'evidence' / 'cluster_representatives.csv')
+    assignments = pd.read_csv(atlas_root / 'clusters' / 'cluster_assignments.csv')
+    assert 'adjudicated_score' not in representatives.columns
+    assert 'adjudicated_score' not in assignments.columns
+    assert frame['score'].tolist() == pd.read_csv(
+        quantification_root / 'embeddings' / 'roi_embeddings.csv'
+    )['score'].tolist()
+
+    focused_html = (atlas_root / 'evidence' / 'atlas_flagged_case_review.html').read_text(
+        encoding='utf-8'
+    )
+    assert '<article class="case"' in focused_html
+    assert '<img' in focused_html
+    assert 'Export flagged-case decisions CSV' in focused_html
+    assert 'score_decision' in focused_html or 'anchor_decision' in focused_html
+
+    triage_root = atlas_root / 'binary_review_triage'
+    predictions = pd.read_csv(triage_root / 'predictions' / 'binary_triage_predictions.csv')
+    explanations = pd.read_csv(triage_root / 'evidence' / 'binary_triage_explanations.csv')
+    metrics = pd.read_csv(triage_root / 'summary' / 'binary_triage_metrics.csv')
+    triage_verdict = _read_json(triage_root / 'summary' / 'binary_triage_verdict.json')
+    intervals = _read_json(triage_root / 'summary' / 'binary_triage_metric_intervals.json')
+    assert 'binary_target_primary' in predictions.columns
+    assert 'binary_target_sensitivity' in predictions.columns
+    assert 'source_cohort_warning' in predictions.columns
+    score_one = predictions[pd.to_numeric(predictions['score'], errors='coerce').eq(1.0)]
+    assert set(score_one['binary_target_primary']) == {'borderline_review'}
+    assert set(score_one['binary_target_sensitivity']) == {'no_low_inclusive'}
+    assert {
+        'top_feature_contributions',
+        'feature_family_contributions',
+        'explanation_claim_boundary',
+    }.issubset(explanations.columns)
+    assert metrics['target_kind'].str.contains('sensitivity_no_low_inclusive').any()
+    assert triage_verdict['product_direction'] == (
+        'binary_no_low_vs_moderate_severe_review_triage'
+    )
+    assert intervals['status'] in {'estimated', 'non_estimable'}
+    review_html = (triage_root / 'evidence' / 'binary_triage_review.html').read_text(
+        encoding='utf-8'
+    )
+    assert '<article class="case">' in review_html
+    assert '<img' in review_html
+    assert '<select' in review_html
+    assert 'Export binary triage review CSV' in review_html
+    assert 'P(moderate/severe)' in review_html
+
+
+@pytest.mark.parametrize(
+    'mutation',
+    [
+        'missing_column',
+        'unmatched_atlas_row_id',
+        'mismatched_cluster_id',
+        'mismatched_original_score',
+        'mismatched_roi_path',
+        'duplicate_conflicting_decision',
+    ],
+)
+def test_adjudication_inputs_fail_closed_on_schema_or_identity_drift(
+    tmp_path, mutation
+):
+    quantification_root, _ = _write_atlas_inputs(tmp_path)
+    config = _base_atlas_config(quantification_root)
+    _run_atlas(config)
+    atlas_root = _atlas_output_root(quantification_root)
+    review, decisions = _write_review_inputs(atlas_root)
+    evidence = atlas_root / 'evidence'
+
+    if mutation == 'missing_column':
+        review = review.drop(columns=['roi_mask_path'])
+    elif mutation == 'unmatched_atlas_row_id':
+        review.loc[0, 'atlas_row_id'] = 999999
+    elif mutation == 'mismatched_cluster_id':
+        review['cluster_id'] = review['cluster_id'].astype(str)
+        review.loc[0, 'cluster_id'] = 'not-current-cluster'
+    elif mutation == 'mismatched_original_score':
+        review.loc[0, 'original_score'] = 999
+    elif mutation == 'mismatched_roi_path':
+        review.loc[0, 'roi_image_path'] = '/not/the/current/roi.png'
+    elif mutation == 'duplicate_conflicting_decision':
+        duplicate = decisions.iloc[[0]].copy()
+        duplicate['score_decision'] = 'keep_original_score'
+        decisions = pd.concat([decisions, duplicate], ignore_index=True)
+
+    review.to_csv(evidence / 'atlas_adjudication_review_export.csv', index=False)
+    decisions.to_csv(evidence / 'atlas_flagged_case_decisions.csv', index=False)
+
+    with pytest.raises(Exception):
+        _run_atlas(config)
+
+    diagnostics = _read_json(atlas_root / 'diagnostics' / 'adjudication_input_diagnostics.json')
+    assert diagnostics['status'] == 'failed_validation'
+    assert diagnostics['validation_errors']
 
 
 def test_run_config_dispatches_label_free_roi_embedding_atlas(tmp_path):

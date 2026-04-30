@@ -294,7 +294,7 @@ Decision-label meaning in this repo:
 - `runtime_use_status=available_research_use`: artifact loads and can be used for exploratory development or pipeline smoke testing
 - `promotion_evidence_status=audit_missing`: required split, transfer-base, resize, prediction-shape, or documentation evidence is missing
 - `promotion_evidence_status=not_promotion_eligible`: evidence is present but fails one or more promotion gates
-- `promotion_evidence_status=insufficient_evidence_for_promotion`: evidence is not structurally invalid, but it is not enough to support a promoted default or README-facing performance claim
+- `promotion_evidence_status=insufficient_evidence_for_promotion`: evidence is not structurally invalid, but it is not enough to support a default promoted model or README-facing performance claim
 - `promotion_evidence_status=promotion_eligible`: held-out audit evidence clears the required gates
 
 These panels are useful because they make the task concrete: the network is not producing one global score first. It is producing a spatial mask, and those masks are then visually compared against held-out targets.
@@ -561,9 +561,45 @@ What exists today:
 - a combined HTML review artifact with selected example cases, cohort summaries, threshold support, and claim-boundary text
 - candidate-screen artifacts including `signal_comparator_metrics.csv`, `subject_level_candidate_predictions.csv`, and `precision_candidate_summary.json`; these are not deployed models
 - morphology-aware feature artifacts for open/pale lumina, collapsed or slit-like structures, ridge/line responses, erythrocyte-like patent-lumen confounding, ROI quality, visual feature review, and operator adjudication
+- an adjudicated label-free embedding atlas with explicit score-correction evidence, recovered row-level anchors, candidate cluster anchors, blocked clusters, focused flagged-case review HTML, and binary no/low versus moderate/severe review-triage outputs
 - the older openness heuristic in [`src/eq/evaluation/quantification_metrics.py`](../src/eq/evaluation/quantification_metrics.py), best treated as an audit feature rather than the primary learned model
 
 The learned ROI branch lives under [`src/eq/quantification/learned_roi.py`](../src/eq/quantification/learned_roi.py). Its current phase-1 scope is intentionally capped: it fits only the existing glomeruli encoder features, simple ROI QC features, and their hybrid. Optional backbone or foundation providers are audited but not fitted in this branch. Candidate selection reports ordinal/grade-scale metrics alongside the 0-100 stage-index recoding and is blocked by uncertainty, numerical-stability, and cohort-confounding gates when those checks fail.
+
+### Binary Review Triage Direction
+
+The maintained grading direction is a binary review-triage product, not autonomous multi-ordinal grading. Existing ordinal and severe-aware outputs remain useful diagnostic evidence, but the current deployable-shaped review surface is:
+
+```bash
+eq run-config --config configs/label_free_roi_embedding_atlas.yaml
+```
+
+Primary target:
+
+```text
+score <= 0.5 -> no_low
+score >= 1.5 -> moderate_severe
+score == 1.0 -> borderline_review outside primary training and primary metrics
+```
+
+Sensitivity target:
+
+```text
+score <= 1.0 -> no_low_inclusive
+score >= 1.5 -> moderate_severe
+```
+
+The atlas consumes optional adjudication exports only after validating `atlas_row_id`, `subject_image_id`, `cluster_id`, original score, and ROI image/mask path provenance. Original scores remain immutable. Score corrections, recovered anchors, cluster-anchor candidates, and blocked clusters are separate evidence files under `burden_model/embedding_atlas/evidence/`.
+
+Binary triage candidates use current-data feature evidence: ROI/QC fields, learned ROI fields when present, embedding PCA coordinates, GMM or selected-cluster fields, blocked-cluster indicators, nearest reviewed anchor class/distance, and recovered-anchor evidence where computable. Logistic candidates use subject-grouped development folds and write:
+
+```text
+p(moderate_severe | x) = 1 / (1 + exp(-(b0 + b1*x1 + ... + bk*xk)))
+```
+
+Thresholds are selected from grouped out-of-fold development predictions using the recorded review-triage objective. Metrics are current-data grouped-development estimates with subject-bootstrap intervals where estimable. Feature explanations are coefficient-based model-decision evidence for review prioritization; they are not biological mechanism or causal proof.
+
+The review handoff is usability-first. Open `burden_model/embedding_atlas/binary_review_triage/evidence/binary_triage_review.html`, review cases beside the ROI image and mask, use the dropdowns to accept/correct/escalate/exclude, then export the review CSV. See [BINARY_REVIEW_TRIAGE_GUIDE.md](BINARY_REVIEW_TRIAGE_GUIDE.md) for the exact artifact order, dropdown meanings, reproducibility checklist, and model artifact policy.
 
 ### What Does Not Yet Exist As A Matured Workflow
 
@@ -572,6 +608,7 @@ The current `master` branch still does **not** provide:
 - per-glomerulus labels inside multi-glomerulus images
 - validated subject-level endotheliosis burden prediction as the primary shareable target
 - a fully production-hardened deployment path from predicted masks to final score
+- externally validated binary triage performance or autonomous grading
 - faithful attribution methods for the embedding model
 
 The maintained quantification CLI surface is `prepare-quant-contract` plus `quant-endo`.

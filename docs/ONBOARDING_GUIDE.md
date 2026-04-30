@@ -311,12 +311,13 @@ This writes:
 - `burden_model/primary_burden_index/candidates/` candidate-screen artifacts such as `signal_comparator_metrics.csv`, `subject_level_candidate_predictions.csv`, `precision_candidate_summary.json`, `morphology_candidate_metrics.csv`, and `morphology_candidate_summary.json`; these are review artifacts, not deployed models
 - `burden_model/primary_burden_index/evidence/morphology_feature_review/` with the visual feature review page, selected cases, overlay assets, and operator adjudication template
 - `burden_model/learned_roi/` with `INDEX.md`, `summary/` first-read verdict artifacts, the capped learned ROI phase-1 screen, provider audit, learned feature table, candidate metrics, calibration summary, cohort-confounding diagnostics, nearest examples, and learned ROI evidence review
+- `burden_model/embedding_atlas/` with the label-free atlas, adjudicated score/anchor evidence, static review HTML, and `binary_review_triage/` outputs for no/low versus moderate/severe review prioritization
 - `ordinal_model/` artifacts with ordinal comparator predictions, probabilities, metrics, confusion matrix, and the comparator-specific HTML review
 - `quantification_review/` artifacts with the combined burden/comparator HTML review, reviewer examples, concrete results summaries, and a README/docs snippet generated from the current run
 
 The burden score is a predictive ordinal stage-burden index from image-level grades. It is not a pixel-level tissue-area percent and should be interpreted with the generated support, calibration, and uncertainty artifacts.
 
-The current full-cohort burden result is exploratory rather than a deployed model claim. The generated `quantification_review/readme_results_snippet.md` is not automatically shareable; reuse it only when the review report marks the selected track as README/docs-ready. Current candidate screens keep subject/cohort burden, per-image burden, morphology-aware feature evidence, and learned ROI evidence separate so feature QA, uncertainty, and cohort-confounding gates can be reviewed before any public claim.
+The current full-cohort burden result is exploratory rather than a deployed model claim. The generated `quantification_review/readme_results_snippet.md` is not automatically shareable; reuse it only when the review report marks the selected track as README/docs-ready. Current candidate screens keep subject/cohort burden, per-image burden, morphology-aware feature evidence, learned ROI evidence, and binary triage evidence separate so feature QA, uncertainty, and cohort-confounding gates can be reviewed before any public claim. For binary review triage, open [BINARY_REVIEW_TRIAGE_GUIDE.md](BINARY_REVIEW_TRIAGE_GUIDE.md) and use `binary_review_triage/evidence/binary_triage_review.html` as the reviewer-facing HTML.
 
 ## A Good Mental Model For The Repo
 

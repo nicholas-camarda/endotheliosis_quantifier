@@ -277,7 +277,11 @@ The label-free ROI embedding atlas runs from an existing quantification output r
 eq run-config --config configs/label_free_roi_embedding_atlas.yaml
 ```
 
-The atlas writes under `burden_model/embedding_atlas/`. Open `INDEX.md` first, then `summary/atlas_verdict.json`, `evidence/embedding_atlas_review.html`, and `review_queue/atlas_adjudication_queue.csv`. These artifacts support descriptive morphology clustering and review prioritization only. They are not calibrated no-low, mid-mod, or mod-severe probabilities, mechanistic evidence, or replacements for human-reviewed labels.
+The atlas writes under `burden_model/embedding_atlas/`. Open `INDEX.md` first, then `summary/atlas_verdict.json`, `evidence/embedding_atlas_review.html`, `evidence/atlas_flagged_case_review.html`, and `binary_review_triage/evidence/binary_triage_review.html`.
+
+The current grading direction is binary review triage: score `0` or `0.5` is `no_low`, score `1.5`, `2`, or `3` is `moderate_severe`, and score `1.0` is `borderline_review` outside the primary binary target. Binary triage outputs include grouped-development metrics, subject-bootstrap confidence intervals where estimable, uncertainty labels, source/cohort warnings, nearest reviewed-anchor evidence, and feature-contribution summaries for review. These artifacts support descriptive morphology clustering and review prioritization only. They are not calibrated multi-ordinal probabilities, independent validation evidence, mechanistic evidence, or replacements for human-reviewed labels.
+
+For the reviewer workflow, reproducibility checklist, binary target math, explanation interpretation, and model artifact policy, see [docs/BINARY_REVIEW_TRIAGE_GUIDE.md](docs/BINARY_REVIEW_TRIAGE_GUIDE.md).
 
 Current quantification implementation surfaces:
 

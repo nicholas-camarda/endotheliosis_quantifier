@@ -11,6 +11,7 @@ import importlib
 import json
 import logging
 import os
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -19,7 +20,11 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from eq.quantification.modeling_contracts import save_json, to_finite_numeric_matrix
+from eq.quantification.modeling_contracts import (
+    save_json,
+    save_supported_sklearn_model,
+    to_finite_numeric_matrix,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -94,6 +99,13 @@ ROI_QC_COLUMNS = [
     'roi_union_bbox_height',
     'roi_largest_component_area_fraction',
 ]
+BINARY_TRIAGE_SUBTREE = Path('binary_review_triage')
+BINARY_TRIAGE_CLAIM_BOUNDARY = (
+    'Binary triage outputs prioritize no/low versus moderate/severe review. '
+    'They are current-data grouped-development evidence, not external '
+    'validation, calibrated clinical probabilities, causal explanations, or '
+    'autonomous endotheliosis grades.'
+)
 
 
 class AtlasFailClosed(RuntimeError):
@@ -167,6 +179,21 @@ class FeatureSpace:
     scaling_policy: str
     pca_policy: str
     diagnostics: dict[str, Any]
+
+
+@dataclass
+class AtlasAdjudicationResult:
+    """Validated atlas adjudication evidence and generated artifact summary."""
+
+    status: str
+    cluster_review: pd.DataFrame
+    flagged_decisions: pd.DataFrame
+    score_corrections: pd.DataFrame
+    recovered_anchors: pd.DataFrame
+    anchor_manifest: pd.DataFrame
+    blocked_clusters: pd.DataFrame
+    diagnostics: dict[str, Any]
+    changed: dict[str, Path]
 
 
 def run_label_free_roi_embedding_atlas(
@@ -245,6 +272,15 @@ def run_label_free_roi_embedding_atlas(
             assignments, inputs, diagnostics, feature_spaces, atlas_paths, config
         )
         changed.update(evidence_changed)
+        adjudication = _write_adjudication_and_binary_triage_outputs(
+            assignments=assignments,
+            inputs=inputs,
+            diagnostics=diagnostics,
+            feature_spaces=feature_spaces,
+            atlas_paths=atlas_paths,
+            config=config,
+        )
+        changed.update(adjudication.changed)
 
         verdict = _build_verdict(
             status='completed',
@@ -256,6 +292,7 @@ def run_label_free_roi_embedding_atlas(
                 atlas_paths.review_queue / 'atlas_adjudication_queue.csv'
             ),
             selected_atlas_view=_selected_view(assignments),
+            adjudication_summary=adjudication.diagnostics,
         )
         changed.update(_write_first_read_artifacts(atlas_paths, verdict, changed))
         return changed
@@ -1009,6 +1046,12 @@ def _run_cluster_methods(
         )
         if int(value) >= 2
     ]
+    gmm_covariance_type = str(
+        settings.get('gmm_covariance_type', method_settings.get('gmm_covariance_type', 'diag'))
+    )
+    gmm_reg_covar = float(
+        settings.get('gmm_reg_covar', method_settings.get('gmm_reg_covar', 1e-4))
+    )
     run_settings = _mapping(config, 'run', allow_empty=True)
     random_state = int(settings.get('random_state', run_settings.get('seed', 0)))
     assignment_frames: list[pd.DataFrame] = []
@@ -1019,7 +1062,9 @@ def _run_cluster_methods(
         valid_counts = [k for k in cluster_counts if k < len(space.row_frame)]
         if not valid_counts:
             continue
-        selected_k = _select_k_by_silhouette(space.matrix, valid_counts, random_state)
+        selected_k, selection_warnings = _select_k_by_silhouette(
+            space.matrix, valid_counts, random_state
+        )
         for k in valid_counts:
             grid_rows.append(
                 {
@@ -1028,19 +1073,45 @@ def _run_cluster_methods(
                     'cluster_count': int(k),
                     'selection_rule': 'max_silhouette_label_free',
                     'selected': bool(k == selected_k),
+                    'numeric_warning_count': len(selection_warnings.get(k, [])),
+                    'numeric_warning_messages': '; '.join(
+                        selection_warnings.get(k, [])[:3]
+                    ),
                 }
             )
         kmeans = KMeans(n_clusters=selected_k, random_state=random_state, n_init=20)
-        labels = kmeans.fit_predict(space.matrix)
-        distances = kmeans.transform(space.matrix)
+        labels, kmeans_fit_warnings = _capture_runtime_warnings(
+            lambda: kmeans.fit_predict(space.matrix)
+        )
+        distances, kmeans_transform_warnings = _capture_runtime_warnings(
+            lambda: kmeans.transform(space.matrix)
+        )
+        for row in grid_rows:
+            if (
+                row['feature_space_id'] == space.space_id
+                and row['method_id'] == 'kmeans'
+                and row['cluster_count'] == int(selected_k)
+            ):
+                fit_warnings = kmeans_fit_warnings + kmeans_transform_warnings
+                row['fit_numeric_warning_count'] = len(fit_warnings)
+                row['fit_numeric_warning_messages'] = '; '.join(fit_warnings[:3])
         confidence = 1.0 / (1.0 + distances[np.arange(len(labels)), labels])
         assignment_frames.append(
             _assignment_frame(space, 'kmeans', labels, confidence, outlier=False)
         )
 
-        gmm = GaussianMixture(n_components=selected_k, random_state=random_state)
-        gmm_labels = gmm.fit_predict(space.matrix)
-        probs = gmm.predict_proba(space.matrix)
+        gmm = GaussianMixture(
+            n_components=selected_k,
+            random_state=random_state,
+            covariance_type=gmm_covariance_type,
+            reg_covar=gmm_reg_covar,
+        )
+        gmm_labels, gmm_fit_warnings = _capture_runtime_warnings(
+            lambda: gmm.fit_predict(space.matrix)
+        )
+        probs, gmm_predict_warnings = _capture_runtime_warnings(
+            lambda: gmm.predict_proba(space.matrix)
+        )
         assignment_frames.append(
             _assignment_frame(
                 space,
@@ -1057,6 +1128,12 @@ def _run_cluster_methods(
                 'cluster_count': int(selected_k),
                 'selection_rule': 'reuse_selected_kmeans_k_label_free',
                 'selected': True,
+                'covariance_type': gmm_covariance_type,
+                'reg_covar': gmm_reg_covar,
+                'fit_numeric_warning_count': len(gmm_fit_warnings + gmm_predict_warnings),
+                'fit_numeric_warning_messages': '; '.join(
+                    (gmm_fit_warnings + gmm_predict_warnings)[:3]
+                ),
             }
         )
 
@@ -1077,20 +1154,38 @@ def _run_cluster_methods(
 
 def _select_k_by_silhouette(
     matrix: np.ndarray, cluster_counts: list[int], random_state: int
-) -> int:
+) -> tuple[int, dict[int, list[str]]]:
     from sklearn.cluster import KMeans
     from sklearn.metrics import silhouette_score
 
     scores: list[tuple[int, float]] = []
+    warnings_by_k: dict[int, list[str]] = {}
     for k in cluster_counts:
-        labels = KMeans(n_clusters=k, random_state=random_state, n_init=10).fit_predict(
-            matrix
+        labels, warning_messages = _capture_runtime_warnings(
+            lambda: KMeans(
+                n_clusters=k, random_state=random_state, n_init=10
+            ).fit_predict(matrix)
         )
-        score = (
-            float(silhouette_score(matrix, labels)) if len(set(labels)) > 1 else -1.0
-        )
+        if len(set(labels)) > 1:
+            score, score_warnings = _capture_runtime_warnings(
+                lambda: float(silhouette_score(matrix, labels))
+            )
+        else:
+            score = -1.0
+            score_warnings = []
+        warnings_by_k[int(k)] = warning_messages + score_warnings
         scores.append((k, score))
-    return max(scores, key=lambda item: (item[1], -item[0]))[0]
+    return max(scores, key=lambda item: (item[1], -item[0]))[0], warnings_by_k
+
+
+def _capture_runtime_warnings(operation):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always', RuntimeWarning)
+        result = operation()
+    messages = [
+        f'{warning.category.__name__}: {warning.message}' for warning in caught
+    ]
+    return result, list(dict.fromkeys(messages))
 
 
 def _assignment_frame(
@@ -1182,6 +1277,7 @@ def _compute_subject_aware_stability(
             )
             continue
         ari_values: list[float] = []
+        stability_warning_messages: list[str] = []
         for _ in range(resamples):
             sampled_subjects = rng.choice(
                 unique_subjects, size=len(unique_subjects), replace=True
@@ -1190,8 +1286,12 @@ def _compute_subject_aware_stability(
             if int(mask.sum()) <= cluster_count:
                 continue
             km = KMeans(n_clusters=cluster_count, random_state=random_state, n_init=10)
-            sample_labels = km.fit_predict(space.matrix[mask])
+            sample_labels, warning_messages = _capture_runtime_warnings(
+                lambda: km.fit_predict(space.matrix[mask])
+            )
             ari_values.append(float(adjusted_rand_score(labels[mask], sample_labels)))
+            if warning_messages:
+                stability_warning_messages.extend(warning_messages)
         records.append(
             {
                 'feature_space_id': str(space_id),
@@ -1205,6 +1305,10 @@ def _compute_subject_aware_stability(
                 else None,
                 'adjusted_rand_min': float(np.min(ari_values)) if ari_values else None,
                 'non_estimable_reason': '' if ari_values else 'no_valid_resamples',
+                'numeric_warning_count': len(stability_warning_messages),
+                'numeric_warning_messages': '; '.join(
+                    list(dict.fromkeys(stability_warning_messages))[:3]
+                ),
             }
         )
     results = []
@@ -1666,6 +1770,7 @@ def _write_html_review(
         'missing_asset_count': len(missing_assets),
     }
     payload_json = html.escape(json.dumps(payload, allow_nan=False), quote=False)
+    static_case_sections = _static_embedding_review_sections(cases)
     document = f"""<!doctype html>
 <html>
 <head>
@@ -1722,7 +1827,7 @@ textarea {{ grid-column: 1 / -1; min-height: 58px; resize: vertical; }}
 <section>
 <h2>Adjudication cases</h2>
 <p class="status">Missing asset rows: {len(missing_assets)}. Review each ROI/mask pair, set the dropdowns, add notes where useful, then export CSV.</p>
-<div id="cases"></div>
+<div id="cases">{static_case_sections}</div>
 </section>
 </main>
 <script id="atlas-data" type="application/json">{payload_json}</script>
@@ -1851,6 +1956,936 @@ renderCases();
     return path
 
 
+def _static_embedding_review_sections(cases: list[dict[str, Any]]) -> str:
+    if not cases:
+        return '<p>No representative cases were generated for review.</p>'
+    case_fields = {
+        'roi_usability': ['', 'usable', 'bad_crop', 'bad_mask', 'tissue_or_image_artifact', 'unclear'],
+        'morphology_assessment': [
+            '',
+            'mostly_open_lumina',
+            'collapsed_or_closed_capillaries',
+            'endotheliosis_like_swelling',
+            'rbc_heavy',
+            'poor_tissue_quality_or_artifact',
+            'not_enough_information',
+        ],
+        'score_plausibility': ['', 'too_low', 'plausible', 'too_high', 'cannot_judge'],
+        'case_cluster_fit': [
+            '',
+            'representative',
+            'atypical_but_valid',
+            'outlier_or_wrong_cluster',
+            'unclear',
+        ],
+        'review_action': [
+            '',
+            'accept',
+            'flag_score_review',
+            'flag_roi_mask_review',
+            'exclude_from_anchor',
+            'unclear',
+        ],
+    }
+    cluster_fields = {
+        'cluster_interpretation': [
+            '',
+            'real_morphology_cluster',
+            'source_or_batch_artifact',
+            'roi_or_mask_artifact',
+            'mixed_or_uninterpretable',
+        ],
+        'cluster_review_confidence': ['', 'high', 'moderate', 'low'],
+    }
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in cases:
+        key = (
+            f"{item.get('feature_space_id')} / {item.get('method_id')} / "
+            f"cluster {item.get('cluster_id')}"
+        )
+        grouped.setdefault(key, []).append(item)
+    sections: list[str] = []
+    for cluster, rows in grouped.items():
+        cluster_controls = ''.join(
+            _static_review_select(field, options) for field, options in cluster_fields.items()
+        )
+        cards = ''.join(
+            _static_embedding_case_card(row, case_fields) for row in rows
+        )
+        sections.append(
+            f"""
+<section class="cluster-block">
+  <h2>{html.escape(cluster)}</h2>
+  <section class="case-card">
+    <div class="controls">
+      {cluster_controls}
+      <label>cluster notes<textarea name="cluster_notes"></textarea></label>
+    </div>
+  </section>
+  <div class="case-grid">{cards}</div>
+</section>"""
+        )
+    return ''.join(sections)
+
+
+def _static_embedding_case_card(
+    row: dict[str, Any], case_fields: dict[str, list[str]]
+) -> str:
+    controls = ''.join(
+        _static_review_select(field, options) for field, options in case_fields.items()
+    )
+    return f"""
+<article class="case-card">
+  <div class="case-head">
+    <strong>Atlas row {html.escape(str(row.get('atlas_row_id', '')))} | score {html.escape(str(row.get('original_score', '')))}</strong>
+    <span class="case-meta">subject {html.escape(str(row.get('subject_id', '')))}<br>nearest row {html.escape(str(row.get('nearest_neighbor_atlas_row_id', '')))}</span>
+  </div>
+  <div class="image-row">
+    <figure><figcaption>ROI image</figcaption><img src="{html.escape(str(row.get('roi_image_src', '')))}" alt="ROI image for atlas row {html.escape(str(row.get('atlas_row_id', '')))}"></figure>
+    <figure><figcaption>ROI mask</figcaption><img src="{html.escape(str(row.get('roi_mask_src', '')))}" alt="ROI mask for atlas row {html.escape(str(row.get('atlas_row_id', '')))}"></figure>
+  </div>
+  <div class="controls">
+    {controls}
+    <label>reviewer id<input name="reviewer_id"></label>
+    <label>review notes<textarea name="reviewer_notes"></textarea></label>
+    <div class="path">Image: {html.escape(str(row.get('roi_image_path', '')))}<br>Mask: {html.escape(str(row.get('roi_mask_path', '')))}</div>
+  </div>
+</article>"""
+
+
+def _static_review_select(field: str, options: list[str]) -> str:
+    choices = ''.join(
+        f'<option value="{html.escape(value)}">{html.escape(value or "choose")}</option>'
+        for value in options
+    )
+    return (
+        f'<label>{html.escape(field.replace("_", " "))}'
+        f'<select name="{html.escape(field)}">{choices}</select></label>'
+    )
+
+
+CLUSTER_REVIEW_REQUIRED_COLUMNS = [
+    'review_id',
+    'atlas_row_id',
+    'subject_id',
+    'subject_image_id',
+    'glomerulus_id',
+    'feature_space_id',
+    'method_id',
+    'cluster_id',
+    'original_score',
+    'nearest_neighbor_atlas_row_id',
+    'roi_usability',
+    'morphology_assessment',
+    'score_plausibility',
+    'case_cluster_fit',
+    'review_action',
+    'cluster_interpretation',
+    'cluster_review_confidence',
+    'cluster_notes',
+    'reviewer_notes',
+    'reviewer_id',
+    'reviewed_at',
+    'roi_image_path',
+    'roi_mask_path',
+]
+
+FLAGGED_DECISION_REQUIRED_COLUMNS = [
+    'review_id',
+    'atlas_row_id',
+    'subject_image_id',
+    'cluster_id',
+    'original_score',
+    'review_action',
+    'score_plausibility',
+    'case_cluster_fit',
+    'score_decision',
+    'corrected_score',
+    'score_error_reason',
+    'anchor_decision',
+    'anchor_exclusion_reason',
+    'final_notes',
+    'reviewed_at',
+    'roi_image_path',
+    'roi_mask_path',
+]
+
+
+def _write_adjudication_and_binary_triage_outputs(
+    *,
+    assignments: pd.DataFrame,
+    inputs: AtlasInputs,
+    diagnostics: dict[str, Any],
+    feature_spaces: list[FeatureSpace],
+    atlas_paths: AtlasPaths,
+    config: dict[str, Any],
+) -> AtlasAdjudicationResult:
+    metadata = inputs.embeddings.reset_index(drop=True).copy()
+    metadata['atlas_row_id'] = np.arange(len(metadata), dtype=int)
+    primary = _primary_assignments(assignments)
+    reference = _atlas_reference_frame(metadata, primary)
+    cluster_review_path = _adjudication_input_path(
+        config,
+        atlas_paths,
+        'cluster_review_export',
+        'evidence/atlas_adjudication_review_export.csv',
+    )
+    flagged_decision_path = _adjudication_input_path(
+        config,
+        atlas_paths,
+        'flagged_case_decisions',
+        'evidence/atlas_flagged_case_decisions.csv',
+    )
+    cluster_review = _read_optional_csv(cluster_review_path)
+    flagged_decisions = _read_optional_csv(flagged_decision_path)
+    changed: dict[str, Path] = {}
+    validation_errors: list[str] = []
+    if not cluster_review.empty:
+        validation_errors.extend(
+            _validate_adjudication_rows(
+                cluster_review,
+                reference,
+                required_columns=CLUSTER_REVIEW_REQUIRED_COLUMNS,
+                comparison_columns=[
+                    'subject_image_id',
+                    'cluster_id',
+                    'original_score',
+                    'roi_image_path',
+                    'roi_mask_path',
+                ],
+                decision_columns=[
+                    'roi_usability',
+                    'morphology_assessment',
+                    'score_plausibility',
+                    'case_cluster_fit',
+                    'review_action',
+                    'cluster_interpretation',
+                    'cluster_review_confidence',
+                    'cluster_notes',
+                ],
+                input_name='cluster_review_export',
+            )
+        )
+    if not flagged_decisions.empty:
+        validation_errors.extend(
+            _validate_adjudication_rows(
+                flagged_decisions,
+                reference,
+                required_columns=FLAGGED_DECISION_REQUIRED_COLUMNS,
+                comparison_columns=[
+                    'subject_image_id',
+                    'cluster_id',
+                    'original_score',
+                    'roi_image_path',
+                    'roi_mask_path',
+                ],
+                decision_columns=[
+                    'score_decision',
+                    'corrected_score',
+                    'score_error_reason',
+                    'anchor_decision',
+                    'anchor_exclusion_reason',
+                ],
+                input_name='flagged_case_decisions',
+            )
+        )
+    status = (
+        'failed_validation'
+        if validation_errors
+        else 'provided'
+        if (not cluster_review.empty or not flagged_decisions.empty)
+        else 'not_provided'
+    )
+    adjudication_diagnostics = {
+        'status': status,
+        'cluster_review_export': str(cluster_review_path),
+        'cluster_review_export_exists': cluster_review_path.exists(),
+        'cluster_review_rows': int(len(cluster_review)),
+        'flagged_case_decisions': str(flagged_decision_path),
+        'flagged_case_decisions_exists': flagged_decision_path.exists(),
+        'flagged_decision_rows': int(len(flagged_decisions)),
+        'validation_errors': validation_errors,
+    }
+    diagnostics_path = save_json(
+        adjudication_diagnostics,
+        atlas_paths.diagnostics / 'adjudication_input_diagnostics.json',
+    )
+    changed['adjudication_input_diagnostics'] = diagnostics_path
+    if validation_errors:
+        raise ValueError(
+            'Invalid atlas adjudication evidence: ' + '; '.join(validation_errors)
+        )
+
+    case_actions = _case_actions_from_cluster_review(cluster_review)
+    case_actions_path = atlas_paths.evidence / 'atlas_adjudicated_case_actions.csv'
+    case_actions.to_csv(case_actions_path, index=False)
+    changed['atlas_adjudicated_case_actions'] = case_actions_path
+    focused_review_path = _write_flagged_case_review_html(atlas_paths, case_actions)
+    changed['atlas_flagged_case_review'] = focused_review_path
+
+    score_corrections = _score_corrections_from_flagged_decisions(flagged_decisions)
+    score_correction_path = atlas_paths.evidence / 'atlas_score_corrections.csv'
+    score_corrections.to_csv(score_correction_path, index=False)
+    changed['atlas_score_corrections'] = score_correction_path
+
+    recovered_anchors = _recovered_anchors_from_flagged_decisions(flagged_decisions)
+    recovered_anchor_path = atlas_paths.evidence / 'atlas_recovered_anchor_examples.csv'
+    recovered_anchors.to_csv(recovered_anchor_path, index=False)
+    changed['atlas_recovered_anchor_examples'] = recovered_anchor_path
+
+    anchor_manifest, blocked_clusters = _anchor_manifests_from_cluster_review(
+        cluster_review
+    )
+    anchor_manifest_path = atlas_paths.evidence / 'atlas_adjudicated_anchor_manifest.csv'
+    blocked_cluster_path = atlas_paths.evidence / 'atlas_blocked_cluster_manifest.csv'
+    anchor_manifest.to_csv(anchor_manifest_path, index=False)
+    blocked_clusters.to_csv(blocked_cluster_path, index=False)
+    changed['atlas_adjudicated_anchor_manifest'] = anchor_manifest_path
+    changed['atlas_blocked_cluster_manifest'] = blocked_cluster_path
+
+    final_outcome = _final_adjudication_outcome(
+        cluster_review_path=cluster_review_path,
+        flagged_decision_path=flagged_decision_path,
+        cluster_review=cluster_review,
+        flagged_decisions=flagged_decisions,
+        score_corrections=score_corrections,
+        recovered_anchors=recovered_anchors,
+        anchor_manifest=anchor_manifest,
+        blocked_clusters=blocked_clusters,
+        diagnostics=adjudication_diagnostics,
+    )
+    final_json_path = save_json(
+        final_outcome, atlas_paths.evidence / 'atlas_final_adjudication_outcome.json'
+    )
+    final_md_path = atlas_paths.evidence / 'atlas_final_adjudication_outcome.md'
+    final_md_path.write_text(
+        _render_final_adjudication_outcome_md(final_outcome), encoding='utf-8'
+    )
+    changed['atlas_final_adjudication_outcome'] = final_json_path
+    changed['atlas_final_adjudication_outcome_md'] = final_md_path
+
+    triage_changed = _write_binary_review_triage_outputs(
+        atlas_paths=atlas_paths,
+        inputs=inputs,
+        assignments=assignments,
+        feature_spaces=feature_spaces,
+        anchor_manifest=anchor_manifest,
+        blocked_clusters=blocked_clusters,
+        recovered_anchors=recovered_anchors,
+        score_corrections=score_corrections,
+    )
+    changed.update(triage_changed)
+    adjudication_diagnostics.update(
+        {
+            'score_correction_count': int(len(score_corrections)),
+            'recovered_anchor_count': int(len(recovered_anchors)),
+            'candidate_anchor_cluster_count': int(len(anchor_manifest)),
+            'blocked_cluster_count': int(len(blocked_clusters)),
+            'final_outcome_path': str(final_json_path),
+            'binary_triage_verdict_path': str(
+                triage_changed.get('binary_triage_verdict', '')
+            ),
+        }
+    )
+    save_json(
+        adjudication_diagnostics,
+        atlas_paths.diagnostics / 'adjudication_input_diagnostics.json',
+    )
+    return AtlasAdjudicationResult(
+        status=status,
+        cluster_review=cluster_review,
+        flagged_decisions=flagged_decisions,
+        score_corrections=score_corrections,
+        recovered_anchors=recovered_anchors,
+        anchor_manifest=anchor_manifest,
+        blocked_clusters=blocked_clusters,
+        diagnostics=adjudication_diagnostics,
+        changed=changed,
+    )
+
+
+def _adjudication_input_path(
+    config: dict[str, Any], atlas_paths: AtlasPaths, key: str, default: str
+) -> Path:
+    adjudication = _mapping(config, 'adjudication', allow_empty=True)
+    review = _mapping(config, 'review', allow_empty=True)
+    value = adjudication.get(key, review.get(key, default))
+    path = Path(str(value)).expanduser()
+    if path.is_absolute():
+        return path
+    if path.parts[:1] == ('burden_model',):
+        return atlas_paths.quantification_root / path
+    return atlas_paths.root / path
+
+
+def _read_optional_csv(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    return pd.read_csv(path, dtype=str).fillna('')
+
+
+def _atlas_reference_frame(metadata: pd.DataFrame, primary: pd.DataFrame) -> pd.DataFrame:
+    keep = [
+        column
+        for column in [
+            'atlas_row_id',
+            'subject_id',
+            'subject_image_id',
+            'glomerulus_id',
+            'score',
+            'roi_image_path',
+            'roi_mask_path',
+            'cohort_id',
+        ]
+        if column in metadata.columns
+    ]
+    reference = metadata.loc[:, keep].copy()
+    reference['original_score'] = reference.get('score', '')
+    primary_keep = [
+        column
+        for column in [
+            'atlas_row_id',
+            'feature_space_id',
+            'method_id',
+            'cluster_id',
+            'assignment_confidence',
+            'assignment_distance',
+        ]
+        if column in primary.columns
+    ]
+    if primary_keep:
+        reference = reference.merge(
+            primary.loc[:, primary_keep].drop_duplicates('atlas_row_id'),
+            on='atlas_row_id',
+            how='left',
+            suffixes=('', '_assignment'),
+        )
+    return reference
+
+
+def _validate_adjudication_rows(
+    frame: pd.DataFrame,
+    reference: pd.DataFrame,
+    *,
+    required_columns: list[str],
+    comparison_columns: list[str],
+    decision_columns: list[str],
+    input_name: str,
+) -> list[str]:
+    errors: list[str] = []
+    missing = [column for column in required_columns if column not in frame.columns]
+    if missing:
+        errors.append(f'{input_name}: missing columns {missing}')
+        return errors
+    work = frame.copy()
+    work['atlas_row_id'] = pd.to_numeric(work['atlas_row_id'], errors='coerce')
+    if work['atlas_row_id'].isna().any():
+        errors.append(f'{input_name}: nonnumeric atlas_row_id values')
+        return errors
+    work['atlas_row_id'] = work['atlas_row_id'].astype(int)
+    ref = reference.drop_duplicates('atlas_row_id').set_index('atlas_row_id')
+    missing_ids = sorted(set(work['atlas_row_id']) - set(ref.index))
+    if missing_ids:
+        errors.append(f'{input_name}: unmatched atlas_row_id values {missing_ids[:20]}')
+    duplicate = work[work.duplicated('atlas_row_id', keep=False)]
+    if not duplicate.empty:
+        for atlas_row_id, group in duplicate.groupby('atlas_row_id'):
+            for column in decision_columns:
+                if column in group.columns and group[column].astype(str).nunique() > 1:
+                    errors.append(
+                        f'{input_name}: conflicting duplicate decisions for '
+                        f'atlas_row_id {atlas_row_id} column {column}'
+                    )
+    for _, row in work.iterrows():
+        atlas_row_id = int(row['atlas_row_id'])
+        if atlas_row_id not in ref.index:
+            continue
+        ref_row = ref.loc[atlas_row_id]
+        for column in comparison_columns:
+            if column not in work.columns or column not in ref_row.index:
+                continue
+            provided = str(row.get(column, '')).strip()
+            if provided == '':
+                continue
+            expected = ref_row.get(column, '')
+            if column == 'original_score':
+                expected = ref_row.get('score', expected)
+                if _score_text(provided) != _score_text(expected):
+                    errors.append(
+                        f'{input_name}: atlas_row_id {atlas_row_id} original_score '
+                        f'{provided} != current {expected}'
+                    )
+            elif str(provided) != str(expected):
+                errors.append(
+                    f'{input_name}: atlas_row_id {atlas_row_id} {column} '
+                    f'{provided} != current {expected}'
+                )
+    return errors
+
+
+def _score_text(value: Any) -> str:
+    numeric = pd.to_numeric(pd.Series([value]), errors='coerce').iloc[0]
+    if pd.isna(numeric):
+        return str(value)
+    return f'{float(numeric):.6g}'
+
+
+def _case_actions_from_cluster_review(cluster_review: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        'atlas_row_id',
+        'subject_id',
+        'subject_image_id',
+        'cluster_id',
+        'original_score',
+        'morphology_assessment',
+        'score_plausibility',
+        'case_cluster_fit',
+        'review_action',
+        'reviewer_notes',
+        'roi_image_path',
+        'roi_mask_path',
+    ]
+    if cluster_review.empty:
+        return pd.DataFrame(columns=columns)
+    actions = cluster_review[
+        cluster_review.get('review_action', pd.Series('', index=cluster_review.index))
+        .astype(str)
+        .isin(['flag_score_review', 'flag_roi_mask_review', 'exclude_from_anchor'])
+    ].copy()
+    for column in columns:
+        if column not in actions.columns:
+            actions[column] = ''
+    return actions.loc[:, columns].sort_values(['cluster_id', 'atlas_row_id'])
+
+
+def _score_corrections_from_flagged_decisions(flagged: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        'atlas_row_id',
+        'subject_image_id',
+        'cluster_id',
+        'original_score',
+        'adjudicated_score',
+        'score_decision',
+        'reason',
+        'final_notes',
+        'reviewed_at',
+        'roi_image_path',
+        'roi_mask_path',
+    ]
+    if flagged.empty:
+        return pd.DataFrame(columns=columns)
+    rows = flagged[flagged.get('score_decision', '').astype(str).eq('change_score')].copy()
+    if rows.empty:
+        return pd.DataFrame(columns=columns)
+    result = pd.DataFrame(
+        {
+            'atlas_row_id': rows['atlas_row_id'],
+            'subject_image_id': rows['subject_image_id'],
+            'cluster_id': rows['cluster_id'],
+            'original_score': rows['original_score'],
+            'adjudicated_score': rows.get('corrected_score', ''),
+            'score_decision': rows.get('score_decision', ''),
+            'reason': rows.get('score_error_reason', ''),
+            'final_notes': rows.get('final_notes', ''),
+            'reviewed_at': rows.get('reviewed_at', ''),
+            'roi_image_path': rows.get('roi_image_path', ''),
+            'roi_mask_path': rows.get('roi_mask_path', ''),
+        }
+    )
+    return result.loc[:, columns]
+
+
+def _recovered_anchors_from_flagged_decisions(flagged: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        'atlas_row_id',
+        'subject_image_id',
+        'cluster_id',
+        'score',
+        'anchor_decision',
+        'reason',
+        'final_notes',
+        'reviewed_at',
+        'roi_image_path',
+        'roi_mask_path',
+    ]
+    if flagged.empty or 'anchor_decision' not in flagged.columns:
+        return pd.DataFrame(columns=columns)
+    rows = flagged[flagged['anchor_decision'].astype(str).str.startswith('allow_as')].copy()
+    if rows.empty:
+        return pd.DataFrame(columns=columns)
+    result = pd.DataFrame(
+        {
+            'atlas_row_id': rows['atlas_row_id'],
+            'subject_image_id': rows['subject_image_id'],
+            'cluster_id': rows['cluster_id'],
+            'score': rows['original_score'],
+            'anchor_decision': rows['anchor_decision'],
+            'reason': rows.get('anchor_exclusion_reason', ''),
+            'final_notes': rows.get('final_notes', ''),
+            'reviewed_at': rows.get('reviewed_at', ''),
+            'roi_image_path': rows.get('roi_image_path', ''),
+            'roi_mask_path': rows.get('roi_mask_path', ''),
+        }
+    )
+    return result.loc[:, columns]
+
+
+def _anchor_manifests_from_cluster_review(
+    cluster_review: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    columns = [
+        'feature_space_id',
+        'method_id',
+        'cluster_id',
+        'adjudication_verdict',
+        'dominant_morphology',
+        'anchor_class',
+        'rows_reviewed',
+        'accepted_count',
+        'representative_count',
+        'score_review_count',
+        'exclude_from_anchor_count',
+        'cluster_interpretation',
+        'cluster_review_confidence',
+        'cluster_notes',
+        'atlas_row_ids',
+        'claim_boundary',
+    ]
+    if cluster_review.empty:
+        empty = pd.DataFrame(columns=columns)
+        return empty.copy(), empty.copy()
+    records: list[dict[str, Any]] = []
+    for (space_id, method_id, cluster_id), group in cluster_review.groupby(
+        ['feature_space_id', 'method_id', 'cluster_id'], dropna=False
+    ):
+        interpretation = _mode_text(group, 'cluster_interpretation')
+        notes = _mode_text(group, 'cluster_notes')
+        morphology = _mode_text(group, 'morphology_assessment')
+        accepted_count = int(group.get('review_action', '').astype(str).eq('accept').sum())
+        representative_count = int(
+            group.get('case_cluster_fit', '').astype(str).eq('representative').sum()
+        )
+        score_review_count = int(
+            group.get('review_action', '').astype(str).eq('flag_score_review').sum()
+        )
+        exclude_count = int(
+            group.get('review_action', '').astype(str).eq('exclude_from_anchor').sum()
+        )
+        blocked = interpretation != 'real_morphology_cluster' or exclude_count > 0
+        anchor_class = _anchor_class_from_review_text(notes, morphology)
+        verdict = (
+            'blocked_cluster_anchor'
+            if blocked
+            else 'candidate_anchor_cluster'
+            if anchor_class
+            else 'needs_more_review'
+        )
+        records.append(
+            {
+                'feature_space_id': str(space_id),
+                'method_id': str(method_id),
+                'cluster_id': str(cluster_id),
+                'adjudication_verdict': verdict,
+                'dominant_morphology': morphology,
+                'anchor_class': anchor_class,
+                'rows_reviewed': int(len(group)),
+                'accepted_count': accepted_count,
+                'representative_count': representative_count,
+                'score_review_count': score_review_count,
+                'exclude_from_anchor_count': exclude_count,
+                'cluster_interpretation': interpretation,
+                'cluster_review_confidence': _mode_text(group, 'cluster_review_confidence'),
+                'cluster_notes': notes,
+                'atlas_row_ids': ';'.join(group['atlas_row_id'].astype(str).tolist()),
+                'claim_boundary': CLAIM_BOUNDARY,
+            }
+        )
+    frame = pd.DataFrame(records, columns=columns)
+    anchors = frame[frame['adjudication_verdict'].eq('candidate_anchor_cluster')].copy()
+    blocked = frame[frame['adjudication_verdict'].eq('blocked_cluster_anchor')].copy()
+    return anchors, blocked
+
+
+def _mode_text(frame: pd.DataFrame, column: str) -> str:
+    if column not in frame:
+        return ''
+    values = frame[column].fillna('').astype(str)
+    values = values[values.str.strip() != '']
+    if values.empty:
+        return ''
+    return str(values.mode().iat[0]).strip()
+
+
+def _anchor_class_from_review_text(notes: str, morphology: str) -> str:
+    text = f'{notes} {morphology}'.lower()
+    if 'moderate' in text or 'severe' in text or 'collapsed' in text or 'closed' in text:
+        return 'moderate_severe'
+    if 'low' in text or 'no endotheliosis' in text or 'open' in text:
+        return 'no_low'
+    return ''
+
+
+def _final_adjudication_outcome(
+    *,
+    cluster_review_path: Path,
+    flagged_decision_path: Path,
+    cluster_review: pd.DataFrame,
+    flagged_decisions: pd.DataFrame,
+    score_corrections: pd.DataFrame,
+    recovered_anchors: pd.DataFrame,
+    anchor_manifest: pd.DataFrame,
+    blocked_clusters: pd.DataFrame,
+    diagnostics: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        'source_cluster_adjudication_export': str(cluster_review_path),
+        'source_flagged_decisions': str(flagged_decision_path),
+        'adjudication_status': diagnostics.get('status', 'not_provided'),
+        'reviewed_cluster_rows': int(len(cluster_review)),
+        'reviewed_flagged_cases': int(len(flagged_decisions)),
+        'score_change_count': int(len(score_corrections)),
+        'score_changes': score_corrections.to_dict(orient='records'),
+        'score_kept_count': int(
+            flagged_decisions.get('score_decision', pd.Series(dtype=str))
+            .astype(str)
+            .eq('keep_original_score')
+            .sum()
+        )
+        if not flagged_decisions.empty
+        else 0,
+        'recovered_anchor_count': int(len(recovered_anchors)),
+        'anchor_recovered_from_problem_cluster': recovered_anchors.to_dict(
+            orient='records'
+        ),
+        'candidate_anchor_clusters': anchor_manifest.to_dict(orient='records'),
+        'blocked_clusters': blocked_clusters.to_dict(orient='records'),
+        'final_verdict': {
+            'binary_triage_direction': 'review_prioritization_no_low_vs_moderate_severe',
+            'multi_ordinal_status': 'not_primary_product_current_data',
+            'claim_boundary': 'Reviewed anchors and score-review evidence support triage/review prioritization only.',
+        },
+        'next_implementation_step': (
+            'Use adjudicated atlas anchors and score-review evidence to evaluate a '
+            'binary no/low versus moderate/severe review-triage model with '
+            'uncertainty and explanations.'
+        ),
+    }
+
+
+def _render_final_adjudication_outcome_md(outcome: dict[str, Any]) -> str:
+    lines = [
+        '# Final atlas adjudication outcome',
+        '',
+        f"Status: `{outcome.get('adjudication_status')}`",
+        '',
+        '## Score Corrections',
+    ]
+    score_changes = outcome.get('score_changes', [])
+    if score_changes:
+        for row in score_changes:
+            note = f"; note: {row.get('final_notes')}" if row.get('final_notes') else ''
+            lines.append(
+                f"- Atlas row {row.get('atlas_row_id')} ({row.get('subject_image_id')}): "
+                f"{row.get('original_score')} -> {row.get('adjudicated_score')} "
+                f"because `{row.get('reason')}`{note}"
+            )
+    else:
+        lines.append('- None')
+    lines.extend(['', '## Candidate Anchor Clusters'])
+    anchors = outcome.get('candidate_anchor_clusters', [])
+    if anchors:
+        for row in anchors:
+            lines.append(
+                f"- Cluster {row.get('cluster_id')}: `{row.get('anchor_class')}`; "
+                f"{row.get('accepted_count')}/{row.get('rows_reviewed')} accepted; "
+                f"{row.get('cluster_notes')}"
+            )
+    else:
+        lines.append('- None')
+    lines.extend(['', '## Recovered Row-Level Anchors'])
+    recovered = outcome.get('anchor_recovered_from_problem_cluster', [])
+    if recovered:
+        for row in recovered:
+            lines.append(
+                f"- Atlas row {row.get('atlas_row_id')} ({row.get('subject_image_id')}): "
+                f"`{row.get('anchor_decision')}` at score {row.get('score')}; "
+                f"{row.get('final_notes')}"
+            )
+    else:
+        lines.append('- None')
+    lines.extend(['', '## Blocked Clusters'])
+    blocked = outcome.get('blocked_clusters', [])
+    if blocked:
+        for row in blocked:
+            lines.append(
+                f"- Cluster {row.get('cluster_id')}: `{row.get('cluster_interpretation')}`; "
+                f"{row.get('cluster_notes')}"
+            )
+    else:
+        lines.append('- None')
+    lines.extend(
+        [
+            '',
+            '## Direction',
+            (
+                'The repo direction is binary no/low versus moderate/severe review '
+                'triage with uncertainty and explanations, not autonomous multi-ordinal '
+                'grading.'
+            ),
+        ]
+    )
+    return '\n'.join(lines) + '\n'
+
+
+def _write_flagged_case_review_html(
+    atlas_paths: AtlasPaths, case_actions: pd.DataFrame
+) -> Path:
+    rows = [_flagged_review_payload(row) for _, row in case_actions.iterrows()]
+    cards = '\n'.join(_flagged_review_card(row) for row in rows)
+    payload = html.escape(json.dumps({'rows': rows}, allow_nan=False), quote=False)
+    document = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>Flagged atlas case review</title>
+<style>
+body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f6f7f9;color:#1f2933}}
+header{{position:sticky;top:0;background:white;border-bottom:1px solid #d8dde6;padding:14px 20px;z-index:10}}
+h1{{font-size:22px;margin:0 0 6px}} p{{margin:4px 0;color:#52606d}} main{{padding:18px 20px 40px}}
+button{{border:1px solid #9fb3c8;background:white;border-radius:6px;padding:7px 10px;cursor:pointer}}button.primary{{background:#1f5eff;color:white;border-color:#1f5eff}}
+.case{{background:white;border:1px solid #d8dde6;border-radius:8px;margin:0 0 16px;overflow:hidden}}
+.head{{background:#eef2f7;padding:10px 12px}}.prompt{{padding:10px 12px;border-bottom:1px solid #e4e7eb;font-weight:600}}
+.grid{{display:grid;grid-template-columns:1fr 1fr 360px;gap:10px;padding:10px}}figure{{margin:0}}figcaption{{font-size:12px;color:#52606d;margin-bottom:4px}}
+img{{width:100%;max-height:360px;object-fit:contain;background:#111827;border-radius:4px}}
+.controls{{display:grid;gap:8px;align-content:start}}label{{display:grid;gap:3px;font-size:12px;color:#334e68}}
+select,textarea{{width:100%;box-sizing:border-box;border:1px solid #bcccdc;border-radius:5px;padding:6px;font:inherit;background:white}}textarea{{min-height:80px;resize:vertical}}
+.meta{{font-size:13px;color:#52606d;line-height:1.45}}.path{{font-size:11px;color:#627d98;overflow-wrap:anywhere}}
+@media (max-width: 1000px){{.grid{{grid-template-columns:1fr}}}}
+</style></head><body>
+<header><h1>Flagged atlas case review</h1><p>Review only these flagged cases. The cases are visible without JavaScript; JavaScript only saves and exports decisions.</p><button class="primary" id="downloadCsv" type="button">Export flagged-case decisions CSV</button> <button id="clearSaved" type="button">Clear saved values</button> <span id="status">Autosaves in this browser.</span></header>
+<main id="root">{cards or '<p>No flagged cases selected for focused review.</p>'}</main>
+<script id="data" type="application/json">{payload}</script>
+<script>
+const data = JSON.parse(document.getElementById('data').textContent);
+const key = 'eq.flagged_atlas_case_review.' + location.pathname;
+const saved = JSON.parse(localStorage.getItem(key) || '{{}}');
+function persist(id, k, v) {{
+  saved[id] = {{...(saved[id] || {{}}), [k]: v}};
+  localStorage.setItem(key, JSON.stringify(saved));
+  document.getElementById('status').textContent = 'Saved locally at ' + new Date().toLocaleTimeString();
+}}
+document.querySelectorAll('select,textarea').forEach(el => {{
+  const state = saved[el.dataset.id] || {{}};
+  if (state[el.dataset.key]) el.value = state[el.dataset.key];
+  el.addEventListener('change', ev => persist(ev.target.dataset.id, ev.target.dataset.key, ev.target.value));
+  el.addEventListener('input', ev => persist(ev.target.dataset.id, ev.target.dataset.key, ev.target.value));
+}});
+function exportCsv() {{
+  const cols = ['review_id','atlas_row_id','subject_image_id','cluster_id','original_score','review_action','score_plausibility','case_cluster_fit','score_decision','corrected_score','score_error_reason','anchor_decision','anchor_exclusion_reason','final_notes','reviewed_at','roi_image_path','roi_mask_path'];
+  const rows = data.rows.map(item => {{
+    const state = saved[item.review_id] || {{}};
+    return {{...item, ...state, reviewed_at: new Date().toISOString()}};
+  }});
+  const csv = [cols.join(',')].concat(rows.map(r => cols.map(c => `"${{String(r[c] ?? '').replaceAll('"','""')}}"`).join(','))).join('\\n');
+  const blob = new Blob([csv], {{type: 'text/csv'}});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'atlas_flagged_case_decisions.csv'; a.click(); URL.revokeObjectURL(a.href);
+}}
+document.getElementById('downloadCsv').addEventListener('click', exportCsv);
+document.getElementById('clearSaved').addEventListener('click', () => {{ if (confirm('Clear saved decisions?')) {{ localStorage.removeItem(key); location.reload(); }} }});
+</script></body></html>"""
+    path = atlas_paths.evidence / 'atlas_flagged_case_review.html'
+    path.write_text(document, encoding='utf-8')
+    return path
+
+
+def _flagged_review_payload(row: pd.Series) -> dict[str, Any]:
+    action = str(row.get('review_action', ''))
+    if action == 'exclude_from_anchor':
+        fields = {
+            'anchor_decision': [
+                '',
+                'exclude_from_anchor',
+                'allow_as_low_anchor',
+                'allow_as_borderline_anchor',
+                'unclear_needs_second_reviewer',
+            ],
+            'anchor_exclusion_reason': [
+                '',
+                'wrong_cluster',
+                'atypical_morphology',
+                'mixed_features',
+                'rbc_confounded',
+                'not_representative',
+                'other',
+            ],
+        }
+        prompt = 'Confirm whether this case should be excluded from anchor use or recovered as a row-level anchor.'
+    else:
+        fields = {
+            'score_decision': [
+                '',
+                'keep_original_score',
+                'change_score',
+                'unclear_needs_second_reviewer',
+            ],
+            'corrected_score': ['', '0', '0.5', '1', '1.5', '2', '3', 'not_applicable'],
+            'score_error_reason': [
+                '',
+                'rbc_confounded',
+                'open_lumina_underrecognized',
+                'collapsed_lumina_underrecognized',
+                'mixed_features',
+                'image_quality_limits',
+                'other',
+            ],
+        }
+        prompt = 'Decide whether the original score should stay or change.'
+    return {
+        'review_id': f"flagged-{row.get('atlas_row_id', '')}",
+        'atlas_row_id': str(row.get('atlas_row_id', '')),
+        'subject_image_id': str(row.get('subject_image_id', '')),
+        'cluster_id': str(row.get('cluster_id', '')),
+        'original_score': str(row.get('original_score', '')),
+        'review_action': action,
+        'score_plausibility': str(row.get('score_plausibility', '')),
+        'case_cluster_fit': str(row.get('case_cluster_fit', '')),
+        'morphology_assessment': str(row.get('morphology_assessment', '')),
+        'reviewer_notes': str(row.get('reviewer_notes', '')),
+        'roi_image_path': str(row.get('roi_image_path', '')),
+        'roi_mask_path': str(row.get('roi_mask_path', '')),
+        'roi_image_src': _review_image_src(row.get('roi_image_path', '')),
+        'roi_mask_src': _review_image_src(row.get('roi_mask_path', '')),
+        'decision_prompt': prompt,
+        'fields': fields,
+    }
+
+
+def _flagged_review_card(row: dict[str, Any]) -> str:
+    controls = ''.join(
+        _select_control(row['review_id'], field, options)
+        for field, options in row['fields'].items()
+    )
+    return f"""
+<article class="case" data-review-id="{html.escape(row['review_id'])}">
+  <div class="head"><strong>Atlas row {html.escape(row['atlas_row_id'])} | cluster {html.escape(row['cluster_id'])} | original score {html.escape(row['original_score'])}</strong><div class="meta">{html.escape(row['subject_image_id'])} | action: {html.escape(row['review_action'])} | score plausibility: {html.escape(row['score_plausibility'])} | fit: {html.escape(row['case_cluster_fit'])}</div></div>
+  <div class="prompt">{html.escape(row['decision_prompt'])}</div>
+  <div class="grid">
+    <figure><figcaption>ROI image</figcaption><img src="{html.escape(row['roi_image_src'])}" alt="ROI image for atlas row {html.escape(row['atlas_row_id'])}"></figure>
+    <figure><figcaption>ROI mask</figcaption><img src="{html.escape(row['roi_mask_src'])}" alt="ROI mask for atlas row {html.escape(row['atlas_row_id'])}"></figure>
+    <div class="controls">{controls}<label>final notes<textarea data-id="{html.escape(row['review_id'])}" data-key="final_notes"></textarea></label><div class="meta"><strong>Prior morphology:</strong> {html.escape(row['morphology_assessment'])}<br><strong>Prior note:</strong> {html.escape(row['reviewer_notes'])}</div><div class="path">Image: {html.escape(row['roi_image_path'])}<br>Mask: {html.escape(row['roi_mask_path'])}</div></div>
+  </div>
+</article>"""
+
+
+def _select_control(review_id: str, field: str, options: list[str]) -> str:
+    choices = ''.join(
+        f'<option value="{html.escape(value)}">{html.escape(value or "choose")}</option>'
+        for value in options
+    )
+    return (
+        f'<label>{html.escape(field.replace("_", " "))}<select '
+        f'data-id="{html.escape(review_id)}" data-key="{html.escape(field)}">'
+        f'{choices}</select></label>'
+    )
+
+
 def _review_image_src(value: Any) -> str:
     text = str(value or '')
     if not text:
@@ -1883,6 +2918,1355 @@ def _missing_asset_rows(frame: pd.DataFrame) -> list[dict[str, Any]]:
     return rows
 
 
+def _write_binary_review_triage_outputs(
+    *,
+    atlas_paths: AtlasPaths,
+    inputs: AtlasInputs,
+    assignments: pd.DataFrame,
+    feature_spaces: list[FeatureSpace],
+    anchor_manifest: pd.DataFrame,
+    blocked_clusters: pd.DataFrame,
+    recovered_anchors: pd.DataFrame,
+    score_corrections: pd.DataFrame,
+) -> dict[str, Path]:
+    triage_paths = _binary_triage_paths(atlas_paths)
+    for path in triage_paths.values():
+        path.mkdir(parents=True, exist_ok=True)
+
+    metadata = inputs.embeddings.reset_index(drop=True).copy()
+    metadata['atlas_row_id'] = np.arange(len(metadata), dtype=int)
+    primary = _primary_assignments(assignments)
+    frame = _binary_triage_frame(
+        metadata=metadata,
+        primary=primary,
+        feature_spaces=feature_spaces,
+        anchor_manifest=anchor_manifest,
+        blocked_clusters=blocked_clusters,
+        recovered_anchors=recovered_anchors,
+        score_corrections=score_corrections,
+    )
+    frame = _add_binary_targets(frame)
+    feature_sets = _binary_feature_sets(frame)
+
+    changed: dict[str, Path] = {}
+    metrics_rows: list[dict[str, Any]] = []
+    oof_predictions: dict[tuple[str, str], pd.DataFrame] = {}
+
+    baseline_row, baseline_oof = _evaluate_cluster_mapping_candidate(frame)
+    metrics_rows.append(baseline_row)
+    oof_predictions[(baseline_row['candidate_id'], baseline_row['target_kind'])] = (
+        baseline_oof
+    )
+
+    for target_kind, target_column in [
+        ('primary_no_low_vs_moderate_severe', 'binary_target_primary_value'),
+        ('sensitivity_no_low_inclusive', 'binary_target_sensitivity_value'),
+    ]:
+        for candidate_id, payload in feature_sets.items():
+            row, oof = _evaluate_binary_logistic_candidate(
+                frame,
+                candidate_id=candidate_id,
+                feature_family=str(payload['feature_family']),
+                feature_columns=list(payload['columns']),
+                target_kind=target_kind,
+                target_column=target_column,
+            )
+            metrics_rows.append(row)
+            oof_predictions[(candidate_id, target_kind)] = oof
+
+    metrics = pd.DataFrame(metrics_rows)
+    selected = _select_binary_candidate(metrics)
+    predictions, explanations, model_support, model_path = _binary_triage_predictions(
+        frame=frame,
+        feature_sets=feature_sets,
+        selected=selected,
+        oof_predictions=oof_predictions,
+        output_dir=triage_paths['model'],
+    )
+    intervals = _binary_metric_intervals(
+        frame=frame,
+        selected=selected,
+        oof_predictions=oof_predictions,
+    )
+    verdict = _binary_triage_verdict(
+        frame=frame,
+        selected=selected,
+        metrics=metrics,
+        intervals=intervals,
+        model_support=model_support,
+        anchor_manifest=anchor_manifest,
+        blocked_clusters=blocked_clusters,
+        recovered_anchors=recovered_anchors,
+    )
+
+    predictions_path = triage_paths['predictions'] / 'binary_triage_predictions.csv'
+    predictions.to_csv(predictions_path, index=False)
+    changed['binary_triage_predictions'] = predictions_path
+
+    explanation_path = triage_paths['evidence'] / 'binary_triage_explanations.csv'
+    explanations.to_csv(explanation_path, index=False)
+    changed['binary_triage_explanations'] = explanation_path
+
+    metrics_path = triage_paths['summary'] / 'binary_triage_metrics.csv'
+    metrics.to_csv(metrics_path, index=False)
+    changed['binary_triage_metrics'] = metrics_path
+
+    intervals_path = save_json(
+        _json_ready(intervals),
+        triage_paths['summary'] / 'binary_triage_metric_intervals.json',
+    )
+    changed['binary_triage_metric_intervals'] = intervals_path
+
+    support_path = save_json(
+        _json_ready(model_support),
+        triage_paths['diagnostics'] / 'binary_triage_support.json',
+    )
+    changed['binary_triage_support'] = support_path
+
+    verdict_json_path = save_json(
+        _json_ready(verdict), triage_paths['summary'] / 'binary_triage_verdict.json'
+    )
+    verdict_md_path = triage_paths['summary'] / 'binary_triage_verdict.md'
+    verdict_md_path.write_text(_render_binary_triage_verdict_md(verdict), encoding='utf-8')
+    changed['binary_triage_verdict'] = verdict_json_path
+    changed['binary_triage_verdict_md'] = verdict_md_path
+
+    review_path = _write_binary_triage_review_html(
+        triage_paths['evidence'], predictions, explanations
+    )
+    changed['binary_triage_review_html'] = review_path
+
+    if model_path is not None:
+        changed['binary_triage_selected_model'] = model_path
+        model_manifest_path = save_json(
+            _json_ready(
+                {
+                    'model_path': str(model_path),
+                    'storage_policy': (
+                        'runtime_artifact_not_committed; use Git LFS only after a '
+                        'separate promotion gate names this as a stable model'
+                    ),
+                    'selected_candidate_id': selected.get('candidate_id', ''),
+                    'claim_boundary': BINARY_TRIAGE_CLAIM_BOUNDARY,
+                }
+            ),
+            triage_paths['model'] / 'model_manifest.json',
+        )
+        changed['binary_triage_model_manifest'] = model_manifest_path
+
+    index_path = triage_paths['root'] / 'INDEX.md'
+    index_path.write_text(_render_binary_triage_index(verdict), encoding='utf-8')
+    changed['binary_triage_index'] = index_path
+    return changed
+
+
+def _binary_triage_paths(atlas_paths: AtlasPaths) -> dict[str, Path]:
+    root = atlas_paths.root / BINARY_TRIAGE_SUBTREE
+    return {
+        'root': root,
+        'summary': root / 'summary',
+        'predictions': root / 'predictions',
+        'evidence': root / 'evidence',
+        'diagnostics': root / 'diagnostics',
+        'model': root / 'model',
+    }
+
+
+def _binary_triage_frame(
+    *,
+    metadata: pd.DataFrame,
+    primary: pd.DataFrame,
+    feature_spaces: list[FeatureSpace],
+    anchor_manifest: pd.DataFrame,
+    blocked_clusters: pd.DataFrame,
+    recovered_anchors: pd.DataFrame,
+    score_corrections: pd.DataFrame,
+) -> pd.DataFrame:
+    frame = metadata.copy()
+    primary_keep = [
+        column
+        for column in [
+            'atlas_row_id',
+            'feature_space_id',
+            'method_id',
+            'cluster_id',
+            'assignment_confidence',
+            'assignment_distance',
+        ]
+        if column in primary.columns
+    ]
+    if primary_keep:
+        frame = frame.merge(
+            primary.loc[:, primary_keep].drop_duplicates('atlas_row_id'),
+            on='atlas_row_id',
+            how='left',
+        )
+    frame['selected_cluster_id'] = frame.get('cluster_id', '').fillna('').astype(str)
+    frame['selected_view_id'] = (
+        frame.get('feature_space_id', '').fillna('').astype(str)
+        + '/'
+        + frame.get('method_id', '').fillna('').astype(str)
+    )
+    frame['blocked_cluster_indicator'] = _blocked_cluster_indicator(
+        frame, blocked_clusters
+    )
+    frame['score_correction_indicator'] = frame['atlas_row_id'].astype(str).isin(
+        set(score_corrections.get('atlas_row_id', pd.Series(dtype=str)).astype(str))
+    )
+    anchor_records = _anchor_records(anchor_manifest, recovered_anchors)
+    nearest_anchor = _nearest_anchor_frame(frame, feature_spaces, anchor_records)
+    if not nearest_anchor.empty:
+        frame = frame.merge(nearest_anchor, on='atlas_row_id', how='left')
+    for column in [
+        'nearest_anchor_atlas_row_id',
+        'nearest_anchor_class',
+        'nearest_anchor_distance',
+        'nearest_anchor_source',
+    ]:
+        if column not in frame:
+            frame[column] = ''
+    return frame
+
+
+def _blocked_cluster_indicator(
+    frame: pd.DataFrame, blocked_clusters: pd.DataFrame
+) -> pd.Series:
+    if blocked_clusters.empty:
+        return pd.Series(False, index=frame.index)
+    keys = set(
+        zip(
+            blocked_clusters.get('feature_space_id', pd.Series(dtype=str)).astype(str),
+            blocked_clusters.get('method_id', pd.Series(dtype=str)).astype(str),
+            blocked_clusters.get('cluster_id', pd.Series(dtype=str)).astype(str),
+        )
+    )
+    row_keys = zip(
+        frame.get('feature_space_id', pd.Series('', index=frame.index)).astype(str),
+        frame.get('method_id', pd.Series('', index=frame.index)).astype(str),
+        frame.get('cluster_id', pd.Series('', index=frame.index)).astype(str),
+    )
+    return pd.Series([key in keys for key in row_keys], index=frame.index)
+
+
+def _anchor_records(
+    anchor_manifest: pd.DataFrame, recovered_anchors: pd.DataFrame
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    if not anchor_manifest.empty:
+        for _, row in anchor_manifest.iterrows():
+            anchor_class = str(row.get('anchor_class', ''))
+            for value in str(row.get('atlas_row_ids', '')).split(';'):
+                if value.strip():
+                    records.append(
+                        {
+                            'atlas_row_id': int(value),
+                            'anchor_class': anchor_class,
+                            'anchor_source': 'cluster_manifest',
+                        }
+                    )
+    if not recovered_anchors.empty:
+        for _, row in recovered_anchors.iterrows():
+            decision = str(row.get('anchor_decision', ''))
+            anchor_class = (
+                'no_low'
+                if 'low' in decision
+                else 'borderline_review'
+                if 'borderline' in decision
+                else ''
+            )
+            if anchor_class:
+                records.append(
+                    {
+                        'atlas_row_id': int(float(row.get('atlas_row_id'))),
+                        'anchor_class': anchor_class,
+                        'anchor_source': 'row_recovered_anchor',
+                    }
+                )
+    return records
+
+
+def _nearest_anchor_frame(
+    frame: pd.DataFrame,
+    feature_spaces: list[FeatureSpace],
+    anchor_records: list[dict[str, Any]],
+) -> pd.DataFrame:
+    if not anchor_records or not feature_spaces:
+        return pd.DataFrame()
+    preferred = next(
+        (space for space in feature_spaces if space.space_id == 'encoder_pca'),
+        feature_spaces[0],
+    )
+    anchor_df = pd.DataFrame(anchor_records).drop_duplicates('atlas_row_id')
+    valid_anchor_ids = [
+        int(value)
+        for value in anchor_df['atlas_row_id'].tolist()
+        if 0 <= int(value) < preferred.matrix.shape[0]
+    ]
+    if not valid_anchor_ids:
+        return pd.DataFrame()
+    anchor_lookup = anchor_df.set_index('atlas_row_id').to_dict('index')
+    anchor_matrix = preferred.matrix[valid_anchor_ids]
+    rows: list[dict[str, Any]] = []
+    for atlas_row_id in frame['atlas_row_id'].astype(int):
+        vector = preferred.matrix[int(atlas_row_id)]
+        distances = np.linalg.norm(anchor_matrix - vector, axis=1)
+        order = np.argsort(distances)
+        chosen_order = int(order[0])
+        chosen_id = int(valid_anchor_ids[chosen_order])
+        if chosen_id == int(atlas_row_id) and len(order) > 1:
+            chosen_order = int(order[1])
+            chosen_id = int(valid_anchor_ids[chosen_order])
+        payload = anchor_lookup.get(chosen_id, {})
+        rows.append(
+            {
+                'atlas_row_id': int(atlas_row_id),
+                'nearest_anchor_atlas_row_id': chosen_id,
+                'nearest_anchor_class': payload.get('anchor_class', ''),
+                'nearest_anchor_distance': float(distances[chosen_order]),
+                'nearest_anchor_source': payload.get('anchor_source', ''),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _add_binary_targets(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    score = pd.to_numeric(out.get('score'), errors='coerce')
+    out['binary_target_primary'] = np.select(
+        [score <= 0.5, score >= 1.5, score.eq(1.0)],
+        ['no_low', 'moderate_severe', 'borderline_review'],
+        default='unscored',
+    )
+    out['binary_target_primary_value'] = np.where(
+        score <= 0.5, 0, np.where(score >= 1.5, 1, np.nan)
+    )
+    out['binary_target_sensitivity'] = np.select(
+        [score <= 1.0, score >= 1.5], ['no_low_inclusive', 'moderate_severe'], default='unscored'
+    )
+    out['binary_target_sensitivity_value'] = np.where(
+        score <= 1.0, 0, np.where(score >= 1.5, 1, np.nan)
+    )
+    return out
+
+
+def _binary_feature_sets(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    work = frame.copy()
+    for column in ['selected_cluster_id', 'nearest_anchor_class']:
+        if column in work:
+            dummies = pd.get_dummies(work[column].fillna('').astype(str), prefix=column)
+            for dummy in dummies.columns:
+                frame[dummy] = dummies[dummy].astype(float)
+    frame['blocked_cluster_numeric'] = frame.get(
+        'blocked_cluster_indicator', pd.Series(False, index=frame.index)
+    ).astype(float)
+    frame['score_correction_numeric'] = frame.get(
+        'score_correction_indicator', pd.Series(False, index=frame.index)
+    ).astype(float)
+    numeric_columns = set(frame.select_dtypes(include=[np.number, bool]).columns)
+    embedding_columns = [
+        column for column in _encoder_columns(frame) if column in numeric_columns
+    ]
+    roi_columns = [column for column in _roi_qc_columns(frame) if column in numeric_columns]
+    cluster_columns = [
+        column
+        for column in frame.columns
+        if column.startswith('selected_cluster_id_')
+        or column.startswith('nearest_anchor_class_')
+        or column
+        in {
+            'assignment_confidence',
+            'assignment_distance',
+            'nearest_anchor_distance',
+            'blocked_cluster_numeric',
+            'score_correction_numeric',
+        }
+    ]
+    learned_columns = _learned_feature_columns(frame)
+    return {
+        'roi_qc_binary_logistic': {
+            'feature_family': 'roi_qc',
+            'columns': roi_columns,
+        },
+        'embedding_binary_logistic': {
+            'feature_family': 'embedding',
+            'columns': embedding_columns,
+        },
+        'atlas_hybrid_binary_logistic': {
+            'feature_family': 'embedding_roi_qc_atlas_anchor',
+            'columns': sorted(
+                set(embedding_columns + roi_columns + cluster_columns + learned_columns)
+            ),
+        },
+    }
+
+
+def _evaluate_cluster_mapping_candidate(
+    frame: pd.DataFrame,
+) -> tuple[dict[str, Any], pd.DataFrame]:
+    target_column = 'binary_target_primary_value'
+    target_mask = pd.to_numeric(frame[target_column], errors='coerce').notna()
+    work = frame[target_mask].copy()
+    if work.empty:
+        return _non_estimable_metric_row(
+            candidate_id='atlas_cluster_anchor_mapping',
+            target_kind='primary_no_low_vs_moderate_severe',
+            feature_family='atlas_anchor_cluster',
+            model_kind='rule_mapping',
+            reason='no_primary_binary_target_rows',
+            row_count=0,
+            subject_count=0,
+        ), pd.DataFrame()
+    cluster_prob = np.full(len(work), np.nan)
+    class_by_cluster: dict[str, int] = {}
+    grouped = work.groupby('selected_cluster_id', dropna=False)
+    for cluster_id, group in grouped:
+        labels = pd.to_numeric(group[target_column], errors='coerce').dropna()
+        if labels.empty:
+            continue
+        class_by_cluster[str(cluster_id)] = int(labels.mean() >= 0.5)
+    for pos, (_, row) in enumerate(work.iterrows()):
+        if bool(row.get('blocked_cluster_indicator', False)):
+            continue
+        mapped = class_by_cluster.get(str(row.get('selected_cluster_id', '')))
+        if mapped is not None:
+            cluster_prob[pos] = float(mapped)
+    finite = np.isfinite(cluster_prob)
+    oof = pd.DataFrame(
+        {
+            'atlas_row_id': work['atlas_row_id'].to_numpy(dtype=int),
+            'target': pd.to_numeric(work[target_column], errors='coerce').to_numpy(),
+            'probability': cluster_prob,
+            'subject_id': work.get('subject_id', '').astype(str).to_numpy(),
+        }
+    )
+    if finite.sum() == 0:
+        return _non_estimable_metric_row(
+            candidate_id='atlas_cluster_anchor_mapping',
+            target_kind='primary_no_low_vs_moderate_severe',
+            feature_family='atlas_anchor_cluster',
+            model_kind='rule_mapping',
+            reason='no_unblocked_cluster_mapping',
+            row_count=int(len(work)),
+            subject_count=_nunique(work, 'subject_id'),
+        ), oof
+    metrics = _binary_metric_values(
+        y_true=oof.loc[finite, 'target'].to_numpy(dtype=int),
+        probability=oof.loc[finite, 'probability'].to_numpy(dtype=float),
+        threshold=0.5,
+    )
+    return {
+        'candidate_id': 'atlas_cluster_anchor_mapping',
+        'target_kind': 'primary_no_low_vs_moderate_severe',
+        'feature_family': 'atlas_anchor_cluster',
+        'model_kind': 'blocked_clusters_left_unassigned_rule_mapping',
+        'metric_label': 'grouped_out_of_fold_development_estimate',
+        'finite_output_status': 'finite' if metrics['finite'] else 'non_estimable',
+        'hard_blockers': '',
+        'threshold': 0.5,
+        'threshold_selection_objective': 'fixed_cluster_mapping_probability_0_5',
+        'row_count': int(finite.sum()),
+        'subject_count': int(
+            work.loc[finite, 'subject_id'].astype(str).nunique()
+            if 'subject_id' in work
+            else 0
+        ),
+        **{key: value for key, value in metrics.items() if key != 'finite'},
+    }, oof
+
+
+def _evaluate_binary_logistic_candidate(
+    frame: pd.DataFrame,
+    *,
+    candidate_id: str,
+    feature_family: str,
+    feature_columns: list[str],
+    target_kind: str,
+    target_column: str,
+) -> tuple[dict[str, Any], pd.DataFrame]:
+    target = pd.to_numeric(frame.get(target_column), errors='coerce')
+    mask = target.notna()
+    work = frame.loc[mask].copy()
+    if not feature_columns:
+        return _non_estimable_metric_row(
+            candidate_id=candidate_id,
+            target_kind=target_kind,
+            feature_family=feature_family,
+            model_kind='subject_grouped_logistic_regression',
+            reason='no_feature_columns',
+            row_count=int(len(work)),
+            subject_count=_nunique(work, 'subject_id'),
+        ), pd.DataFrame()
+    if work.empty or target[mask].nunique() < 2:
+        return _non_estimable_metric_row(
+            candidate_id=candidate_id,
+            target_kind=target_kind,
+            feature_family=feature_family,
+            model_kind='subject_grouped_logistic_regression',
+            reason='binary_target_not_estimable',
+            row_count=int(len(work)),
+            subject_count=_nunique(work, 'subject_id'),
+        ), pd.DataFrame()
+
+    y = pd.to_numeric(work[target_column], errors='coerce').astype(int).to_numpy()
+    groups = work.get('subject_id', pd.Series(np.arange(len(work)), index=work.index))
+    groups = groups.astype(str).to_numpy()
+    oof_probability = np.full(len(work), np.nan, dtype=float)
+    skipped: list[str] = []
+    numeric_warning_messages: list[str] = []
+    for train_idx, test_idx in _subject_grouped_splits(y, groups):
+        if len(np.unique(y[train_idx])) < 2 or len(np.unique(y[test_idx])) < 2:
+            skipped.append('single_class_fold')
+            continue
+        model, fit_warnings = _capture_runtime_warnings(
+            lambda: _fit_binary_logistic(work.iloc[train_idx], y[train_idx], feature_columns)
+        )
+        numeric_warning_messages.extend(fit_warnings)
+        if not _binary_model_finite(model):
+            skipped.append('nonfinite_model_coefficients')
+            continue
+        fold_probability, predict_warnings = _capture_runtime_warnings(
+            lambda: model.predict_proba(
+                _feature_matrix(work.iloc[test_idx], feature_columns)
+            )[:, 1]
+        )
+        numeric_warning_messages.extend(predict_warnings)
+        if not np.isfinite(fold_probability).all():
+            skipped.append('nonfinite_fold_probabilities')
+            continue
+        oof_probability[test_idx] = fold_probability
+    finite = np.isfinite(oof_probability)
+    oof = pd.DataFrame(
+        {
+            'atlas_row_id': work['atlas_row_id'].to_numpy(dtype=int),
+            'target': y,
+            'probability': oof_probability,
+            'subject_id': groups,
+        }
+    )
+    if finite.sum() == 0 or len(np.unique(y[finite])) < 2:
+        return _non_estimable_metric_row(
+            candidate_id=candidate_id,
+            target_kind=target_kind,
+            feature_family=feature_family,
+            model_kind='subject_grouped_logistic_regression',
+            reason='no_estimable_grouped_oof_predictions',
+            row_count=int(len(work)),
+            subject_count=_nunique(work, 'subject_id'),
+            extra={'skipped_fold_reasons': ';'.join(sorted(set(skipped)))},
+        ), oof
+    threshold, threshold_objective = _select_binary_operating_threshold(
+        y_true=y[finite],
+        probability=oof_probability[finite],
+    )
+    metrics = _binary_metric_values(
+        y_true=y[finite],
+        probability=oof_probability[finite],
+        threshold=threshold,
+    )
+    return {
+        'candidate_id': candidate_id,
+        'target_kind': target_kind,
+        'feature_family': feature_family,
+        'model_kind': 'subject_grouped_logistic_regression',
+        'metric_label': 'grouped_out_of_fold_development_estimate',
+        'finite_output_status': 'finite' if metrics['finite'] else 'non_estimable',
+        'hard_blockers': '',
+        'threshold': threshold,
+        'threshold_selection_objective': threshold_objective,
+        'row_count': int(finite.sum()),
+        'subject_count': int(len(set(groups[finite]))),
+        'feature_count': int(len(feature_columns)),
+        'skipped_fold_reasons': ';'.join(sorted(set(skipped))),
+        'numeric_warning_count': len(numeric_warning_messages),
+        'numeric_warning_messages': '; '.join(
+            list(dict.fromkeys(numeric_warning_messages))[:3]
+        ),
+        **{key: value for key, value in metrics.items() if key != 'finite'},
+    }, oof
+
+
+def _subject_grouped_splits(
+    target: np.ndarray, groups: np.ndarray
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    from sklearn.model_selection import GroupKFold
+
+    unique_groups = np.unique(groups)
+    class_counts = pd.Series(target).value_counts()
+    n_splits = min(5, len(unique_groups), int(class_counts.min()))
+    if n_splits < 2:
+        return []
+    splitter = GroupKFold(n_splits=n_splits)
+    return [
+        (np.asarray(train_idx), np.asarray(test_idx))
+        for train_idx, test_idx in splitter.split(np.zeros(len(target)), target, groups)
+    ]
+
+
+def _fit_binary_logistic(frame: pd.DataFrame, target: np.ndarray, columns: list[str]):
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    model = Pipeline(
+        [
+            ('scaler', StandardScaler()),
+            (
+                'logistic',
+                LogisticRegression(
+                    class_weight='balanced',
+                    max_iter=1000,
+                    random_state=0,
+                    solver='liblinear',
+                ),
+            ),
+        ]
+    )
+    model.fit(_feature_matrix(frame, columns), target)
+    return model
+
+
+def _binary_model_finite(model: Any) -> bool:
+    try:
+        logistic = model.named_steps['logistic']
+    except Exception:
+        return False
+    coef = np.asarray(getattr(logistic, 'coef_', []), dtype=float)
+    intercept = np.asarray(getattr(logistic, 'intercept_', []), dtype=float)
+    return bool(np.isfinite(coef).all() and np.isfinite(intercept).all())
+
+
+def _feature_matrix(frame: pd.DataFrame, columns: list[str]) -> np.ndarray:
+    return to_finite_numeric_matrix(frame, columns, finite_bound=1e6)
+
+
+def _binary_metric_values(
+    *, y_true: np.ndarray, probability: np.ndarray, threshold: float
+) -> dict[str, Any]:
+    from sklearn.metrics import average_precision_score, roc_auc_score
+
+    predicted = probability >= threshold
+    y_bool = y_true.astype(bool)
+    tp = int(np.logical_and(predicted, y_bool).sum())
+    tn = int(np.logical_and(~predicted, ~y_bool).sum())
+    fp = int(np.logical_and(predicted, ~y_bool).sum())
+    fn = int(np.logical_and(~predicted, y_bool).sum())
+    recall = tp / (tp + fn) if (tp + fn) else None
+    precision = tp / (tp + fp) if (tp + fp) else None
+    specificity = tn / (tn + fp) if (tn + fp) else None
+    balanced = (
+        (recall + specificity) / 2.0
+        if recall is not None and specificity is not None
+        else None
+    )
+    auroc = None
+    average_precision = None
+    if len(np.unique(y_true)) == 2:
+        auroc = float(roc_auc_score(y_true, probability))
+        average_precision = float(average_precision_score(y_true, probability))
+    return {
+        'finite': balanced is not None,
+        'recall': _optional_float(recall),
+        'precision': _optional_float(precision),
+        'specificity': _optional_float(specificity),
+        'balanced_accuracy': _optional_float(balanced),
+        'auroc': _optional_float(auroc),
+        'average_precision': _optional_float(average_precision),
+        'false_negative_count': fn,
+        'false_positive_count': fp,
+        'true_positive_count': tp,
+        'true_negative_count': tn,
+    }
+
+
+def _select_binary_operating_threshold(
+    *, y_true: np.ndarray, probability: np.ndarray
+) -> tuple[float, str]:
+    objective = 'maximize_grouped_oof_balanced_accuracy_then_moderate_severe_recall'
+    candidates = np.round(np.linspace(0.05, 0.95, 19), 2)
+    best_threshold = 0.5
+    best_key = (-1.0, -1.0, -1.0, -abs(0.5 - best_threshold))
+    for threshold in candidates:
+        metrics = _binary_metric_values(
+            y_true=y_true,
+            probability=probability,
+            threshold=float(threshold),
+        )
+        key = (
+            float(metrics.get('balanced_accuracy') or -1.0),
+            float(metrics.get('recall') or -1.0),
+            float(metrics.get('specificity') or -1.0),
+            -abs(float(threshold) - 0.5),
+        )
+        if key > best_key:
+            best_key = key
+            best_threshold = float(threshold)
+    return best_threshold, objective
+
+
+def _non_estimable_metric_row(
+    *,
+    candidate_id: str,
+    target_kind: str,
+    feature_family: str,
+    model_kind: str,
+    reason: str,
+    row_count: int,
+    subject_count: int,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        'candidate_id': candidate_id,
+        'target_kind': target_kind,
+        'feature_family': feature_family,
+        'model_kind': model_kind,
+        'metric_label': 'grouped_out_of_fold_development_estimate',
+        'finite_output_status': 'non_estimable',
+        'hard_blockers': reason,
+        'threshold': 0.5,
+        'threshold_selection_objective': 'non_estimable',
+        'row_count': int(row_count),
+        'subject_count': int(subject_count),
+        'recall': None,
+        'precision': None,
+        'specificity': None,
+        'balanced_accuracy': None,
+        'auroc': None,
+        'average_precision': None,
+        'false_negative_count': None,
+        'false_positive_count': None,
+        **(extra or {}),
+    }
+
+
+def _select_binary_candidate(metrics: pd.DataFrame) -> dict[str, Any]:
+    primary = metrics[
+        metrics['target_kind'].eq('primary_no_low_vs_moderate_severe')
+        & metrics['finite_output_status'].eq('finite')
+        & metrics['model_kind'].astype(str).str.contains('logistic')
+    ].copy()
+    if primary.empty:
+        return {
+            'candidate_id': '',
+            'target_kind': 'primary_no_low_vs_moderate_severe',
+            'feature_family': '',
+            'threshold': 0.5,
+            'selection_status': 'no_estimable_binary_candidate',
+            'selection_rule': 'balanced_accuracy_then_average_precision',
+        }
+    primary['balanced_accuracy_sort'] = pd.to_numeric(
+        primary['balanced_accuracy'], errors='coerce'
+    ).fillna(-1.0)
+    primary['average_precision_sort'] = pd.to_numeric(
+        primary['average_precision'], errors='coerce'
+    ).fillna(-1.0)
+    primary['hybrid_bonus'] = primary['candidate_id'].eq(
+        'atlas_hybrid_binary_logistic'
+    ).astype(int)
+    row = primary.sort_values(
+        ['balanced_accuracy_sort', 'average_precision_sort', 'hybrid_bonus'],
+        ascending=False,
+    ).iloc[0]
+    return {
+        **row.to_dict(),
+        'selection_status': 'selected_current_data_review_triage_candidate',
+        'selection_rule': 'balanced_accuracy_then_average_precision',
+    }
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    numeric = float(value)
+    if not np.isfinite(numeric):
+        return None
+    return numeric
+
+
+def _binary_triage_predictions(
+    *,
+    frame: pd.DataFrame,
+    feature_sets: dict[str, dict[str, Any]],
+    selected: dict[str, Any],
+    oof_predictions: dict[tuple[str, str], pd.DataFrame],
+    output_dir: Path,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any], Path | None]:
+    candidate_id = str(selected.get('candidate_id') or '')
+    target_kind = str(selected.get('target_kind') or 'primary_no_low_vs_moderate_severe')
+    threshold = float(selected.get('threshold') or 0.5)
+    feature_payload = feature_sets.get(candidate_id, {})
+    feature_columns = list(feature_payload.get('columns') or [])
+    target = pd.to_numeric(frame.get('binary_target_primary_value'), errors='coerce')
+    train_mask = target.notna()
+    model_path: Path | None = None
+    model_support = {
+        'selected_candidate_id': candidate_id,
+        'selection_status': selected.get('selection_status', ''),
+        'feature_columns': feature_columns,
+        'primary_target_rows': int(train_mask.sum()),
+        'primary_target_subjects': int(
+            frame.loc[train_mask, 'subject_id'].astype(str).nunique()
+            if 'subject_id' in frame
+            else 0
+        ),
+        'claim_boundary': BINARY_TRIAGE_CLAIM_BOUNDARY,
+    }
+    if not candidate_id or not feature_columns or target[train_mask].nunique() < 2:
+        probability = np.full(len(frame), 0.5)
+        model_support['finite_model_status'] = 'not_fit_insufficient_grouped_support'
+        model = None
+    else:
+        y = target[train_mask].astype(int).to_numpy()
+        model, fit_warnings = _capture_runtime_warnings(
+            lambda: _fit_binary_logistic(frame.loc[train_mask], y, feature_columns)
+        )
+        if not _binary_model_finite(model):
+            probability = np.full(len(frame), 0.5)
+            model_support['finite_model_status'] = 'not_fit_nonfinite_coefficients'
+            model_support['numeric_warning_count'] = len(fit_warnings)
+            model_support['numeric_warning_messages'] = fit_warnings[:3]
+            model = None
+        else:
+            probability, predict_warnings = _capture_runtime_warnings(
+                lambda: model.predict_proba(_feature_matrix(frame, feature_columns))[:, 1]
+            )
+            if not np.isfinite(probability).all():
+                probability = np.full(len(frame), 0.5)
+                model_support['finite_model_status'] = 'not_fit_nonfinite_probabilities'
+                model = None
+            else:
+                model_support['finite_model_status'] = 'fit_on_all_primary_target_rows'
+                model_path = save_supported_sklearn_model(
+                    model, output_dir / 'binary_triage_selected_model.joblib'
+                )
+            all_warnings = fit_warnings + predict_warnings
+            model_support['numeric_warning_count'] = len(all_warnings)
+            model_support['numeric_warning_messages'] = list(
+                dict.fromkeys(all_warnings)
+            )[:3]
+
+    oof = oof_predictions.get((candidate_id, target_kind), pd.DataFrame())
+    oof_lookup = (
+        oof.dropna(subset=['probability']).set_index('atlas_row_id')['probability'].to_dict()
+        if not oof.empty and 'probability' in oof
+        else {}
+    )
+    predictions = frame.copy()
+    predictions['predicted_probability_moderate_severe'] = probability
+    predictions['grouped_oof_probability_moderate_severe'] = predictions[
+        'atlas_row_id'
+    ].map(oof_lookup)
+    predictions['threshold'] = threshold
+    predictions['binary_decision'] = np.where(
+        predictions['predicted_probability_moderate_severe'] >= threshold,
+        'moderate_severe',
+        'no_low',
+    )
+    distance = (
+        predictions['predicted_probability_moderate_severe'].astype(float) - threshold
+    ).abs()
+    predictions['near_threshold'] = distance <= 0.15
+    predictions['uncertainty_label'] = np.select(
+        [
+            predictions['near_threshold'],
+            distance <= 0.25,
+            distance > 0.35,
+        ],
+        ['near_threshold_review', 'moderate_uncertainty', 'higher_margin'],
+        default='uncertain',
+    )
+    predictions['source_warning'] = np.where(
+        predictions.get('blocked_cluster_indicator', False).astype(bool),
+        'blocked_or_mixed_cluster',
+        '',
+    )
+    predictions['source_cohort_warning'] = predictions['source_warning']
+    predictions['final_review_route'] = _binary_review_routes(predictions)
+
+    explanation = _binary_explanations(
+        frame=frame,
+        predictions=predictions,
+        model=model,
+        feature_columns=feature_columns,
+    )
+    keep = [
+        'atlas_row_id',
+        'subject_id',
+        'subject_image_id',
+        'glomerulus_id',
+        'score',
+        'binary_target_primary',
+        'binary_target_sensitivity',
+        'predicted_probability_moderate_severe',
+        'grouped_oof_probability_moderate_severe',
+        'threshold',
+        'binary_decision',
+        'uncertainty_label',
+        'near_threshold',
+        'source_warning',
+        'source_cohort_warning',
+        'nearest_anchor_atlas_row_id',
+        'nearest_anchor_class',
+        'nearest_anchor_distance',
+        'final_review_route',
+        'roi_image_path',
+        'roi_mask_path',
+    ]
+    for column in keep:
+        if column not in predictions:
+            predictions[column] = ''
+    return predictions.loc[:, keep], explanation, model_support, model_path
+
+
+def _binary_review_routes(predictions: pd.DataFrame) -> np.ndarray:
+    score = pd.to_numeric(predictions.get('score'), errors='coerce')
+    probability = predictions['predicted_probability_moderate_severe'].astype(float)
+    blocked = predictions.get('blocked_cluster_indicator', False).astype(bool)
+    near = predictions['near_threshold'].astype(bool)
+    routes = np.where(
+        score.eq(1.0),
+        'borderline_score_review',
+        np.where(
+            blocked,
+            'blocked_cluster_manual_review',
+            np.where(
+                near,
+                'uncertain_binary_review',
+                np.where(
+                    probability >= 0.65,
+                    'likely_moderate_severe_review',
+                    np.where(
+                        probability <= 0.35,
+                        'likely_no_low_review',
+                        'uncertain_binary_review',
+                    ),
+                ),
+            ),
+        ),
+    )
+    return routes
+
+
+def _binary_explanations(
+    *,
+    frame: pd.DataFrame,
+    predictions: pd.DataFrame,
+    model: Any,
+    feature_columns: list[str],
+) -> pd.DataFrame:
+    columns = [
+        'atlas_row_id',
+        'top_feature_contributions',
+        'feature_family_contributions',
+        'top_positive_features',
+        'top_negative_features',
+        'roi_qc_contribution',
+        'embedding_contribution',
+        'atlas_cluster_contribution',
+        'anchor_distance_contribution',
+        'learned_roi_contribution',
+        'explanation_claim_boundary',
+    ]
+    if model is None or not feature_columns:
+        out = predictions[['atlas_row_id']].copy()
+        for column in columns:
+            if column not in out:
+                out[column] = ''
+        out['explanation_claim_boundary'] = (
+            'No fitted model; no row-level feature explanation is estimable.'
+        )
+        return out.loc[:, columns]
+    scaler = model.named_steps['scaler']
+    logistic = model.named_steps['logistic']
+    transformed = scaler.transform(_feature_matrix(frame, feature_columns))
+    coef = logistic.coef_.reshape(-1)
+    contributions = transformed * coef
+    rows: list[dict[str, Any]] = []
+    for pos, atlas_row_id in enumerate(predictions['atlas_row_id'].astype(int)):
+        contrib = contributions[pos]
+        order = np.argsort(contrib)
+        positive = [
+            f'{feature_columns[index]}={contrib[index]:.4g}'
+            for index in order[::-1][:3]
+        ]
+        negative = [
+            f'{feature_columns[index]}={contrib[index]:.4g}' for index in order[:3]
+        ]
+        family = _feature_family_contributions(feature_columns, contrib)
+        family_text = '; '.join(f'{key}={value:.4g}' for key, value in family.items())
+        rows.append(
+            {
+                'atlas_row_id': int(atlas_row_id),
+                'top_feature_contributions': (
+                    f"positive: {'; '.join(positive)} | negative: {'; '.join(negative)}"
+                ),
+                'feature_family_contributions': family_text,
+                'top_positive_features': '; '.join(positive),
+                'top_negative_features': '; '.join(negative),
+                'roi_qc_contribution': family['roi_qc'],
+                'embedding_contribution': family['embedding'],
+                'atlas_cluster_contribution': family['atlas_cluster'],
+                'anchor_distance_contribution': family['anchor_distance'],
+                'learned_roi_contribution': family['learned_roi'],
+                'explanation_claim_boundary': (
+                    'Feature contributions describe the fitted review-triage '
+                    'decision surface, not biological causality.'
+                ),
+            }
+        )
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _feature_family_contributions(
+    feature_columns: list[str], contributions: np.ndarray
+) -> dict[str, float]:
+    totals = {
+        'roi_qc': 0.0,
+        'embedding': 0.0,
+        'atlas_cluster': 0.0,
+        'anchor_distance': 0.0,
+        'learned_roi': 0.0,
+    }
+    for column, contribution in zip(feature_columns, contributions):
+        family = 'atlas_cluster'
+        if column.startswith('embedding_'):
+            family = 'embedding'
+        elif column in ROI_QC_COLUMNS:
+            family = 'roi_qc'
+        elif column.startswith('learned_'):
+            family = 'learned_roi'
+        elif 'anchor' in column:
+            family = 'anchor_distance'
+        totals[family] += float(contribution)
+    return {key: round(value, 6) for key, value in totals.items()}
+
+
+def _binary_metric_intervals(
+    *,
+    frame: pd.DataFrame,
+    selected: dict[str, Any],
+    oof_predictions: dict[tuple[str, str], pd.DataFrame],
+) -> dict[str, Any]:
+    candidate_id = str(selected.get('candidate_id') or '')
+    target_kind = str(selected.get('target_kind') or 'primary_no_low_vs_moderate_severe')
+    oof = oof_predictions.get((candidate_id, target_kind), pd.DataFrame())
+    if oof.empty or oof['probability'].dropna().empty:
+        return {
+            'status': 'non_estimable',
+            'reason': 'selected_candidate_has_no_grouped_oof_predictions',
+            'claim_boundary': BINARY_TRIAGE_CLAIM_BOUNDARY,
+        }
+    work = oof.dropna(subset=['probability']).copy()
+    if work['subject_id'].astype(str).nunique() < 3:
+        return {
+            'status': 'non_estimable',
+            'reason': 'fewer_than_three_subjects_for_grouped_bootstrap',
+            'claim_boundary': BINARY_TRIAGE_CLAIM_BOUNDARY,
+        }
+    rng = np.random.default_rng(0)
+    subjects = work['subject_id'].astype(str).unique()
+    values: dict[str, list[float]] = {
+        key: []
+        for key in ['recall', 'precision', 'specificity', 'balanced_accuracy', 'auroc']
+    }
+    for _ in range(200):
+        sampled = rng.choice(subjects, size=len(subjects), replace=True)
+        sampled_rows = pd.concat(
+            [work[work['subject_id'].astype(str).eq(subject)] for subject in sampled],
+            ignore_index=True,
+        )
+        if sampled_rows['target'].nunique() < 2:
+            continue
+        metric = _binary_metric_values(
+            y_true=sampled_rows['target'].to_numpy(dtype=int),
+            probability=sampled_rows['probability'].to_numpy(dtype=float),
+            threshold=float(selected.get('threshold') or 0.5),
+        )
+        for key in values:
+            if metric.get(key) is not None:
+                values[key].append(float(metric[key]))
+    intervals = {}
+    for key, series in values.items():
+        if series:
+            intervals[key] = {
+                'estimate': _optional_float(selected.get(key)),
+                'ci_method': 'subject_grouped_bootstrap_percentile',
+                'ci_lower': float(np.percentile(series, 2.5)),
+                'ci_upper': float(np.percentile(series, 97.5)),
+                'resamples': int(len(series)),
+            }
+        else:
+            intervals[key] = {
+                'estimate': _optional_float(selected.get(key)),
+                'ci_method': 'subject_grouped_bootstrap_percentile',
+                'non_estimable_reason': 'resamples_lacked_both_classes',
+                'resamples': 0,
+            }
+    return {
+        'status': 'estimated' if any(item.get('resamples', 0) for item in intervals.values()) else 'non_estimable',
+        'candidate_id': candidate_id,
+        'target_kind': target_kind,
+        'intervals': intervals,
+        'row_count': int(len(work)),
+        'subject_count': int(len(subjects)),
+        'claim_boundary': BINARY_TRIAGE_CLAIM_BOUNDARY,
+    }
+
+
+def _binary_triage_verdict(
+    *,
+    frame: pd.DataFrame,
+    selected: dict[str, Any],
+    metrics: pd.DataFrame,
+    intervals: dict[str, Any],
+    model_support: dict[str, Any],
+    anchor_manifest: pd.DataFrame,
+    blocked_clusters: pd.DataFrame,
+    recovered_anchors: pd.DataFrame,
+) -> dict[str, Any]:
+    primary = frame['binary_target_primary'].astype(str).value_counts().to_dict()
+    sensitivity = frame['binary_target_sensitivity'].astype(str).value_counts().to_dict()
+    finite_candidates = int(metrics['finite_output_status'].eq('finite').sum())
+    selected_id = str(selected.get('candidate_id') or '')
+    status = (
+        'current_data_binary_review_triage_available'
+        if selected_id
+        else 'binary_review_triage_not_estimable'
+    )
+    return {
+        'workflow': 'label_free_roi_embedding_atlas',
+        'product_direction': 'binary_no_low_vs_moderate_severe_review_triage',
+        'overall_status': status,
+        'selected_candidate_id': selected_id,
+        'selected_target_kind': selected.get('target_kind', ''),
+        'selected_feature_family': selected.get('feature_family', ''),
+        'threshold': float(selected.get('threshold') or 0.5),
+        'threshold_selection_objective': selected.get(
+            'threshold_selection_objective', ''
+        ),
+        'selection_rule': selected.get('selection_rule', ''),
+        'primary_target_support': primary,
+        'sensitivity_target_support': sensitivity,
+        'finite_candidate_count': finite_candidates,
+        'candidate_metric_rows': int(len(metrics)),
+        'confidence_intervals': intervals,
+        'model_support': model_support,
+        'anchor_support': {
+            'candidate_anchor_cluster_count': int(len(anchor_manifest)),
+            'blocked_cluster_count': int(len(blocked_clusters)),
+            'recovered_anchor_count': int(len(recovered_anchors)),
+        },
+        'claim_boundary': BINARY_TRIAGE_CLAIM_BOUNDARY,
+        'reviewer_next_step': (
+            'Open evidence/binary_triage_review.html for routed case review and '
+            'predictions/binary_triage_predictions.csv for all row-level routes.'
+        ),
+    }
+
+
+def _render_binary_triage_verdict_md(verdict: dict[str, Any]) -> str:
+    return f"""# Binary review triage verdict
+
+Status: `{verdict.get('overall_status')}`
+
+Selected candidate: `{verdict.get('selected_candidate_id') or 'none'}`
+
+Operating threshold: `{verdict.get('threshold')}` selected by
+`{verdict.get('threshold_selection_objective')}`.
+
+Primary target: no/low is `score <= 0.5`, moderate/severe is `score >= 1.5`,
+and `score == 1.0` is routed as borderline review outside the primary binary
+training target.
+
+Sensitivity target: no/low inclusive is `score <= 1.0`, moderate/severe is
+`score >= 1.5`.
+
+{BINARY_TRIAGE_CLAIM_BOUNDARY}
+
+## First Read
+
+- `predictions/binary_triage_predictions.csv`
+- `evidence/binary_triage_review.html`
+- `evidence/binary_triage_explanations.csv`
+- `summary/binary_triage_metrics.csv`
+- `summary/binary_triage_metric_intervals.json`
+"""
+
+
+def _render_binary_triage_index(verdict: dict[str, Any]) -> str:
+    return f"""# Binary no/low versus moderate/severe review triage
+
+Status: `{verdict.get('overall_status')}`
+
+{BINARY_TRIAGE_CLAIM_BOUNDARY}
+
+## Open First
+
+- `summary/binary_triage_verdict.md`
+- `evidence/binary_triage_review.html`
+- `predictions/binary_triage_predictions.csv`
+- `summary/binary_triage_metrics.csv`
+- `summary/binary_triage_metric_intervals.json`
+- `evidence/binary_triage_explanations.csv`
+
+## Route Meanings
+
+- `likely_no_low_review`: model score is away from the threshold toward no/low.
+- `likely_moderate_severe_review`: model score is away from the threshold toward moderate/severe.
+- `uncertain_binary_review`: model score is near the operating threshold.
+- `borderline_score_review`: original score is exactly 1.0 and is not part of the primary binary training target.
+- `blocked_cluster_manual_review`: atlas adjudication blocked the source cluster as mixed, source/batch, or ROI/mask artifact.
+"""
+
+
+def _write_binary_triage_review_html(
+    output_dir: Path, predictions: pd.DataFrame, explanations: pd.DataFrame
+) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rows = _binary_review_rows(predictions, explanations)
+    cards = '\n'.join(_binary_review_card(row) for row in rows)
+    payload = html.escape(json.dumps(_json_ready({'rows': rows}), allow_nan=False), quote=False)
+    document = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>Binary endotheliosis review triage</title>
+<style>
+body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f6f7f9;color:#1f2933}}
+header{{position:sticky;top:0;background:#fff;border-bottom:1px solid #d8dde6;padding:14px 20px;z-index:10}}
+h1{{font-size:22px;margin:0 0 6px}}p{{margin:4px 0;color:#52606d}}main{{padding:18px 20px 40px}}
+button{{border:1px solid #9fb3c8;background:#fff;border-radius:6px;padding:7px 10px;cursor:pointer}}button.primary{{background:#1f5eff;color:#fff;border-color:#1f5eff}}
+.case{{background:white;border:1px solid #d8dde6;border-radius:8px;margin:0 0 16px;overflow:hidden}}
+.head{{background:#eef2f7;padding:10px 12px}}.grid{{display:grid;grid-template-columns:1fr 1fr 360px;gap:10px;padding:10px}}
+figure{{margin:0}}figcaption{{font-size:12px;color:#52606d;margin-bottom:4px}}img{{width:100%;max-height:360px;object-fit:contain;background:#111827;border-radius:4px}}
+.meta{{font-size:13px;color:#52606d;line-height:1.45}}.route{{font-weight:700;color:#1f2933}}.explain{{font-size:12px;color:#334e68;overflow-wrap:anywhere}}
+.controls{{display:grid;gap:8px;margin-top:10px}}label{{display:grid;gap:3px;font-size:12px;color:#334e68}}select,textarea{{width:100%;box-sizing:border-box;border:1px solid #bcccdc;border-radius:5px;padding:6px;font:inherit;background:white}}textarea{{min-height:72px;resize:vertical}}
+@media(max-width:1000px){{.grid{{grid-template-columns:1fr}}}}
+</style></head><body>
+<header><h1>Binary endotheliosis review triage</h1><p>{html.escape(BINARY_TRIAGE_CLAIM_BOUNDARY)}</p><button class="primary" id="downloadCsv" type="button">Export binary triage review CSV</button> <button id="clearSaved" type="button">Clear saved values</button> <span id="status">Autosaves in this browser.</span></header>
+<main>{cards or '<p>No binary triage rows were generated.</p>'}</main>
+<script id="data" type="application/json">{payload}</script>
+<script>
+const data = JSON.parse(document.getElementById('data').textContent);
+const storageKey = 'eq.binary_triage_review.' + location.pathname;
+const saved = JSON.parse(localStorage.getItem(storageKey) || '{{}}');
+function persist(id, key, value) {{
+  saved[id] = {{...(saved[id] || {{}}), [key]: value}};
+  localStorage.setItem(storageKey, JSON.stringify(saved));
+  document.getElementById('status').textContent = 'Saved locally at ' + new Date().toLocaleTimeString();
+}}
+document.querySelectorAll('select,textarea').forEach(el => {{
+  const state = saved[el.dataset.id] || {{}};
+  if (state[el.dataset.key]) el.value = state[el.dataset.key];
+  el.addEventListener('change', ev => persist(ev.target.dataset.id, ev.target.dataset.key, ev.target.value));
+  el.addEventListener('input', ev => persist(ev.target.dataset.id, ev.target.dataset.key, ev.target.value));
+}});
+function exportCsv() {{
+  const cols = ['review_id','atlas_row_id','subject_id','subject_image_id','score','binary_target_primary','predicted_probability_moderate_severe','binary_decision','uncertainty_label','final_review_route','triage_review_decision','review_priority_override','reviewer_notes','reviewed_at','roi_image_path','roi_mask_path'];
+  const rows = data.rows.map(row => {{
+    const id = 'triage-' + row.atlas_row_id;
+    const state = saved[id] || {{}};
+    return {{...row, ...state, review_id: id, reviewed_at: new Date().toISOString()}};
+  }});
+  const csv = [cols.join(',')].concat(rows.map(row => cols.map(col => `"${{String(row[col] ?? '').replaceAll('"','""')}}"`).join(','))).join('\\n');
+  const blob = new Blob([csv], {{type: 'text/csv'}});
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'binary_triage_review_export.csv';
+  link.click();
+  URL.revokeObjectURL(link.href);
+}}
+document.getElementById('downloadCsv').addEventListener('click', exportCsv);
+document.getElementById('clearSaved').addEventListener('click', () => {{ if (confirm('Clear saved review values?')) {{ localStorage.removeItem(storageKey); location.reload(); }} }});
+</script>
+</body></html>"""
+    path = output_dir / 'binary_triage_review.html'
+    path.write_text(document, encoding='utf-8')
+    return path
+
+
+def _binary_review_rows(
+    predictions: pd.DataFrame, explanations: pd.DataFrame, *, max_rows: int = 72
+) -> list[dict[str, Any]]:
+    merged = predictions.merge(explanations, on='atlas_row_id', how='left')
+    route_order = {
+        'blocked_cluster_manual_review': 0,
+        'borderline_score_review': 1,
+        'uncertain_binary_review': 2,
+        'likely_moderate_severe_review': 3,
+        'likely_no_low_review': 4,
+    }
+    merged['route_order'] = merged['final_review_route'].map(route_order).fillna(9)
+    merged['prob_margin'] = (
+        pd.to_numeric(merged['predicted_probability_moderate_severe'], errors='coerce')
+        - 0.5
+    ).abs()
+    per_route = max(6, max_rows // max(1, merged['final_review_route'].nunique()))
+    selected = (
+        merged.sort_values(['route_order', 'prob_margin'], ascending=[True, True])
+        .groupby('final_review_route', dropna=False)
+        .head(per_route)
+        .head(max_rows)
+    )
+    rows: list[dict[str, Any]] = []
+    for _, row in selected.iterrows():
+        rows.append({key: row.get(key, '') for key in selected.columns})
+    return rows
+
+
+def _binary_review_card(row: dict[str, Any]) -> str:
+    probability = pd.to_numeric(
+        pd.Series([row.get('predicted_probability_moderate_severe')]),
+        errors='coerce',
+    ).iloc[0]
+    probability_text = '' if pd.isna(probability) else f'{float(probability):.3f}'
+    return f"""
+<article class="case">
+  <div class="head"><strong>Atlas row {html.escape(str(row.get('atlas_row_id', '')))} | score {html.escape(str(row.get('score', '')))}</strong><div class="meta">subject {html.escape(str(row.get('subject_id', '')))} | image {html.escape(str(row.get('subject_image_id', '')))}</div></div>
+  <div class="grid">
+    <figure><figcaption>ROI image</figcaption><img src="{html.escape(_review_image_src(row.get('roi_image_path', '')))}" alt="ROI image"></figure>
+    <figure><figcaption>ROI mask</figcaption><img src="{html.escape(_review_image_src(row.get('roi_mask_path', '')))}" alt="ROI mask"></figure>
+    <section>
+      <p class="route">{html.escape(str(row.get('final_review_route', '')))}</p>
+      <p class="meta">P(moderate/severe): {html.escape(probability_text)} | decision: {html.escape(str(row.get('binary_decision', '')))} | uncertainty: {html.escape(str(row.get('uncertainty_label', '')))}</p>
+      <p class="meta">Primary target: {html.escape(str(row.get('binary_target_primary', '')))} | sensitivity target: {html.escape(str(row.get('binary_target_sensitivity', '')))}</p>
+      <p class="meta">Nearest anchor: row {html.escape(str(row.get('nearest_anchor_atlas_row_id', '')))} ({html.escape(str(row.get('nearest_anchor_class', '')))}) distance {html.escape(str(row.get('nearest_anchor_distance', '')))}</p>
+      <p class="meta">Warnings: {html.escape(str(row.get('source_cohort_warning', row.get('source_warning', ''))))}</p>
+      <p class="explain"><strong>Top feature evidence:</strong> {html.escape(str(row.get('top_feature_contributions', '')))}</p>
+      <p class="explain"><strong>Feature-family evidence:</strong> {html.escape(str(row.get('feature_family_contributions', '')))}</p>
+      <p class="explain">{html.escape(str(row.get('explanation_claim_boundary', '')))}</p>
+      <div class="controls">
+        <label>triage review decision<select data-id="triage-{html.escape(str(row.get('atlas_row_id', '')))}" data-key="triage_review_decision"><option value="">choose</option><option value="accept_route">accept route</option><option value="correct_to_no_low">correct to no/low</option><option value="correct_to_moderate_severe">correct to moderate/severe</option><option value="escalate_second_reviewer">escalate second reviewer</option><option value="exclude_bad_roi_or_mask">exclude bad ROI or mask</option></select></label>
+        <label>review priority override<select data-id="triage-{html.escape(str(row.get('atlas_row_id', '')))}" data-key="review_priority_override"><option value="">choose</option><option value="routine">routine</option><option value="high_priority">high priority</option><option value="defer">defer</option></select></label>
+        <label>reviewer notes<textarea data-id="triage-{html.escape(str(row.get('atlas_row_id', '')))}" data-key="reviewer_notes"></textarea></label>
+      </div>
+    </section>
+  </div>
+</article>"""
+
+
+def _json_ready(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_ready(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return None if not np.isfinite(value) else float(value)
+    if isinstance(value, float):
+        return None if not np.isfinite(value) else value
+    if isinstance(value, pd.Series):
+        return _json_ready(value.to_dict())
+    if isinstance(value, Path):
+        return str(value)
+    if not isinstance(value, (str, bytes, Path)):
+        try:
+            if pd.isna(value):
+                return None
+        except TypeError:
+            pass
+    return value
+
+
 def _build_verdict(
     *,
     status: str,
@@ -1892,9 +4276,14 @@ def _build_verdict(
     warnings: list[str],
     review_queue_count: int,
     selected_atlas_view: dict[str, str] | None,
+    adjudication_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    adjudication_summary = adjudication_summary or {}
+    adjudication_status = str(adjudication_summary.get('status', 'not_provided'))
     next_action = (
-        'Inspect INDEX.md, evidence/embedding_atlas_review.html, and the review queue.'
+        'Inspect INDEX.md, evidence/embedding_atlas_review.html, '
+        'evidence/atlas_final_adjudication_outcome.md, and '
+        'binary_review_triage/INDEX.md.'
         if status == 'completed'
         else 'Resolve blockers and rerun the atlas from the YAML config.'
     )
@@ -1909,6 +4298,20 @@ def _build_verdict(
         'blockers': blockers,
         'source_artifact_warnings': warnings,
         'review_queue_count': int(review_queue_count),
+        'adjudication_status': adjudication_status,
+        'adjudication_summary': adjudication_summary,
+        'score_change_count': int(
+            adjudication_summary.get('score_correction_count', 0) or 0
+        ),
+        'recovered_anchor_count': int(
+            adjudication_summary.get('recovered_anchor_count', 0) or 0
+        ),
+        'candidate_anchor_cluster_count': int(
+            adjudication_summary.get('candidate_anchor_cluster_count', 0) or 0
+        ),
+        'blocked_cluster_count': int(
+            adjudication_summary.get('blocked_cluster_count', 0) or 0
+        ),
         'next_action': next_action,
     }
 
@@ -1973,6 +4376,7 @@ def _artifact_manifest(
         'atlas_root': str(atlas_paths.root),
         'relative_to': str(ATLAS_SUBTREE),
         'artifacts': artifacts,
+        'adjudication_status': 'explicit_in_summary_atlas_verdict_json',
         'claim_boundary': CLAIM_BOUNDARY,
     }
 
@@ -2003,6 +4407,16 @@ Status: `{verdict.get('status')}`
 
 {warnings}
 
+## Adjudication And Binary Triage
+
+- Adjudication status: `{verdict.get('adjudication_status', 'not_provided')}`
+- Score changes: `{verdict.get('score_change_count', 0)}`
+- Recovered anchors: `{verdict.get('recovered_anchor_count', 0)}`
+- Candidate anchor clusters: `{verdict.get('candidate_anchor_cluster_count', 0)}`
+- Blocked clusters: `{verdict.get('blocked_cluster_count', 0)}`
+- Final adjudication outcome: `../evidence/atlas_final_adjudication_outcome.md`
+- Binary triage index: `../binary_review_triage/INDEX.md`
+
 ## Next Action
 
 {verdict.get('next_action')}
@@ -2025,6 +4439,13 @@ Status: `{verdict.get('status')}`
 - `summary/atlas_summary.md`
 - `summary/artifact_manifest.json`
 - `evidence/embedding_atlas_review.html`
+- `evidence/atlas_final_adjudication_outcome.md`
+- `evidence/atlas_score_corrections.csv`
+- `evidence/atlas_recovered_anchor_examples.csv`
+- `evidence/atlas_adjudicated_anchor_manifest.csv`
+- `evidence/atlas_blocked_cluster_manifest.csv`
+- `binary_review_triage/INDEX.md`
+- `binary_review_triage/evidence/binary_triage_review.html`
 - `review_queue/atlas_adjudication_queue.csv`
 
 ## Artifacts

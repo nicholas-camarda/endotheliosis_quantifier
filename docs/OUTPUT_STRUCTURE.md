@@ -267,9 +267,33 @@ output/quantification_results/<cohort_id>/
 │   │   │   ├── method_availability.json
 │   │   │   └── cluster_posthoc_diagnostics.json
 │   │   ├── evidence/
-│   │   │   └── embedding_atlas_review.html
-│   │   └── review_queue/
-│   │       └── atlas_adjudication_queue.csv
+│   │   │   ├── embedding_atlas_review.html
+│   │   │   ├── atlas_flagged_case_review.html
+│   │   │   ├── atlas_score_corrections.csv
+│   │   │   ├── atlas_recovered_anchor_examples.csv
+│   │   │   ├── atlas_adjudicated_anchor_manifest.csv
+│   │   │   ├── atlas_blocked_cluster_manifest.csv
+│   │   │   ├── atlas_final_adjudication_outcome.json
+│   │   │   └── atlas_final_adjudication_outcome.md
+│   │   ├── review_queue/
+│   │   │   └── atlas_adjudication_queue.csv
+│   │   └── binary_review_triage/
+│   │       ├── INDEX.md
+│   │       ├── summary/
+│   │       │   ├── binary_triage_verdict.json
+│   │       │   ├── binary_triage_verdict.md
+│   │       │   ├── binary_triage_metrics.csv
+│   │       │   └── binary_triage_metric_intervals.json
+│   │       ├── predictions/
+│   │       │   └── binary_triage_predictions.csv
+│   │       ├── evidence/
+│   │       │   ├── binary_triage_explanations.csv
+│   │       │   └── binary_triage_review.html
+│   │       ├── diagnostics/
+│   │       │   └── binary_triage_support.json
+│   │       └── model/
+│   │           ├── binary_triage_selected_model.joblib
+│   │           └── model_manifest.json
 │   ├── source_aware_estimator/
 │       ├── INDEX.md
 │       ├── summary/
@@ -341,11 +365,11 @@ output/quantification_results/<cohort_id>/
 
 `burden_model/learned_roi/` contains the capped learned-ROI candidate screen. Open `INDEX.md` first, then `summary/estimator_verdict.md` or `summary/estimator_verdict.json`. Phase 1 fits only the current glomeruli encoder embeddings, simple ROI QC features, and their hybrid. Optional backbone or foundation providers are recorded in `diagnostics/provider_audit.json` as audit-only, unavailable, or failed; they are not fitted candidates. Use `candidates/learned_roi_candidate_summary.json`, `calibration/learned_roi_calibration.json`, and `diagnostics/cohort_confounding_diagnostics.json` to determine whether any learned ROI track is README/docs-ready. If readiness gates fail, the learned ROI outputs are failure evidence and review artifacts, not a promoted quantification claim.
 
-`burden_model/embedding_atlas/` contains the label-free ROI embedding atlas. Run it with `eq run-config --config configs/label_free_roi_embedding_atlas.yaml` after the configured quantification output root contains `embeddings/roi_embeddings.csv` and `roi_crops/roi_scored_examples.csv`. Open `INDEX.md` first, then `summary/atlas_verdict.json`, `evidence/embedding_atlas_review.html`, and `review_queue/atlas_adjudication_queue.csv`. The atlas describes morphology clusters and prioritizes review; it does not report calibrated severity probabilities, mechanistic explanations, or automatic human-label replacement.
+`burden_model/embedding_atlas/` contains the label-free ROI embedding atlas and binary review-triage output. Run it with `eq run-config --config configs/label_free_roi_embedding_atlas.yaml` after the configured quantification output root contains `embeddings/roi_embeddings.csv` and `roi_crops/roi_scored_examples.csv`. Open `INDEX.md` first, then `summary/atlas_verdict.json`, `evidence/embedding_atlas_review.html`, `evidence/atlas_flagged_case_review.html`, and `binary_review_triage/evidence/binary_triage_review.html`. Adjudicated score changes, recovered row-level anchors, candidate cluster anchors, and blocked clusters are separate evidence artifacts and do not overwrite original score fields. Binary triage groups score `0` or `0.5` as no/low, score `1.5`, `2`, or `3` as moderate/severe, and score `1.0` as borderline review outside the primary target. `binary_review_triage/summary/binary_triage_metrics.csv` records grouped-development metrics and the threshold objective; `binary_review_triage/summary/binary_triage_metric_intervals.json` records subject-bootstrap uncertainty where estimable; `binary_review_triage/evidence/binary_triage_explanations.csv` records model-decision evidence, not causal explanation. See [BINARY_REVIEW_TRIAGE_GUIDE.md](BINARY_REVIEW_TRIAGE_GUIDE.md) for reviewer instructions and model artifact policy.
 
 `burden_model/source_aware_estimator/` contains the practical source-aware estimator review surface. Open `INDEX.md` first, then `summary/estimator_verdict.md`. Training/apparent, subject-heldout validation, and testing-availability rows are in `summary/metrics_by_split.csv`; apparent full-cohort metrics are not independent testing. The six PNGs under `summary/figures/` are the capped first-read graph set. `diagnostics/upstream_roi_adequacy.json` records whether the MR TIFF-to-ROI evidence is adequate for image-level, subject-level, or aggregate current-data use. Source sensitivity, score ambiguity, unknown-source rows, and broad uncertainty are reliability/scope labels unless they expose a hard blocker.
 
-`burden_model/severe_aware_ordinal_estimator/` contains the indexed experimental estimator focused on score-2/3 underprediction, severe-risk behavior, ordinal prediction sets, and subject-level severe-aware aggregation. Open `INDEX.md` first, then `summary/estimator_verdict.md`, `summary/metrics_by_split.csv`, and `evidence/severe_false_negative_review.html`. `diagnostics/threshold_support.json` records row, subject, and source support for `score >= 1.5`, `score >= 2`, and `score >= 3`; underpowered or source-confounded thresholds remain scoped as current-data evidence. These outputs are predictive grade-equivalent, severe-risk, or ordinal-set evidence for the current scored MR TIFF/ROI data, not tissue percent, closed-capillary percent, causal evidence, or external validation.
+`burden_model/severe_aware_ordinal_estimator/` contains the indexed experimental estimator focused on score-2/3 underprediction, severe-risk behavior, ordinal prediction sets, and subject-level severe-aware aggregation. Open `INDEX.md` first, then `summary/estimator_verdict.md`, `summary/metrics_by_split.csv`, and `evidence/severe_false_negative_review.html`. `diagnostics/threshold_support.json` records row, subject, and source support for `score >= 1.5`, `score >= 2`, and `score >= 3`; underpowered or source-confounded thresholds remain scoped as current-data evidence. These outputs are predictive grade-equivalent, severe-risk, or ordinal-set evidence for the current scored MR TIFF/ROI data, not tissue percent, closed-capillary percent, causal evidence, or independent validation evidence.
 
 - `test_output/`
   Temporary files created by tests or debugging scripts.

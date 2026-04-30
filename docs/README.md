@@ -10,6 +10,9 @@ This directory contains the current documentation set for the repository.
 - [OUTPUT_STRUCTURE.md](OUTPUT_STRUCTURE.md)
   Expected runtime layout for local data, Label Studio annotations, derived artifacts, models, logs, and quantification outputs.
 
+- [BINARY_REVIEW_TRIAGE_GUIDE.md](BINARY_REVIEW_TRIAGE_GUIDE.md)
+  Reviewer-facing guide for the no/low versus moderate/severe triage workflow, including what HTML to open, what each dropdown means, the binary target math, reproducibility checklist, and model artifact policy.
+
 - [SEGMENTATION_ENGINEERING_GUIDE.md](SEGMENTATION_ENGINEERING_GUIDE.md)
   Engineering guidance for FastAI v2 binary segmentation, debugging, training quality, and runtime behavior.
 
