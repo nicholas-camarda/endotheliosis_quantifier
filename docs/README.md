@@ -13,6 +13,9 @@ This directory contains the current documentation set for the repository.
 - [BINARY_REVIEW_TRIAGE_GUIDE.md](BINARY_REVIEW_TRIAGE_GUIDE.md)
   Reviewer-facing guide for the no/low versus moderate/severe triage workflow, including what HTML to open, what each dropdown means, the binary target math, reproducibility checklist, and model artifact policy.
 
+- [REPRODUCIBILITY_HANDOFF_2026-04-30.md](REPRODUCIBILITY_HANDOFF_2026-04-30.md)
+  Source checkpoint, runtime evidence root, release-asset policy, validation checklist, and current binary-triage result for resuming this repository.
+
 - [SEGMENTATION_ENGINEERING_GUIDE.md](SEGMENTATION_ENGINEERING_GUIDE.md)
   Engineering guidance for FastAI v2 binary segmentation, debugging, training quality, and runtime behavior.
 

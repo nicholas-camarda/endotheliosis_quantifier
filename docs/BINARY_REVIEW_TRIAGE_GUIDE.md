@@ -51,7 +51,9 @@ If a review HTML page opens with no visible cases, that artifact is invalid and 
 
 `atlas_flagged_case_review.html` is the focused cleanup page. Use it for selected rows that need a score correction, anchor recovery, second review, or exclusion.
 
-`binary_triage_review.html` is the final usability surface. Each case starts with `Model recommendation`, which is the plain-language model answer or warning. The ROI image and ROI mask are the source of truth for the human answer. Numeric model details are kept under `Model diagnostics`.
+`binary_triage_review.html` is the final usability surface. It is a bounded, route-stratified QA sample, not a request to review every row in `binary_triage_predictions.csv`. The page states how many cards are shown and how many total predictions exist. Review the cards shown in the HTML, export the CSV beside the HTML file, and only inspect the full prediction table if the sample exposes a systematic failure pattern.
+
+Each case starts with `Model recommendation` and `Model answer`, which are the plain-language model answer or warning. The ROI image and ROI mask are the source of truth for the human answer. Numeric model details are kept under `Model diagnostics`.
 
 Use `Your decision` as follows:
 
@@ -140,5 +142,5 @@ burden_model/embedding_atlas/binary_review_triage/model/binary_triage_selected_m
 4. Run `eq run-config --config configs/label_free_roi_embedding_atlas.yaml`.
 5. Confirm `summary/atlas_verdict.json` reports the expected adjudication status.
 6. Confirm `binary_review_triage/summary/binary_triage_verdict.json` reports `binary_no_low_vs_moderate_severe_review_triage`.
-7. Review `binary_review_triage/evidence/binary_triage_review.html` and export decisions when review is complete.
+7. Review the bounded sample in `binary_review_triage/evidence/binary_triage_review.html` and export decisions when review is complete.
 8. Keep the generated CSV, JSON, HTML, Markdown, log, and model-manifest artifacts together when sharing a run.

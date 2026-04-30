@@ -505,6 +505,8 @@ Binary triage SHALL write feature explanation artifacts that help reviewers unde
 - **WHEN** P3 writes a binary triage review HTML or queue
 - **THEN** each selected review case SHALL show ROI image and ROI mask, original score, adjudication evidence when present, predicted route, confidence label, top explanation fields, nearest reviewed anchor, and cluster/source warnings
 - **AND** high-confidence errors, near-threshold cases, source-sensitive cases, and blocked-cluster cases SHALL be eligible for review queues
+- **AND** the reviewer-facing HTML SHALL state whether it is a bounded sampled QA queue or a complete review queue
+- **AND** sampled QA queues SHALL report the total prediction count, sampled case count, route counts, and a clear stop rule so reviewers are not asked to adjudicate every prediction row
 
 ### Requirement: Binary triage promotion is gated and claim-bounded
 Binary triage SHALL only become a README-facing or handoff product when it passes explicit current-data gates and remains claim-bounded as review prioritization.
@@ -523,4 +525,3 @@ Binary triage SHALL only become a README-facing or handoff product when it passe
 - **WHEN** binary triage artifacts are reported
 - **THEN** reports SHALL state that grouped-development and source-sensitivity metrics are current-data evidence
 - **AND** they SHALL NOT call the result external validation, clinical deployment, automated grading replacement, or calibrated multi-ordinal classification
-

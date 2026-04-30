@@ -5,6 +5,8 @@ Endotheliosis Quantifier (`eq`) is a FastAI/PyTorch toolkit for glomeruli segmen
 If you want the friendlier long-form introduction and workflow explanation, see [docs/ONBOARDING_GUIDE.md](docs/ONBOARDING_GUIDE.md).
 For the full curated documentation set, see [docs/README.md](docs/README.md).
 
+Current quantification handoff: binary no/low versus moderate/severe review triage. Use [docs/BINARY_REVIEW_TRIAGE_GUIDE.md](docs/BINARY_REVIEW_TRIAGE_GUIDE.md) for reviewer workflow and [docs/REPRODUCIBILITY_HANDOFF_2026-04-30.md](docs/REPRODUCIBILITY_HANDOFF_2026-04-30.md) for the reproducibility checkpoint.
+
 ## Quick Start
 
 The main workflow entrypoint is `eq run-config`. If you want the easiest supported way to run the segmentation workflows in this repo, use one of the committed YAML configs:
@@ -38,7 +40,7 @@ The YAML is the control surface. In the common case, you should not need to stit
 | Scored cohort registry | `$EQ_RUNTIME_ROOT/raw_data/cohorts/manifest.csv` |
 | Current quantification supervision | Image-level grades joined to image/mask pairs in the active scored cohort workflow |
 | Quantification ROI semantics | Full multi-component union ROI |
-| Quantification outputs | Frozen segmentation-encoder embeddings, exploratory burden-index predictions, learned ROI candidate screens, comparator outputs, subject/cohort summaries, and combined review artifacts |
+| Quantification outputs | Frozen segmentation-encoder embeddings, exploratory burden/comparator evidence, learned ROI screens, label-free embedding atlas, adjudicated anchor evidence, binary no/low versus moderate/severe review-triage artifacts, and combined review reports |
 
 ## Environment Contract
 
@@ -244,62 +246,64 @@ eq visualize --mask path/to/mask.png --output "$EQ_RUNTIME_ROOT/output/mask_prev
 
 ## Quantification
 
-Quantification runs against an explicit segmentation model artifact produced by the YAML workflow. Use the model path from the completed run's model directory or comparison report.
+Quantification is a YAML-first, two-stage workflow. The first stage builds the score-linked ROI, embedding, burden, comparator, learned-ROI, and review artifact tree from an explicit segmentation model. The second stage builds the label-free ROI embedding atlas and binary review-triage handoff from that quantification output root.
 
 ```bash
-eq prepare-quant-contract \
-  --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>" \
-  --segmentation-model /absolute/path/to/glomeruli_model.pkl \
-  --score-source labelstudio \
-  --annotation-source "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>/scores/labelstudio_annotations.json"
-
-eq quant-endo \
-  --data-dir "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>" \
-  --segmentation-model /absolute/path/to/glomeruli_model.pkl \
-  --score-source labelstudio \
-  --annotation-source "$EQ_RUNTIME_ROOT/raw_data/cohorts/<cohort_id>/scores/labelstudio_annotations.json" \
-  --output-dir "$EQ_RUNTIME_ROOT/output/quantification_results/<cohort_id>"
-```
-
-To quantify with a different candidate, use that candidate's `.pkl` path.
-
-The current maintained quantification path uses image-level grades joined to each image or mask pair. ROI extraction uses the full multi-component mask bounding box with context padding, then builds frozen segmentation-backbone embeddings. The primary model output is an exploratory endotheliosis burden index on a `0-100` ordinal stage scale, with learned ROI candidate screens, direct stage-index regression, and ordinal/multiclass outputs retained as comparators.
-
-The current burden-index model is not README/docs-ready as an operational model claim. It is useful for review and method development, but the latest full-cohort run still has broad per-image prediction sets, slight undercoverage against the nominal prediction-set target, and finite-output backend matrix warnings. Subject-level ROI aggregation is the strongest current follow-up direction for cohort summaries, while per-image prediction remains a separate calibration and feature-modeling problem.
-
-Endotheliosis is graded by assessing the relative amount of open versus collapsed capillary or arteriole lumina within the glomerulus. The maintained quantification path writes deterministic morphology features for open/pale lumina, collapsed or slit-like structures, ridge/line signals, erythrocyte-like patent-lumen confounding, and ROI quality. These morphology features are candidate evidence, not a deployed mechanistic model; the generated feature-review HTML and operator adjudication template must be inspected before using them for a shareable claim.
-
-The learned ROI branch is a capped phase-1 screen under `burden_model/learned_roi/`. It fits only the current glomeruli encoder embeddings, simple ROI QC features, and their hybrid. Optional backbone or foundation providers are audited but not fitted. A learned ROI result is shareable only if its generated candidate summary passes the explicit uncertainty, numerical-stability, ordinal/grade-scale, and cohort-confounding gates.
-
-The label-free ROI embedding atlas runs from an existing quantification output root:
-
-```bash
+eq run-config --config configs/endotheliosis_quantification.yaml
 eq run-config --config configs/label_free_roi_embedding_atlas.yaml
 ```
 
-The atlas writes under `burden_model/embedding_atlas/`. Open `INDEX.md` first, then `summary/atlas_verdict.json`, `evidence/embedding_atlas_review.html`, `evidence/atlas_flagged_case_review.html`, and `binary_review_triage/evidence/binary_triage_review.html`.
+`configs/endotheliosis_quantification.yaml` names the active scored-cohort registry, reviewed label-overrides file, explicit glomeruli segmentation artifact, and output root. Missing upstream paths fail closed. To quantify with a different segmentation candidate, edit the YAML to point at that candidate's supported `.pkl` artifact and its evidence bundle.
 
-The current grading direction is binary review triage: score `0` or `0.5` is `no_low`, score `1.5`, `2`, or `3` is `moderate_severe`, and score `1.0` is `borderline_review` outside the primary binary target. Binary triage outputs include grouped-development metrics, subject-bootstrap confidence intervals where estimable, uncertainty labels, source/cohort warnings, nearest reviewed-anchor evidence, and feature-contribution summaries for review. These artifacts support descriptive morphology clustering and review prioritization only. They are not calibrated multi-ordinal probabilities, independent validation evidence, mechanistic evidence, or replacements for human-reviewed labels.
+The maintained quantification input contract uses image-level grades joined to image/mask rows in the scored cohort manifest. ROI extraction uses the full multi-component mask union with context padding, then builds frozen segmentation-backbone embeddings. The primary supervised outputs are evidence surfaces, not a deployed autonomous grader: exploratory burden-index predictions on a `0-100` ordinal stage scale, direct stage-index and ordinal/multiclass comparators, source-aware and severe-aware estimator diagnostics, learned ROI candidate screens, morphology feature reviews, and combined review reports.
 
-For the reviewer workflow, reproducibility checklist, binary target math, explanation interpretation, and model artifact policy, see [docs/BINARY_REVIEW_TRIAGE_GUIDE.md](docs/BINARY_REVIEW_TRIAGE_GUIDE.md).
+The burden-index and ordinal outputs are useful for method development and error review. They are not calibrated clinical probabilities, independent validation evidence, or a replacement for human-reviewed labels. Per-image grade prediction remains limited by label quality, source/cohort structure, and calibration. Subject-level aggregation and review-triage are the current practical directions for shareable summaries.
+
+Endotheliosis is graded by assessing the relative amount of open versus collapsed capillary or arteriole lumina within the glomerulus. The maintained quantification path writes deterministic morphology features for open/pale lumina, collapsed or slit-like structures, ridge/line signals, erythrocyte-like patent-lumen confounding, and ROI quality. These morphology features are candidate evidence, not a deployed mechanistic model; the generated feature-review HTML and operator adjudication template must be inspected before using them for a shareable claim.
+
+The learned ROI branch lives under `burden_model/learned_roi/`. It fits only the current glomeruli encoder embeddings, simple ROI QC features, and their hybrid. Optional backbone or foundation providers are audited but not fitted. Learned ROI outputs are candidate evidence gated by uncertainty, numerical-stability, ordinal/grade-scale, and cohort-confounding checks.
+
+The label-free ROI embedding atlas runs from the quantification output root named in `configs/label_free_roi_embedding_atlas.yaml`. It clusters approved feature spaces without using human grade, cohort, source, treatment, reviewer, adjudication, prediction, or path fields during clustering.
+
+The atlas writes under `burden_model/embedding_atlas/`. Open these first:
+
+- `INDEX.md`
+- `summary/atlas_verdict.json`
+- `evidence/embedding_atlas_review.html`
+- `evidence/atlas_final_adjudication_outcome.md`
+- `evidence/atlas_score_corrections.csv`
+- `evidence/atlas_recovered_anchor_examples.csv`
+- `evidence/atlas_adjudicated_anchor_manifest.csv`
+- `evidence/atlas_blocked_cluster_manifest.csv`
+- `binary_review_triage/INDEX.md`
+- `binary_review_triage/evidence/binary_triage_review.html`
+
+The current review target is binary triage: score `0` or `0.5` is `no_low`, score `1.5`, `2`, or `3` is `moderate_severe`, and score `1.0` is `borderline_review` outside the primary binary training target. Binary triage outputs include grouped-development metrics, subject-bootstrap confidence intervals where estimable, uncertainty labels, source/cohort warnings, nearest reviewed-anchor evidence, blocked-cluster indicators, and coefficient-based feature summaries for review. These artifacts support descriptive morphology clustering and review prioritization only. They are not calibrated multi-ordinal probabilities, independent validation evidence, mechanistic evidence, or replacements for human-reviewed labels. For the reviewer workflow, reproducibility checklist, binary target math, explanation interpretation, and model artifact policy, see [docs/BINARY_REVIEW_TRIAGE_GUIDE.md](docs/BINARY_REVIEW_TRIAGE_GUIDE.md).
 
 Current quantification implementation surfaces:
 
 - Primary burden-index estimator surface: `src/eq/quantification/burden.py`
 - Learned ROI candidate surface: `src/eq/quantification/learned_roi.py`
+- Label-free atlas and binary review-triage surface: `src/eq/quantification/embedding_atlas.py`
 - Ordinal comparator surface: `src/eq/quantification/ordinal.py`
 - Orchestration caller: `src/eq/quantification/pipeline.py` via `evaluate_embedding_table()` and the contract-first quantification entrypoints
-- CLI entrypoint: `eq quant-endo`
+- YAML entrypoints: `configs/endotheliosis_quantification.yaml` and `configs/label_free_roi_embedding_atlas.yaml`
+- Direct CLI utilities: `eq prepare-quant-contract` and `eq quant-endo`
 - Regression surfaces: `tests/unit/test_quantification_pipeline.py` and `tests/integration/test_local_runtime_quantification_pipeline.py`
 
-`quant-endo` writes:
+The quantification stage writes:
 
 - `labelstudio_scores/` with recovered per-image grades and duplicate-resolution audit tables
 - `roi_crops/` with union-ROI crops over the full multi-component mask
 - `embeddings/` with frozen segmentation-encoder embeddings
-- `burden_model/` with `INDEX.md`, a contained `primary_burden_index/` subtree for exploratory burden predictions, support gates, uncertainty calibration, cohort summaries, nearest examples, candidate screens, morphology features, and review diagnostics, plus contained estimator subtrees such as `learned_roi/`, `source_aware_estimator/`, and `severe_aware_ordinal_estimator/`
+- `burden_model/` with `INDEX.md`, a contained `primary_burden_index/` subtree for exploratory burden predictions, support gates, uncertainty calibration, cohort summaries, nearest examples, candidate screens, morphology features, and review diagnostics, plus contained estimator subtrees such as `learned_roi/`, `source_aware_estimator/`, `severe_aware_ordinal_estimator/`, and grade-model diagnostic subtrees
 - `ordinal_model/` with comparator predictions, probabilities, metrics, confusion matrix, and `review_report/ordinal_review.html`
 - `quantification_review/` with combined HTML review, reviewer examples, concrete result summaries, and a README/docs snippet from the current run; reuse the snippet only when the reported readiness flag and uncertainty checks pass
+
+The atlas stage adds:
+
+- `burden_model/embedding_atlas/` with label-blinding diagnostics, method availability, feature-space manifest, cluster assignments, stability summaries, posthoc source/artifact diagnostics, representative cases, nearest neighbors, adjudication queue, score-correction evidence, recovered anchors, adjudicated anchor manifests, blocked cluster manifests, and first-read HTML/Markdown review artifacts
+- `burden_model/embedding_atlas/binary_review_triage/` with binary no/low versus moderate/severe predictions, grouped-development metrics, bootstrap intervals where estimable, model manifest, explanations, support diagnostics, verdict files, and the reviewer-facing HTML handoff
 
 ## Configuration Files
 

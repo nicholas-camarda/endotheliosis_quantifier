@@ -100,6 +100,7 @@ ROI_QC_COLUMNS = [
     'roi_largest_component_area_fraction',
 ]
 BINARY_TRIAGE_SUBTREE = Path('binary_review_triage')
+BINARY_TRIAGE_REVIEW_MAX_ROWS = 30
 BINARY_TRIAGE_CLAIM_BOUNDARY = (
     'Binary triage outputs prioritize no/low versus moderate/severe review. '
     'They are current-data grouped-development evidence, not independent '
@@ -4123,9 +4124,30 @@ def _write_binary_triage_review_html(
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     rows = _binary_review_rows(predictions, explanations)
+    total_rows = int(len(predictions))
+    selected_rows = len(rows)
+    route_counts = _binary_review_route_counts(predictions)
+    route_count_html = ''.join(
+        f'<span class="count"><strong>{html.escape(str(count))}</strong> '
+        f'{html.escape(label)}</span>'
+        for label, count in route_counts
+    )
     cards = '\n'.join(_binary_review_card(row) for row in rows)
     payload = html.escape(
-        json.dumps(_json_ready({'rows': rows}), allow_nan=False), quote=False
+        json.dumps(
+            _json_ready(
+                {
+                    'rows': rows,
+                    'summary': {
+                        'total_predictions': total_rows,
+                        'sampled_review_cards': selected_rows,
+                        'max_review_cards': BINARY_TRIAGE_REVIEW_MAX_ROWS,
+                    },
+                }
+            ),
+            allow_nan=False,
+        ),
+        quote=False,
     )
     document = f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>Binary endotheliosis review triage</title>
@@ -4134,17 +4156,19 @@ body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:
 header{{position:sticky;top:0;background:#fff;border-bottom:1px solid #d8dde6;padding:14px 20px;z-index:10}}
 h1{{font-size:22px;margin:0 0 6px}}h2{{font-size:15px;margin:0 0 5px}}p{{margin:4px 0;color:#52606d}}main{{padding:18px 20px 40px}}
 button{{border:1px solid #9fb3c8;background:#fff;border-radius:6px;padding:7px 10px;cursor:pointer}}button.primary{{background:#1f5eff;color:#fff;border-color:#1f5eff}}
+.queue-summary{{border:1px solid #bcccdc;border-left:4px solid #1f5eff;background:#f8fafc;border-radius:6px;padding:9px 10px;margin:10px 0}}
+.queue-summary strong{{color:#102a43}}.counts{{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}}.count{{background:#e6f0ff;border:1px solid #bcccdc;border-radius:999px;padding:3px 8px;font-size:12px;color:#334e68}}
 .case{{background:white;border:1px solid #d8dde6;border-radius:8px;margin:0 0 16px;overflow:hidden}}
 .head{{background:#eef2f7;padding:10px 12px}}.grid{{display:grid;grid-template-columns:1fr 1fr minmax(360px,440px);gap:10px;padding:10px}}
 figure{{margin:0}}figcaption{{font-size:12px;color:#52606d;margin-bottom:4px}}img{{width:100%;max-height:360px;object-fit:contain;background:#111827;border-radius:4px}}
 .meta{{font-size:13px;color:#52606d;line-height:1.45}}.route{{font-weight:700;color:#1f2933}}.explain{{font-size:12px;color:#334e68;overflow-wrap:anywhere}}
-.recommendation{{border:1px solid #bcccdc;background:#f8fafc;border-radius:6px;padding:10px;margin-bottom:10px}}
+.recommendation{{border:1px solid #bcccdc;background:#f8fafc;border-radius:6px;padding:10px;margin-bottom:10px}}.model-answer{{display:grid;gap:2px;border-bottom:1px solid #d8dde6;padding-bottom:8px;margin-bottom:8px}}.model-answer span{{font-size:12px;color:#52606d;text-transform:uppercase}}.model-answer strong{{font-size:18px;color:#102a43}}
 .answer{{font-size:15px;font-weight:700;color:#102a43}}.action{{font-size:13px;color:#334e68;line-height:1.45}}
 .details{{border-top:1px solid #d8dde6;margin-top:10px;padding-top:8px}}summary{{cursor:pointer;color:#334e68;font-weight:600}}
 .controls{{display:grid;gap:8px;margin-top:10px}}label{{display:grid;gap:3px;font-size:12px;color:#334e68}}select,textarea{{width:100%;box-sizing:border-box;border:1px solid #bcccdc;border-radius:5px;padding:6px;font:inherit;background:white}}textarea{{min-height:72px;resize:vertical}}
 @media(max-width:1000px){{.grid{{grid-template-columns:1fr}}}}
 </style></head><body>
-<header><h1>Binary endotheliosis review triage</h1><p>{html.escape(BINARY_TRIAGE_CLAIM_BOUNDARY)}</p><p>Use the images to accept, correct, request another human review, or exclude each case. Exported CSVs should be saved next to this HTML file in the same review folder.</p><button class="primary" id="downloadCsv" type="button">Save review CSV</button> <button id="clearSaved" type="button">Clear saved values</button> <span id="status">Autosaves in this browser. Static HTML cannot silently write files beside itself; the save button will ask where to put the CSV when the browser allows it.</span></header>
+<header><h1>Binary endotheliosis review triage</h1><p>{html.escape(BINARY_TRIAGE_CLAIM_BOUNDARY)}</p><div class="queue-summary"><strong>Review scope: {selected_rows} sampled QA cases from {total_rows} total predictions.</strong><p>This page is not asking you to review every row. It is a bounded, route-stratified quality-control sample focused on blocked, borderline, uncertain, and representative model calls.</p><p>Stop rule: review the cards shown here, export the CSV beside this HTML file, then use the full prediction table only if this sample exposes a systematic failure pattern.</p><div class="counts">{route_count_html}</div></div><button class="primary" id="downloadCsv" type="button">Save review CSV</button> <button id="clearSaved" type="button">Clear saved values</button> <span id="status">Autosaves in this browser. Static HTML cannot silently write files beside itself; the save button will ask where to put the CSV when the browser allows it.</span></header>
 <main>{cards or '<p>No binary triage rows were generated.</p>'}</main>
 <script id="data" type="application/json">{payload}</script>
 <script>
@@ -4163,11 +4187,11 @@ document.querySelectorAll('select,textarea').forEach(el => {{
   el.addEventListener('input', ev => persist(ev.target.dataset.id, ev.target.dataset.key, ev.target.value));
 }});
 function csvText() {{
-  const cols = ['review_id','atlas_row_id','subject_id','subject_image_id','score','binary_target_primary','model_recommendation','recommended_human_action','predicted_probability_moderate_severe','binary_decision','uncertainty_label','final_review_route','triage_review_decision','review_urgency','reviewer_notes','reviewed_at','roi_image_path','roi_mask_path'];
+  const cols = ['review_id','review_sample_scope','review_sample_size','total_prediction_rows','atlas_row_id','subject_id','subject_image_id','score','binary_target_primary','model_answer','model_recommendation','recommended_human_action','predicted_probability_moderate_severe','binary_decision','uncertainty_label','final_review_route','triage_review_decision','review_urgency','reviewer_notes','reviewed_at','roi_image_path','roi_mask_path'];
   const rows = data.rows.map(row => {{
     const id = 'triage-' + row.atlas_row_id;
     const state = saved[id] || {{}};
-    return {{...row, ...state, review_id: id, reviewed_at: new Date().toISOString()}};
+    return {{...row, ...state, review_id: id, review_sample_scope: 'bounded_route_stratified_qa_sample', review_sample_size: data.summary.sampled_review_cards, total_prediction_rows: data.summary.total_predictions, reviewed_at: new Date().toISOString()}};
   }});
   return [cols.join(',')].concat(rows.map(row => cols.map(col => `"${{String(row[col] ?? '').replaceAll('"','""')}}"`).join(','))).join('\\n');
 }}
@@ -4209,7 +4233,10 @@ document.getElementById('clearSaved').addEventListener('click', () => {{ if (con
 
 
 def _binary_review_rows(
-    predictions: pd.DataFrame, explanations: pd.DataFrame, *, max_rows: int = 72
+    predictions: pd.DataFrame,
+    explanations: pd.DataFrame,
+    *,
+    max_rows: int = BINARY_TRIAGE_REVIEW_MAX_ROWS,
 ) -> list[dict[str, Any]]:
     merged = predictions.merge(explanations, on='atlas_row_id', how='left')
     route_order = {
@@ -4235,10 +4262,63 @@ def _binary_review_rows(
     for _, row in selected.iterrows():
         payload = {key: row.get(key, '') for key in selected.columns}
         recommendation, action = _binary_review_plain_language(payload)
+        payload['model_answer'] = _binary_review_model_answer(payload)
         payload['model_recommendation'] = recommendation
         payload['recommended_human_action'] = action
         rows.append(payload)
     return rows
+
+
+def _binary_review_route_counts(predictions: pd.DataFrame) -> list[tuple[str, int]]:
+    route_order = [
+        'blocked_cluster_manual_review',
+        'borderline_score_review',
+        'uncertain_binary_review',
+        'likely_moderate_severe_review',
+        'likely_no_low_review',
+    ]
+    counts = predictions.get('final_review_route', pd.Series(dtype=object)).value_counts(
+        dropna=False
+    )
+    result: list[tuple[str, int]] = []
+    seen: set[str] = set()
+    for route in route_order:
+        count = int(counts.get(route, 0))
+        if count:
+            result.append((_binary_review_route_label(route), count))
+            seen.add(route)
+    for route, count in counts.items():
+        route_key = '' if pd.isna(route) else str(route)
+        if route_key not in seen:
+            result.append((_binary_review_route_label(route_key), int(count)))
+    return result
+
+
+def _binary_review_route_label(route: str) -> str:
+    labels = {
+        'blocked_cluster_manual_review': 'blocked/manual-review route',
+        'borderline_score_review': 'borderline-score route',
+        'uncertain_binary_review': 'uncertain-model route',
+        'likely_moderate_severe_review': 'likely moderate/severe route',
+        'likely_no_low_review': 'likely no/low route',
+    }
+    return labels.get(route, route or 'missing route')
+
+
+def _binary_review_model_answer(row: dict[str, Any]) -> str:
+    route = str(row.get('final_review_route', ''))
+    decision = str(row.get('binary_decision', ''))
+    if route == 'blocked_cluster_manual_review':
+        return 'No model answer: manual review required'
+    if route == 'borderline_score_review':
+        return 'No model answer: borderline score review'
+    if route == 'uncertain_binary_review':
+        return 'Uncertain: human review required'
+    if route == 'likely_moderate_severe_review' or decision == 'moderate_severe':
+        return 'Moderate/severe'
+    if route == 'likely_no_low_review' or decision == 'no_low':
+        return 'No/low'
+    return decision or 'Not available'
 
 
 def _binary_review_plain_language(row: dict[str, Any]) -> tuple[str, str]:
@@ -4285,6 +4365,8 @@ def _binary_review_card(row: dict[str, Any]) -> str:
     )
     recommendation = str(row.get('model_recommendation', ''))
     action = str(row.get('recommended_human_action', ''))
+    model_answer = str(row.get('model_answer', ''))
+    route_label = _binary_review_route_label(str(row.get('final_review_route', '')))
     return f"""
 <article class="case">
   <div class="head"><strong>Atlas row {html.escape(str(row.get('atlas_row_id', '')))} | score {html.escape(str(row.get('score', '')))}</strong><div class="meta">subject {html.escape(str(row.get('subject_id', '')))} | image {html.escape(str(row.get('subject_image_id', '')))}</div></div>
@@ -4294,10 +4376,12 @@ def _binary_review_card(row: dict[str, Any]) -> str:
     <section>
       <div class="recommendation">
         <h2>Model recommendation</h2>
+        <p class="model-answer"><span>Model answer</span><strong>{html.escape(model_answer)}</strong></p>
         <p class="answer">{html.escape(recommendation)}</p>
         <p class="action">{html.escape(action)}</p>
       </div>
-      <p class="route">Route: {html.escape(str(row.get('final_review_route', '')))}</p>
+      <p class="route">Why this case is shown: {html.escape(route_label)}</p>
+      <p class="meta">This card is part of the bounded QA sample, not a request to review every prediction.</p>
       <p class="meta">Model probability of moderate/severe: {html.escape(probability_text)} | model class: {html.escape(str(row.get('binary_decision', '')))} | confidence: {html.escape(str(row.get('uncertainty_label', '')))}</p>
       <div class="controls">
         <label>Your decision<select data-id="triage-{html.escape(str(row.get('atlas_row_id', '')))}" data-key="triage_review_decision"><option value="">choose</option><option value="accept_model_recommendation">accept model recommendation</option><option value="human_no_low">human says no/low</option><option value="human_moderate_severe">human says moderate/severe</option><option value="needs_second_human_review">needs second human review</option><option value="exclude_bad_roi_or_mask">exclude: bad ROI or mask</option></select></label>
