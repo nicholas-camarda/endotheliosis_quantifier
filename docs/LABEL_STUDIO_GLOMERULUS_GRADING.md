@@ -2,16 +2,38 @@
 
 This document describes the Stage 1 Label Studio grading contract for complete glomeruli. It is a data-collection and validation contract, not a model-assisted second-review workflow.
 
-## One-Command Local Startup
+## Default Development Startup
 
-Start from a directory of images:
+Use this two-terminal path for hybrid MedSAM + Label Studio development. Label Studio runs in Docker; the MedSAM companion runs on the Mac host so MPS/Metal works.
+
+Terminal 1:
 
 ```bash
+cd /Users/ncamarda/Projects/endotheliosis_quantifier
 conda activate eq-mac
-eq labelstudio start /path/to/images
+PYTORCH_ENABLE_MPS_FALLBACK=1 /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq.labelstudio.medsam_companion \
+  --checkpoint /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/segmentation_evaluation/medsam_glomeruli_fine_tuning/deploy_conservative_mps_glomeruli/finetuned_evaluation/medsam_glomeruli_best_sam_state_dict.pth \
+  --device mps \
+  --port 8098
 ```
 
-The command recursively imports `.jpg`, `.jpeg`, `.png`, `.tif`, and `.tiff` files, starts a local Docker Label Studio instance, creates or reuses the `EQ Glomerulus Grading` project, applies `configs/label_studio_glomerulus_grading.xml`, imports the image tasks, and prints the Label Studio URL plus the project URL.
+Terminal 2:
+
+```bash
+cd /Users/ncamarda/Projects/endotheliosis_quantifier
+conda activate eq-mac
+eq labelstudio start /tmp/eq_hybrid_demo/images --project-name "Hybrid Demo Clean Components"
+```
+
+Open the `Project URL` printed by `eq labelstudio start`. Do not assume the project id; fresh demo projects receive new `/projects/<id>/data` URLs.
+
+For non-demo image folders, replace `/tmp/eq_hybrid_demo/images` with the image directory:
+
+```bash
+eq labelstudio start /path/to/images --project-name "Kidney Glomerulus Grading"
+```
+
+The command recursively imports `.jpg`, `.jpeg`, `.png`, `.tif`, and `.tiff` files, starts a local Docker Label Studio instance, creates or reuses the named project, applies `configs/label_studio_glomerulus_grading.xml`, imports the image tasks, and prints the Label Studio URL plus the project URL.
 
 Hybrid preload and companion controls are YAML-first:
 
@@ -55,7 +77,7 @@ eq labelstudio start \
 
 Legacy `--images /path/to/images` remains supported for automation compatibility.
 
-The command is local/admin bootstrap only. It does not run segmentation, quantification, MedSAM/SAM, model second review, or adjudication.
+The command is local/admin bootstrap only. It imports existing mask-release predictions and requires the companion for box-assist health when hybrid mode is enabled; it does not train segmentation, run quantification, run model second review, or adjudicate grades.
 
 ## Purpose
 

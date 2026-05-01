@@ -55,14 +55,30 @@ brew install --cask docker
 open -a Docker
 ```
 
-Wait for Docker Desktop to finish starting, then run:
+Wait for Docker Desktop to finish starting. For active hybrid development, use the two-terminal demo loop below as the default path.
+
+Terminal 1 starts the MedSAM companion on the Mac host so MPS/Metal is available:
 
 ```bash
+cd /Users/ncamarda/Projects/endotheliosis_quantifier
 conda activate eq-mac
-eq labelstudio start /path/to/images
+PYTORCH_ENABLE_MPS_FALLBACK=1 /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq.labelstudio.medsam_companion \
+  --checkpoint /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/segmentation_evaluation/medsam_glomeruli_fine_tuning/deploy_conservative_mps_glomeruli/finetuned_evaluation/medsam_glomeruli_best_sam_state_dict.pth \
+  --device mps \
+  --port 8098
+```
+
+Terminal 2 creates or refreshes the Label Studio project:
+
+```bash
+cd /Users/ncamarda/Projects/endotheliosis_quantifier
+conda activate eq-mac
+eq labelstudio start /tmp/eq_hybrid_demo/images --project-name "Hybrid Demo Clean Components"
 ```
 
 The command recursively imports `.jpg`, `.jpeg`, `.png`, `.tif`, and `.tiff` files, creates a local Label Studio project with `configs/label_studio_glomerulus_grading.xml`, and applies hybrid bootstrap settings from `configs/label_studio_medsam_hybrid.yaml` (or `--config` override). It prints the Label Studio URL, project URL, and hybrid companion status.
+
+Open the `Project URL` printed by the command. Do not hardcode the project id; each fresh demo project can receive a new `/projects/<id>/data` URL.
 
 Default local login:
 
@@ -86,32 +102,9 @@ eq labelstudio start --images /path/to/images
 For details, see [docs/LABEL_STUDIO_GLOMERULUS_GRADING.md](docs/LABEL_STUDIO_GLOMERULUS_GRADING.md).
 For MedSAM box-assist companion launch/contract, see [docs/LABEL_STUDIO_MEDSAM_COMPANION.md](docs/LABEL_STUDIO_MEDSAM_COMPANION.md).
 
-### Development Demo Loop (Current Hybrid Status)
+### Current Hybrid Status
 
 This loop is usable for development iteration, but still half-finished from an operator UX standpoint. The current gap is preload quality/instance semantics, not core import/export plumbing.
-
-Start companion + Label Studio demo:
-
-```bash
-cd /Users/ncamarda/Projects/endotheliosis_quantifier
-conda activate eq-mac
-
-# 1) Start MedSAM companion on host (MPS)
-PYTORCH_ENABLE_MPS_FALLBACK=1 /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq.labelstudio.medsam_companion \
-  --checkpoint /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/segmentation_evaluation/medsam_glomeruli_fine_tuning/deploy_conservative_mps_glomeruli/finetuned_evaluation/medsam_glomeruli_best_sam_state_dict.pth \
-  --device mps \
-  --port 8098
-
-# 2) In a second terminal, bootstrap local Label Studio demo project
-conda activate eq-mac
-eq labelstudio start /tmp/eq_hybrid_demo/images --project-name "Hybrid Demo Clean Components"
-```
-
-Open:
-
-```text
-http://localhost:8080/projects/7/data
-```
 
 Local login:
 
