@@ -11,9 +11,10 @@ The current usable endpoint is a binary review-triage workflow:
 The model is useful for prioritizing human review of no/low versus moderate/severe cases. It is not a clinical diagnostic device, an autonomous grader, or external validation evidence.
 
 
-| Current performance summary | Review workload summary    |
-| --------------------------- | -------------------------- |
-| Binary triage performance   | Binary triage review queue |
+| Current performance summary | Review workload summary |
+| --------------------------- | ----------------------- |
+| Selected triage model: `roi_qc_binary_logistic` | Primary target: `no_low` vs `moderate_severe` |
+| Balanced accuracy `0.657`, recall `0.705`, AUROC `0.695` | `371` no/low, `220` moderate/severe, `116` borderline-review rows |
 
 
 ## Quick Start
@@ -229,6 +230,58 @@ Target support:
 | moderate/severe   | 220   |
 | borderline review | 116   |
 
+
+## Head-To-Head Results Snapshot
+
+These tables summarize the main internal comparisons this repo has produced. They are useful for handoff and orientation, but they are not external validation or clinical-performance claims.
+
+### Segmentation Comparisons
+
+What actually drives hybrid Label Studio preload and box-assist (current defaults):
+
+| Role | Model / artifact | Where it lives |
+| --- | --- | --- |
+| Full-image preload masks | Fine-tuned MedSAM mask release `deploy_conservative_mps_glomeruli` (`mask_source=medsam_finetuned_glomeruli`) | `${EQ_RUNTIME_ROOT}/derived_data/generated_masks/glomeruli/medsam_finetuned/deploy_conservative_mps_glomeruli/` (see `manifest.csv`) |
+| Live box-assist inference | Segment Anything **ViT-B** (`vit_b`) weights loaded from the deploy-run evaluation checkpoint | `${EQ_RUNTIME_ROOT}/output/segmentation_evaluation/medsam_glomeruli_fine_tuning/deploy_conservative_mps_glomeruli/finetuned_evaluation/medsam_glomeruli_best_sam_state_dict.pth` |
+
+The transfer/scratch rows below are **not** what Label Studio hybrid preload imports by default. Those `.pkl` paths are explicit comparison baselines wired into `configs/medsam_glomeruli_fine_tuning_deploy_conservative_mps.yaml` under `current_segmenter` for MedSAM evaluation reports — legacy FastAI pickles are historical unless separately promoted as supported artifacts.
+
+Glomeruli transfer-vs-scratch comparison used the deterministic adjudication-aware candidate-comparison panel (`30` crops across `27` images and `5` subjects; threshold `0.75`):
+
+| Segmentation candidate | Dice | Jaccard | Precision | Recall | Result status |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Transfer glomeruli candidate | 0.8719 | 0.7729 | 0.7957 | 0.9643 | Promotion-eligible, but tied |
+| Scratch/no-mitochondria-base glomeruli candidate | 0.8674 | 0.7658 | 0.7975 | 0.9507 | Promotion-eligible, but tied |
+
+MedSAM oracle-box pilot compared manual-box MedSAM against the current glomeruli segmenters on `20` admitted manual-mask rows:
+
+| Segmentation path | Mean Dice | Mean Jaccard | Interpretation |
+| --- | ---: | ---: | --- |
+| MedSAM oracle box | 0.9229 | 0.8577 | Strong upper-bound boundary-quality evidence |
+| Current transfer segmenter | 0.7088 | 0.5675 | Weaker than oracle-box MedSAM on this subset |
+| Current scratch segmenter | 0.7102 | 0.5714 | Similar to transfer on this subset |
+
+Current caveat: the latest Label Studio hybrid debug run showed that the active full-image auto-preload release (`deploy_conservative_mps_glomeruli`) can produce poor operator-facing masks on demo images. The next segmentation UX direction should be box-assist/manual-first unless a release passes a quality gate.
+
+### Quantification Comparisons
+
+Binary no/low vs moderate/severe review triage is the current usable endpoint. Score `1.0` is routed to borderline review and excluded from primary binary metrics.
+
+| Binary triage candidate | Feature family | Threshold | Balanced accuracy | Recall | Precision | Specificity | AUROC | Average precision |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `roi_qc_binary_logistic` | ROI/QC | 0.45 | 0.657 | 0.705 | 0.517 | 0.609 | 0.695 | 0.538 |
+| `atlas_hybrid_binary_logistic` | embedding + ROI/QC + atlas anchor | 0.25 | 0.650 | 0.659 | 0.522 | 0.642 | 0.692 | 0.552 |
+| `embedding_binary_logistic` | frozen embedding | 0.25 | 0.641 | 0.655 | 0.511 | 0.628 | 0.673 | 0.533 |
+| `atlas_cluster_anchor_mapping` | atlas anchor cluster | 0.50 | 0.663 | 0.933 | 0.620 | 0.393 | 0.663 | 0.613 |
+
+Exploratory endotheliosis burden/grade screens are kept as review evidence, not promoted claims:
+
+| Quantification screen | Best candidate | Level | Rows/subjects | Stage-index MAE | Grade-scale MAE | Status |
+| --- | --- | --- | --- | ---: | ---: | --- |
+| Learned ROI candidate screen | `image_simple_roi_qc` | image | 707 / 60 | 23.590 | 0.608 | Blocked: broad prediction sets, score coverage gaps, numerical warnings, cohort predictability |
+| Learned ROI candidate screen | `subject_simple_roi_qc` | subject | 60 / 60 | 11.134 | 0.334 | Blocked: cohort predictability and numerical-warning diagnostics |
+| Morphology-aware screen | `image_morphology_only_ridge` | image | 707 / 60 | 21.999 | 0.660 | Blocked by visual feature readiness |
+| Morphology-aware screen | `subject_morphology_only_ridge` | subject | 60 / 60 | 12.671 | 0.380 | Blocked by visual feature readiness |
 
 For the full checkpoint and release policy, see [docs/REPRODUCIBILITY_HANDOFF_2026-04-30.md](docs/REPRODUCIBILITY_HANDOFF_2026-04-30.md).
 
