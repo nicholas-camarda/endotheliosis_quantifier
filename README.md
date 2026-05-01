@@ -256,7 +256,9 @@ What actually drives hybrid Label Studio preload and box-assist (current default
 
 Rows sorted by mean Dice descending. Workflow summary for this run records `adoption_tier=improved_candidate_not_oracle` (beats automatic MedSAM and both CNN baselines on this split; still below oracle-tier gates — see `summary.json` → `finetuned_comparison`). Numbers are reproducible from the CSVs above after rerunning `configs/medsam_glomeruli_fine_tuning_deploy_conservative_mps.yaml`; see [docs/MEDSAM_GLOMERULI_FINETUNING_HANDOFF.md](docs/MEDSAM_GLOMERULI_FINETUNING_HANDOFF.md).
 
-The adjudication-panel CNN rows further down are **not** this split — different crop panel and cohort slice.
+**Fine-tuning is not pointless on this evidence.** Compare rows that share the **same prompts**: fine-tuned automatic (**0.8155** Dice) vs automatic baseline (**0.7747**) — about **+0.04** mean Dice on identical proposal boxes. That is exactly what domain adaptation was supposed to improve under this evaluation contract. The **oracle** row is a different problem: **manual** boxes give MedSAM near-perfect prompts, so it is an upper bound on boundary quality, not a fair bar for **automatic** prompting.
+
+**Why adjudication-panel CNN Dice (~0.87) is not contradictory with deploy CNN Dice (~0.73 / ~0.65).** Those numbers come from **different benchmarks**. The adjudication table below uses **30 adjudication-aware crops** (`27` images / `5` subjects, threshold `0.75`) — tight framing and panel rules favor high overlap for models tuned on similar crops. The deploy table scores **the same 42 full split rows** used for MedSAM automatic evaluation (full-field CNN masks vs manual union semantics, proposal-driven geometry). Cropped-panel Dice does not transport to full-row Dice; neither table invalidates the other.
 
 The transfer/scratch `.pkl` paths wired under `current_segmenter` in deploy YAML are **not** what Label Studio hybrid preload imports by default; they are evaluation baselines — legacy FastAI pickles are historical unless separately promoted as supported artifacts.
 
