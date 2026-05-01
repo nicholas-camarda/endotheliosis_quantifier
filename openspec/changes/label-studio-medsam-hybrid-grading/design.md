@@ -19,6 +19,7 @@
 - Embedding MedSAM CUDA training code into `src/eq`; wrap external checkpoints + inference/box endpoints per upstream contracts.
 - Exposing Stage 2 model grade suggestions directly into Stage 1 primary grading UX (preserve model-blind contract already spec’d).
 - Committing heavyweight runtime artifacts (`derived_data/`**, checkpoints) into Git.
+- Inferring per-glomerulus grades or masks from legacy **image-level aggregate scores** (mathematically ill-posed without new annotation or vision models; out of scope for this change).
 
 ## Decisions
 
@@ -39,6 +40,8 @@
 **Choice:** Offline ingestion maps release manifest polygons/masks onto Label Studio `predictions`/preannotations; interactive path calls companion HTTP JSON contract with minimal payload (bbox, image locator, checkpoint ref).
 
 **Alternative:** Only synchronous companion generation → brittle for laptops; preload gives instant UX when release exists.
+
+**Operator intent:** **Box-assist** is the high-value path for **images or glomeruli not yet covered** by a mask release (cold coverage). **Preload** accelerates **known** images and MUST remain compatible with **repeat review** of the same tasks (QA, grade updates, boundary fixes)—the workflow is not limited to one-and-done preload consumption.
 
 ### Decision: Operational posture for companion unavailability
 
@@ -80,6 +83,7 @@ Extend `glomerulus_grading.py` parsers (or refactor into shared labelstudio cont
 - Default integration settings file path: `**configs/label_studio_medsam_hybrid.yaml`**.
 - Cold start policy (**B**) remains: zero preload masks must NOT block importing tasks.
 - Box-assist default posture: hybrid mode refuses open without healthy companion unless `offline_manual_only_allowed: true`.
+- **Canonical region primitive for human refinement** is **brush** (`brushlabels` in the grading XML): graders edit MedSAM-derived geometry with the brush; box-assist is an **input modality to MedSAM**, not a replacement for brush-finalized masks.
 
 ## Open Questions
 

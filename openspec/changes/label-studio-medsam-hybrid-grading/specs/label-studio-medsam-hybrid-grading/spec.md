@@ -68,3 +68,36 @@ Hybrid exports MUST annotate each authoritative record with enumerated lineage f
 
 - **WHEN** a grader submits a finalized complete-glomerulus region synthesized through box-assisted MedSAM after preload absence
 - **THEN** lineage MUST denote box-assisted derivation with companion provenance timestamps and authoritative grade linkage identical to preload-derived rows
+
+### Requirement: Hybrid workflow SHALL treat brush refinement as the canonical graded mask primitive
+
+MedSAM proposals imported from releases and masks returned from box-assisted inference MUST be presented and edited as **brush-compatible** region geometry in the labeling configuration (for example `brushlabels` with RLE or equivalent), so graders refine boundaries with the brush tool rather than committing final science masks as axis-aligned rectangles alone.
+
+#### Scenario: Grader refines preload proposal
+
+- **WHEN** a task includes preload MedSAM geometry and the grader adjusts segmentation before assigning a grade
+- **THEN** the labeling configuration MUST allow brush-based edits on that geometry without forcing a rectangle-only workflow
+
+#### Scenario: Cold image relies on box-assist
+
+- **WHEN** an image has no usable preload for one or more glomeruli and the grader uses box-assisted MedSAM to propose initial geometry
+- **THEN** the resulting region MUST remain brush-editable to the same standard as preload-derived regions
+
+#### Scenario: Repeat review of preloaded tasks
+
+- **WHEN** operators re-open tasks that already had preload or prior annotations (QA, grade change, boundary correction)
+- **THEN** hybrid bootstrap and Label Studio project behavior MUST continue to support labeling on those tasks without requiring net-new images only
+
+### Requirement: Hybrid mode MUST support both cold coverage and repeat review
+
+The integration SHALL NOT assume workflows are limited to first-pass consumption of preload masks: box-assisted and manual-brush paths remain available for **unseen** coverage, while tasks with existing preload or prior work remain valid for **repeat** grading sessions.
+
+#### Scenario: New image without release coverage
+
+- **WHEN** an image under `<image-dir>` has no matching preload artifact in the bound mask release
+- **THEN** the task MUST still be importable and graders MUST be able to obtain complete-glomerulus regions via box-assisted MedSAM (when companion policy allows), manual brush, or both
+
+#### Scenario: Previously reviewed image returns to the queue
+
+- **WHEN** an image already associated with a mask release or prior export re-enters the labeling queue
+- **THEN** operators MUST be able to run another authoritative grading pass without a special “new-only” restriction imposed by hybrid bootstrap logic

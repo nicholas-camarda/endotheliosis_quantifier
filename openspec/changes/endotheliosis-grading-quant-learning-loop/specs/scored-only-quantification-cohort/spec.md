@@ -33,3 +33,22 @@ Repository-maintained quantification onboarding documentation MUST describe the 
 
 - **WHEN** a collaborator reads documented quantification onboarding guidance maintained for this repository
 - **THEN** that guidance MUST explicitly state that burden modeling refresh follows refreshed authoritative grades and explicit reruns—not implicit reuse of stale cohort snapshots
+
+### Requirement: Cohort pipelines SHALL distinguish scoring-unit eras without inferring per-glom grades from legacy aggregates
+
+Quantification and cohort admission MUST support **both** (a) historical **image-level** scored examples collected under legacy rules and (b) **per-glomerulus** authoritative rows from `label-studio-glomerulus-grading` or hybrid exports, using explicit manifests, loaders, or schema markers so operators do not silently merge incompatible scoring units.
+
+#### Scenario: Legacy image-level cohort remains valid
+
+- **WHEN** a scored cohort was built from image-level Label Studio or spreadsheet scores predating per-glom instance exports
+- **THEN** reproducibility artifacts MUST remain valid for that cohort definition without requiring retroactive per-glom rows
+
+#### Scenario: Operator migrates images to per-glom scoring
+
+- **WHEN** operators re-label legacy images in a per-glom workflow and produce a new authoritative export
+- **THEN** cohort-building workflows MUST admit the new per-glom rows under per-glom reconciliation rules and MUST NOT treat a legacy single image-level score as automatically decomposed into per-glom training targets without explicit new annotations
+
+#### Scenario: No authoritative decomposition from aggregate alone
+
+- **WHEN** only a historical image-level aggregate score exists for a multi-glomerulus image and no new per-glom annotations were collected
+- **THEN** cohort and quantification workflows MUST NOT present synthetic per-glom scores derived solely from that aggregate as scientifically equivalent to brush-finalized hybrid exports unless a **separate, explicitly scoped** modeling change defines and validates such inference

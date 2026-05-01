@@ -21,6 +21,15 @@ The system SHALL emit glomerulus-level records that preserve image identity, glo
 
 ## ADDED Requirements
 
+### Requirement: Graded glomerulus regions SHALL use brush-compatible geometry in hybrid workflows
+
+When **`label-studio-medsam-hybrid-grading`** is enabled, exported glomerulus-instance records MUST derive from **brushlabels** (or equivalent mask raster semantics) for `glomerulus_roi` (or successor region name), consistent with human mask editing; rectangle-only annotations MUST NOT be the sole graded mask primitive for complete glomeruli unless a future capability change explicitly supersedes this contract.
+
+#### Scenario: Export after brush refinement
+
+- **WHEN** a grader finalizes a complete glomerulus after brush edits on MedSAM-sourced geometry
+- **THEN** the export encodes region geometry in the brush-compatible format consumed by `load_glomerulus_grading_records` and validators
+
 ### Requirement: Validator MUST reject contradictory lineage payloads
 Hybrid exports MUST fail validation when enumerated lineage fields contradict geometry references (for example preload metadata referencing missing release identifiers) preventing silent ingestion of contradictory training-ready tables.
 

@@ -61,5 +61,5 @@ Collaborators still need one coherent story: **clone repo**, **obtain weights/re
 
 ## Open Questions
 
-- `[defer_ok]` Exact directory name for Compose snippets (`deploy/compose/` vs `docker/`).
-- `[audit_first_then_decide]` Institutional artifact mirrors: whether manifests MUST allow non-GitHub `download_urls` arrays—audit lab IT constraints during implementation.
+- [defer_ok] Exact directory name for Compose snippets (`deploy/compose/` vs `docker/`).
+- [audit_first_then_decide] Institutional artifact mirrors: whether manifests MUST allow non-GitHub `download_urls` arrays—audit lab IT constraints and review evidence from deployment during implementation.

@@ -1,0 +1,12 @@
+hybrid:
+  enabled: true
+  selection_mode: latest_valid
+  # Leave empty to auto-select latest valid release from derived_data/generated_masks/glomeruli/manifest.csv
+  mask_release_id: ""
+  require_box_assisted_medsam: true
+  offline_manual_only_allowed: false
+  fail_on_missing_preload: false
+
+companion:
+  base_url: "http://localhost:8098"
+  health_path: "/healthz"

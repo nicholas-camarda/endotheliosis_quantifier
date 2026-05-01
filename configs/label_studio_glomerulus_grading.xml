@@ -11,7 +11,15 @@
 
   <View visibleWhen="region-selected">
     <Header value="Grade the selected complete glomerulus" />
-    <Choices name="endotheliosis_grade" toName="image" perRegion="true" showInLine="true">
+    <Choices
+      name="endotheliosis_grade"
+      toName="image"
+      perRegion="true"
+      choice="single-radio"
+      showInLine="true"
+      whenTagName="glomerulus_roi"
+      whenLabelValue="complete_glomerulus"
+    >
       <Choice value="0" />
       <Choice value="0.5" />
       <Choice value="1" />

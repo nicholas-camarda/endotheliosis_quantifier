@@ -16,6 +16,7 @@ Operators still lack a **named quant contract** that says: **when graders produc
 
 - Building active-learning prioritization UI (**defer_ok** future change).
 - Injecting burden-model predictions into Stage 1 LS grading (**explicitly excluded** unless a separate grading-contract change reverses hybrid non-goals).
+- **Automated decomposition** of legacy **image-level aggregate scores** into per-glomerulus grades or masks without new human annotation or a separately scoped vision model (ill-posed; not part of this change).
 
 ## Decisions
 
@@ -46,7 +47,9 @@ Operators still lack a **named quant contract** that says: **when graders produc
 ## Explicit Decisions
 
 - **Learning loop v1** is **offline iteration**, not LS-embedded model hints.
+- **Forward-looking scoring unit** for new labeling and hybrid exports is **per glomerulus** (authoritative instance rows), not a single coerced score per multi-glom image.
+- **Dual-era flexibility:** Historical cohorts that were admitted under **image-level** scoring rules remain valid for reproducibility; migrating those images to **per-glom** masks and grades is a **re-annotation / enrichment** workflow (for example hybrid Label Studio passes), not an automatic numeric split of a legacy aggregate score.
 
 ## Open Questions
 
-- `[audit_first_then_decide]` Minimal sufficient lineage tuple (export digest vs `(project_id, export_timestamp)` vs manifest row hashes) — audit writers during implementation.
+- [audit_first_then_decide] Minimal sufficient lineage tuple (export digest vs `(project_id, export_timestamp)` vs manifest row hashes) — audit `src/eq/quantification` lineage writers during implementation.

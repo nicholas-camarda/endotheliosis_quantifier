@@ -33,5 +33,13 @@ Collaborators need a clear, documented way to obtain **code + configs + heavywei
 
 ## Open Questions
 
-- `[defer_ok]` Exact **`artifacts_manifest.json`** schema version and SHA algorithm naming (`sha256` required vs optional secondary hashes).
-- `[defer_ok]` Whether v1 ships **Docker Compose** only as documented snippets versus git-tracked `deploy/compose/` files—topology guidance belongs in design/tasks regardless.
+- [defer_ok] Exact **`artifacts_manifest.json`** schema version and SHA algorithm naming (`sha256` required vs optional secondary hashes).
+- [defer_ok] Whether v1 ships **Docker Compose** only as documented snippets versus git-tracked `deploy/compose/` files—topology guidance belongs in design/tasks regardless.
+
+## logging-contract
+
+This change is **documentation and packaging governance** first. Collaborator-facing **`eq labelstudio start`** and **`eq run-config`** behavior does not gain new durable log roots here; operators continue to use existing `eq` CLI execution logging. Any future git-tracked Compose wrappers SHOULD document where companion and LS container logs go on the host without writing into Git-tracked paths.
+
+## docs-impact
+
+Update **`README.md`**, collaborator sections under **`docs/`**, and maintain **`docs/examples/artifacts_manifest.example.json`** per **Impact**. Cross-link **`label-studio-medsam-hybrid-grading`** and runtime-root expectations from **`AGENTS.md`** so distribution tiers (Git vs Releases vs `EQ_RUNTIME_ROOT`) stay explicit.

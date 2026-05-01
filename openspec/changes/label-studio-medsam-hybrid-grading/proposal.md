@@ -38,6 +38,9 @@ Fine-tuned MedSAM generated-mask releases from `medsam-glomeruli-fine-tuning` wi
 - Versioning stance: authoritative exports expose **latest** committed annotation state with explicit lineage fields permitting audit; finer-grained LC history deferred unless LS export makes it trivial.
 - Release-selection stance: implementation MUST audit the generated-mask registry first and choose the latest eligible MedSAM release by explicit ordering rules (status + timestamp), not by assuming a fixed release name.
 - Required region source states for downstream ingestion: `auto_medsam`, `human_edited_medsam`, `box_assisted_medsam`, `excluded_partial_glomerulus`, and `rejected_medsam_candidate`.
+- **Brush-first UX:** Final glomerulus regions remain **brush-editable** in Label Studio; box-assist supplies MedSAM prompts for new or missing coverage, not rectangle-only graded ROIs.
+- **Use-case balance:** **Box-assist** is essential for **novel** images/glomeruli without preload; **preload + repeat labeling** of the same tasks remains a supported path (re-review, QA, updated grades).
+- **No legacy score decomposition:** This change does **not** introduce models or heuristics that infer per-glomerulus scores from historical image-level aggregate grades (see `endotheliosis-grading-quant-learning-loop` for cohort-era flexibility).
 
 ## Open Questions
 

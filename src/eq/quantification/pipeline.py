@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn.functional as F
+from label_studio_converter.brush import decode_rle as decode_labelstudio_brush_rle
 from PIL import Image, ImageDraw
 from sklearn.metrics import (
     accuracy_score,
@@ -38,6 +39,11 @@ from eq.data_management.metadata_processor import MetadataProcessor
 from eq.data_management.model_loading import load_model_safely
 from eq.evaluation.quantification_metrics import calculate_quantification_metrics
 from eq.inference.prediction_core import create_prediction_core
+from eq.labelstudio.glomerulus_grading import (
+    LabelStudioGlomerulusContractError,
+    load_glomerulus_grading_records,
+    prepare_rollup_records,
+)
 from eq.quantification.burden import (
     ALLOWED_SCORE_VALUES,
     BURDEN_COLUMN,
@@ -520,6 +526,167 @@ def build_image_level_scored_example_table(
     output_dir.mkdir(parents=True, exist_ok=True)
     scored_table.to_csv(output_dir / 'scored_examples.csv', index=False)
     return scored_table
+
+
+def build_glomerulus_instance_scored_example_table(
+    project_dir: Path, annotation_source: str | Path, output_dir: Path
+) -> pd.DataFrame:
+    """Create one scored example per complete graded glomerulus instance."""
+    records = load_glomerulus_grading_records(annotation_source)
+    rollup = prepare_rollup_records(records)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if rollup.empty:
+        table = pd.DataFrame(
+            columns=[
+                'subject_image_id',
+                'subject_id',
+                'image_name',
+                'subject_prefix',
+                'glomerulus_id',
+                'glomerulus_instance_id',
+                'score',
+                'raw_image_path',
+                'raw_mask_path',
+                'join_status',
+                'score_status',
+                'score_resolution',
+                'roi_status',
+            ]
+        )
+        table.to_csv(output_dir / 'scored_examples.csv', index=False)
+        return table
+
+    inventory = inventory_raw_project(Path(project_dir))
+    image_lookup = {
+        str(row.image_name).lower(): str(row.image_path)
+        for row in inventory.itertuples(index=False)
+        if isinstance(row.image_name, str) and isinstance(row.image_path, str)
+    }
+    subject_lookup = {
+        str(row.image_name).lower(): str(getattr(row, 'subject_prefix', '') or '')
+        for row in inventory.itertuples(index=False)
+        if isinstance(row.image_name, str)
+    }
+    instance_mask_dir = output_dir / 'instance_masks'
+    instance_mask_dir.mkdir(parents=True, exist_ok=True)
+    logger = get_logger('eq.quantification.pipeline')
+    skipped_zero_area = 0
+    rows: list[dict[str, Any]] = []
+    for row in rollup.itertuples(index=False):
+        image_name = str(row.image_name or '')
+        image_key = image_name.lower()
+        raw_image_path = image_lookup.get(image_key, '')
+        join_status = 'ok' if raw_image_path else 'missing_raw_image'
+        score_status = 'ok' if pd.notna(row.human_grade) else 'missing_score'
+        roi_status = (
+            'pending' if join_status == 'ok' and score_status == 'ok' else 'join_failed'
+        )
+        mask_path = ''
+        rle = getattr(row, 'region_rle', None)
+        if isinstance(rle, list) and rle:
+            width = int(getattr(row, 'region_original_width') or 0)
+            height = int(getattr(row, 'region_original_height') or 0)
+            if width > 0 and height > 0:
+                mask_np = _decode_binary_rle(rle, width=width, height=height)
+                if int(mask_np.sum()) <= 0:
+                    skipped_zero_area += 1
+                    continue
+                mask_path_obj = instance_mask_dir / f'{row.source_glomerulus_record_id}.png'
+                Image.fromarray(mask_np * 255).save(mask_path_obj)
+                mask_path = str(mask_path_obj)
+        if not mask_path:
+            skipped_zero_area += 1
+            continue
+        rows.append(
+            {
+                'subject_image_id': f'{row.image_id}::{row.glomerulus_instance_id}',
+                'subject_id': str(row.image_id).split('_Image', 1)[0],
+                'image_name': image_name,
+                'subject_prefix': subject_lookup.get(image_key, ''),
+                'glomerulus_id': len(rows) + 1,
+                'glomerulus_instance_id': str(row.glomerulus_instance_id),
+                'score': float(row.human_grade) if pd.notna(row.human_grade) else np.nan,
+                'raw_image_path': raw_image_path,
+                'raw_mask_path': mask_path,
+                'join_status': join_status,
+                'score_status': score_status,
+                'score_resolution': 'instance_level_export',
+                'roi_status': roi_status,
+            }
+        )
+    if skipped_zero_area:
+        logger.warning(
+            'Dropped %d zero-area or invalid glomerulus regions from Label Studio export',
+            skipped_zero_area,
+        )
+    table = pd.DataFrame(rows).sort_values(
+        ['subject_prefix', 'image_name', 'glomerulus_instance_id']
+    )
+    table.to_csv(output_dir / 'scored_examples.csv', index=False)
+    return table.reset_index(drop=True)
+
+
+def _decode_binary_rle(rle: list[Any], *, width: int, height: int) -> np.ndarray:
+    try:
+        decoded = decode_labelstudio_brush_rle(rle)
+        rgba = decoded.reshape((int(height), int(width), 4))
+        alpha = rgba[:, :, 3]
+        return (alpha > 0).astype(np.uint8)
+    except Exception:
+        values = [int(item) for item in rle]
+        if len(values) % 2 != 0:
+            raise ContractPreparationError('Invalid region_rle: expected value/count pairs')
+        flat: list[int] = []
+        for value, count in zip(values[0::2], values[1::2]):
+            flat.extend([1 if value else 0] * max(count, 0))
+        expected = int(width) * int(height)
+        if len(flat) < expected:
+            flat.extend([0] * (expected - len(flat)))
+        flat = flat[:expected]
+        return np.array(flat, dtype=np.uint8).reshape((height, width))
+
+
+def _build_instance_scored_examples_if_available(
+    *,
+    project_dir: Path,
+    annotation_source: str | Path,
+    output_dir: Path,
+) -> pd.DataFrame | None:
+    try:
+        table = build_glomerulus_instance_scored_example_table(
+            project_dir=project_dir,
+            annotation_source=annotation_source,
+            output_dir=output_dir,
+        )
+    except LabelStudioGlomerulusContractError as exc:
+        message = str(exc)
+        if 'legacy baseline data' in message or 'grade-to-region linkage' in message:
+            return None
+        raise
+    if table.empty:
+        return None
+    return table
+
+
+def _write_grading_lineage_summary(
+    *,
+    output_dir: Path,
+    scoring_unit: str,
+    annotation_source: str | Path | None,
+    scored_table: pd.DataFrame,
+) -> Path:
+    summary = {
+        'scoring_unit': scoring_unit,
+        'annotation_source': str(annotation_source or ''),
+        'rows': int(len(scored_table)),
+        'unique_images': int(scored_table['image_name'].nunique())
+        if 'image_name' in scored_table.columns
+        else 0,
+        'unique_instances': int(scored_table['glomerulus_instance_id'].nunique())
+        if 'glomerulus_instance_id' in scored_table.columns
+        else 0,
+    }
+    return _save_json(summary, output_dir / 'lineage_summary.json')
 
 
 def _manifest_runtime_root(manifest_root: Path) -> Path:
@@ -3110,6 +3277,97 @@ def run_contract_first_quantification(
                 'No Label Studio annotation source was found. Provide --annotation-source or use --score-source spreadsheet.'
             )
 
+        instance_scored = _build_instance_scored_examples_if_available(
+            project_dir=project_dir,
+            annotation_source=annotation_source,
+            output_dir=output_dir / 'scored_examples',
+        )
+        if instance_scored is not None:
+            logger.info(
+                'Using glomerulus-instance Label Studio scoring path: rows=%d',
+                len(instance_scored),
+            )
+            label_contract_reference = label_contract_reference_for_scored_table(
+                input_contract,
+                instance_scored,
+                base_scored_input_path=Path(annotation_source),
+                annotation_artifact_path=Path(annotation_source),
+            )
+            instance_scored, label_override_artifacts = _apply_score_label_overrides(
+                instance_scored,
+                label_overrides_path,
+                output_dir / 'scored_examples',
+                label_contract_reference=label_contract_reference,
+            )
+            if label_override_artifacts:
+                instance_scored.to_csv(
+                    output_dir / 'scored_examples' / 'scored_examples.csv', index=False
+                )
+            lineage_summary = _write_grading_lineage_summary(
+                output_dir=output_dir / 'scored_examples',
+                scoring_unit='glomerulus_instance',
+                annotation_source=annotation_source,
+                scored_table=instance_scored,
+            )
+            logger.info('Scored examples ready: rows=%d', len(instance_scored))
+            if stop_after == 'contract':
+                return {
+                    'raw_inventory': inventory_path,
+                    'mapping_template': mapping_template_path,
+                    'scored_examples': output_dir
+                    / 'scored_examples'
+                    / 'scored_examples.csv',
+                    'grading_lineage_summary': lineage_summary,
+                    **label_override_artifacts,
+                }
+            roi_table = extract_image_level_roi_crops(
+                instance_scored, output_dir / 'roi_crops'
+            )
+            logger.info('ROI crops ready: rows=%d', len(roi_table))
+            if stop_after == 'roi':
+                return {
+                    'raw_inventory': inventory_path,
+                    'mapping_template': mapping_template_path,
+                    'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
+                    'grading_lineage_summary': lineage_summary,
+                    **label_override_artifacts,
+                }
+            embedding_table = extract_embedding_table(
+                roi_table=roi_table,
+                segmentation_model_path=segmentation_model_path,
+                output_dir=output_dir / 'embeddings',
+            )
+            logger.info(
+                'Embedding table ready: rows=%d, columns=%d',
+                len(embedding_table),
+                len(embedding_table.columns),
+            )
+            if stop_after == 'embeddings':
+                return {
+                    'raw_inventory': inventory_path,
+                    'mapping_template': mapping_template_path,
+                    'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
+                    'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
+                    'grading_lineage_summary': lineage_summary,
+                    **label_override_artifacts,
+                }
+            model_artifacts = evaluate_embedding_table(
+                embedding_table,
+                output_dir / 'ordinal_model',
+                segmentation_model_path=segmentation_model_path,
+                label_contract_reference=label_contract_reference,
+            )
+            return {
+                'raw_inventory': inventory_path,
+                'mapping_template': mapping_template_path,
+                'scored_examples': output_dir / 'scored_examples' / 'scored_examples.csv',
+                'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
+                'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
+                'grading_lineage_summary': lineage_summary,
+                **label_override_artifacts,
+                **_burden_first_artifacts(model_artifacts),
+            }
+
         score_outputs = recover_label_studio_score_table(
             project_dir=project_dir,
             annotation_source=annotation_source,
@@ -3151,6 +3409,12 @@ def run_contract_first_quantification(
             scored_table.to_csv(
                 output_dir / 'scored_examples' / 'scored_examples.csv', index=False
             )
+        lineage_summary = _write_grading_lineage_summary(
+            output_dir=output_dir / 'scored_examples',
+            scoring_unit='image_level',
+            annotation_source=annotation_source,
+            scored_table=scored_table,
+        )
         logger.info('Scored examples ready: rows=%d', len(scored_table))
         if stop_after == 'contract':
             return {
@@ -3162,6 +3426,7 @@ def run_contract_first_quantification(
                 'scored_examples': output_dir
                 / 'scored_examples'
                 / 'scored_examples.csv',
+                'grading_lineage_summary': lineage_summary,
                 **label_override_artifacts,
             }
 
@@ -3177,6 +3442,7 @@ def run_contract_first_quantification(
                 'labelstudio_summary': score_outputs['summary'],
                 'duplicate_annotations': score_outputs['duplicates'],
                 'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
+                'grading_lineage_summary': lineage_summary,
                 **label_override_artifacts,
             }
 
@@ -3199,6 +3465,7 @@ def run_contract_first_quantification(
                 'duplicate_annotations': score_outputs['duplicates'],
                 'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
                 'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
+                'grading_lineage_summary': lineage_summary,
                 **label_override_artifacts,
             }
 
@@ -3217,6 +3484,7 @@ def run_contract_first_quantification(
             'scored_examples': output_dir / 'scored_examples' / 'scored_examples.csv',
             'roi_table': output_dir / 'roi_crops' / 'roi_scored_examples.csv',
             'embeddings': output_dir / 'embeddings' / 'roi_embeddings.csv',
+            'grading_lineage_summary': lineage_summary,
             **label_override_artifacts,
             **_burden_first_artifacts(model_artifacts),
         }
@@ -3407,6 +3675,24 @@ def prepare_quantification_contract(
             raise FileNotFoundError(
                 'No Label Studio annotation source was found. Provide --annotation-source or use --score-source spreadsheet.'
             )
+        instance_scored = _build_instance_scored_examples_if_available(
+            project_dir=raw_project_dir,
+            annotation_source=annotation_source,
+            output_dir=output_dir / 'scored_examples',
+        )
+        if instance_scored is not None:
+            lineage_summary = _write_grading_lineage_summary(
+                output_dir=output_dir / 'scored_examples',
+                scoring_unit='glomerulus_instance',
+                annotation_source=annotation_source,
+                scored_table=instance_scored,
+            )
+            return {
+                'raw_inventory': inventory_path,
+                'mapping_template': mapping_template_path,
+                'scored_examples': output_dir / 'scored_examples' / 'scored_examples.csv',
+                'grading_lineage_summary': lineage_summary,
+            }
 
         score_outputs = recover_label_studio_score_table(
             project_dir=raw_project_dir,
@@ -3417,6 +3703,12 @@ def prepare_quantification_contract(
         scored_table = build_image_level_scored_example_table(
             raw_project_dir, score_table, output_dir / 'scored_examples'
         )
+        lineage_summary = _write_grading_lineage_summary(
+            output_dir=output_dir / 'scored_examples',
+            scoring_unit='image_level',
+            annotation_source=annotation_source,
+            scored_table=scored_table,
+        )
         return {
             'raw_inventory': inventory_path,
             'mapping_template': mapping_template_path,
@@ -3424,6 +3716,7 @@ def prepare_quantification_contract(
             'labelstudio_summary': score_outputs['summary'],
             'duplicate_annotations': score_outputs['duplicates'],
             'scored_examples': output_dir / 'scored_examples' / 'scored_examples.csv',
+            'grading_lineage_summary': lineage_summary,
         }
 
     metadata_output_dir = output_dir / 'metadata'

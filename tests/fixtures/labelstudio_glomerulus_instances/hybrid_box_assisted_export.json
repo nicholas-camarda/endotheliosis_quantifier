@@ -1,0 +1,37 @@
+[
+  {
+    "id": 9201,
+    "data": {
+      "image": "/data/upload/1/T41_Image0.jpg"
+    },
+    "annotations": [
+      {
+        "id": 9202,
+        "parent_prediction": 501,
+        "completed_by": {"id": 11, "email": "grader@example.edu"},
+        "result": [
+          {
+            "id": "glom_new",
+            "from_name": "glomerulus_roi",
+            "to_name": "image",
+            "type": "brushlabels",
+            "original_width": 1024,
+            "original_height": 768,
+            "value": {
+              "format": "rle",
+              "rle": [0, 15, 1, 9],
+              "brushlabels": ["complete_glomerulus"]
+            }
+          },
+          {
+            "id": "glom_new",
+            "from_name": "endotheliosis_grade",
+            "to_name": "image",
+            "type": "choices",
+            "value": {"choices": ["2"]}
+          }
+        ]
+      }
+    ]
+  }
+]

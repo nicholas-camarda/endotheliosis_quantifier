@@ -29,8 +29,18 @@ Operators need an explicit **quantification-side contract** for how **human endo
 
 - **Learning loop v1** means **workflow iteration with authoritative labels**, not automatic online learning inside Label Studio’s grading UI.
 - **Stale-score prevention** is provenance-first: reruns MUST be able to determine whether grading inputs changed vs a prior quant tree.
+- **Per-glom forward path:** New authoritative grading is expected to produce **per-glomerulus** rows where **`label-studio-glomerulus-grading`** / hybrid exports apply; legacy **image-level** scored inputs remain a distinct cohort era.
+- **Migration, not decomposition:** Moving old image-level-scored material to per-glom masks and grades requires **explicit labeling or enrichment** (for example a hybrid Label Studio project); the repository does not treat inferred per-glom scores from a single legacy image score as scientifically authoritative.
 
 ## Open Questions
 
-- `[audit_first_then_decide]` Which existing cohort audit artifacts (`manifest.csv` sidecars, score recovery summaries, export digests) already carry enough lineage versus needing new columns — audit current `src/eq/quantification` writers during implementation.
-- `[defer_ok]` Whether active prioritization (“what to grade next”) becomes a separate capability once uncertainty artifacts exist.
+- [audit_first_then_decide] Which existing cohort audit artifacts (`manifest.csv` sidecars, score recovery summaries, export digests) already carry enough lineage versus needing new columns — audit current `src/eq/quantification` writers during implementation.
+- [defer_ok] Whether active prioritization (“what to grade next”) becomes a separate capability once uncertainty artifacts exist.
+
+## logging-contract
+
+V1 is **spec-first**; durable execution logging for `eq run-config` and quantification workflows remains the **existing** `eq` CLI and workflow log streams. Any implementation that adds lineage sidecars or audit JSON under output roots MUST follow the repo-wide execution logging contract already governing those runners—no new Git-tracked log root and no silent log path forks unless a follow-up change extends `repo-wide-execution-logging`.
+
+## docs-impact
+
+Update quantification / cohort onboarding documentation (`README.md` and operator-facing docs referenced in **Impact**) to describe the authoritative grading → cohort → quantification loop, dual-era scoring units (image-level legacy vs per-glom), and stale-score prevention via lineage. If an apply pass is documentation-only initially, confine edits to those docs and spec deltas.

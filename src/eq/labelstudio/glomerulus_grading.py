@@ -74,6 +74,9 @@ def _records_for_annotation(
     grader = _grader_provenance(annotation)
     annotation_id = str(annotation.get('id', ''))
     result = annotation.get('result') or []
+    prediction_regions = _prediction_regions(task)
+    task_mask_release_id = str(task.get('data', {}).get('mask_release_id') or '').strip()
+    parent_prediction_id = str(annotation.get('parent_prediction') or '').strip()
     regions: dict[str, dict[str, Any]] = {}
     grades: dict[str, list[dict[str, Any]]] = {}
     unlinked_grades: list[dict[str, Any]] = []
@@ -101,6 +104,10 @@ def _records_for_annotation(
 
     rows: list[dict[str, Any]] = []
     for region_id, region in sorted(regions.items()):
+        if region.get('type') != 'brushlabels':
+            raise LabelStudioGlomerulusContractError(
+                f'non-brush-region for region {region_id}: expected brushlabels'
+            )
         labels = _region_labels(region)
         is_complete = COMPLETE_GLOMERULUS_LABEL in labels
         is_cutoff = CUTOFF_PARTIAL_GLOMERULUS_LABEL in labels
@@ -129,6 +136,13 @@ def _records_for_annotation(
         completeness_status = 'complete' if is_complete else 'excluded'
         exclusion_reason = CUTOFF_PARTIAL_GLOMERULUS_LABEL if is_cutoff else ''
         record_id = _record_id(image_id, region_id, annotation_id, grader['grader_user_id'])
+        proposal_kind, region_edit_state, mask_release_id, mask_source = _lineage_for_region(
+            region_id=region_id,
+            region=region,
+            prediction_regions=prediction_regions,
+            task_mask_release_id=task_mask_release_id,
+            parent_prediction_id=parent_prediction_id,
+        )
         rows.append(
             {
                 'source_glomerulus_record_id': record_id,
@@ -136,6 +150,10 @@ def _records_for_annotation(
                 'image_name': image_name,
                 'glomerulus_instance_id': region_id,
                 'region_id': region_id,
+                'region_type': str(region.get('type') or ''),
+                'region_rle': (region.get('value') or {}).get('rle'),
+                'region_original_width': region.get('original_width'),
+                'region_original_height': region.get('original_height'),
                 'roi_source': 'label_studio_human',
                 'completeness_status': completeness_status,
                 'exclusion_reason': exclusion_reason,
@@ -152,9 +170,87 @@ def _records_for_annotation(
                 'annotation_updated_at': str(annotation.get('updated_at') or ''),
                 'lead_time': annotation.get('lead_time'),
                 'annotation_source': str(annotation_source),
+                'mask_release_id': mask_release_id,
+                'mask_source': mask_source,
+                'proposal_kind': proposal_kind,
+                'region_edit_state': region_edit_state,
+                'parent_prediction_id': parent_prediction_id,
             }
         )
     return rows
+
+
+def _prediction_regions(task: dict[str, Any]) -> dict[str, tuple[dict[str, Any], str]]:
+    predictions = task.get('predictions') or []
+    mapped: dict[str, tuple[dict[str, Any], str]] = {}
+    for prediction in predictions:
+        if not isinstance(prediction, dict):
+            continue
+        model_version = str(prediction.get('model_version') or '')
+        for item in prediction.get('result') or []:
+            rid = str(item.get('id') or '').strip()
+            if rid:
+                mapped[rid] = (item, model_version)
+    return mapped
+
+
+def _lineage_for_region(
+    *,
+    region_id: str,
+    region: dict[str, Any],
+    prediction_regions: dict[str, tuple[dict[str, Any], str]],
+    task_mask_release_id: str,
+    parent_prediction_id: str,
+) -> tuple[str, str, str, str]:
+    predicted = prediction_regions.get(region_id)
+    if predicted is not None:
+        prediction_region, model_version = predicted
+        mask_release_id = task_mask_release_id or _mask_release_from_model_version(
+            model_version
+        )
+        if not mask_release_id:
+            raise LabelStudioGlomerulusContractError(
+                f'contradictory-lineage for region {region_id}: '
+                'proposal_kind=auto_preload requires mask_release_id'
+            )
+        same_geometry = _geometry_signature(region) == _geometry_signature(
+            prediction_region
+        )
+        return (
+            'auto_preload',
+            'unedited_auto' if same_geometry else 'human_refined_boundary',
+            mask_release_id,
+            'medsam_finetuned_glomeruli',
+        )
+    if parent_prediction_id:
+        return (
+            'box_assisted_manual',
+            'human_refined_boundary',
+            task_mask_release_id,
+            'box_assisted_medsam',
+        )
+    return ('human_manual', 'manual_drawn', task_mask_release_id, 'manual')
+
+
+def _mask_release_from_model_version(model_version: str) -> str:
+    text = str(model_version).strip()
+    prefix = 'medsam-release:'
+    if text.startswith(prefix):
+        return text[len(prefix) :].strip()
+    return ''
+
+
+def _geometry_signature(result: dict[str, Any]) -> str:
+    value = result.get('value') or {}
+    geometry = {
+        'format': value.get('format'),
+        'rle': value.get('rle'),
+        'points': value.get('points'),
+        'brushlabels': value.get('brushlabels'),
+        'polygonlabels': value.get('polygonlabels'),
+        'rectanglelabels': value.get('rectanglelabels'),
+    }
+    return str(geometry)
 
 
 def _grader_provenance(annotation: dict[str, Any]) -> dict[str, str]:
@@ -221,6 +317,10 @@ def _record_columns() -> list[str]:
         'image_name',
         'glomerulus_instance_id',
         'region_id',
+        'region_type',
+        'region_rle',
+        'region_original_width',
+        'region_original_height',
         'roi_source',
         'completeness_status',
         'exclusion_reason',
@@ -237,4 +337,9 @@ def _record_columns() -> list[str]:
         'annotation_updated_at',
         'lead_time',
         'annotation_source',
+        'mask_release_id',
+        'mask_source',
+        'proposal_kind',
+        'region_edit_state',
+        'parent_prediction_id',
     ]

@@ -10,9 +10,11 @@ The current usable endpoint is a binary review-triage workflow:
 
 The model is useful for prioritizing human review of no/low versus moderate/severe cases. It is not a clinical diagnostic device, an autonomous grader, or external validation evidence.
 
-| Current performance summary | Review workload summary |
-| --- | --- |
-| ![Binary triage performance](assets/quantification/binary_triage_performance.svg) | ![Binary triage review queue](assets/quantification/binary_triage_review_queue.svg) |
+
+| Current performance summary | Review workload summary    |
+| --------------------------- | -------------------------- |
+| Binary triage performance   | Binary triage review queue |
+
 
 ## Quick Start
 
@@ -57,10 +59,10 @@ Wait for Docker Desktop to finish starting, then run:
 
 ```bash
 conda activate eq-mac
-eq labelstudio start --images /path/to/images
+eq labelstudio start /path/to/images
 ```
 
-The command recursively imports `.jpg`, `.jpeg`, `.png`, `.tif`, and `.tiff` files, creates a local Label Studio project with `configs/label_studio_glomerulus_grading.xml`, and prints the Label Studio URL plus project URL.
+The command recursively imports `.jpg`, `.jpeg`, `.png`, `.tif`, and `.tiff` files, creates a local Label Studio project with `configs/label_studio_glomerulus_grading.xml`, and applies hybrid bootstrap settings from `configs/label_studio_medsam_hybrid.yaml` (or `--config` override). It prints the Label Studio URL, project URL, and hybrid companion status.
 
 Default local login:
 
@@ -72,10 +74,71 @@ Password: eq-labelstudio
 Preview without starting Docker or importing tasks:
 
 ```bash
-eq labelstudio start --images /path/to/images --dry-run
+eq labelstudio start /path/to/images --dry-run
+```
+
+Legacy automation remains valid:
+
+```bash
+eq labelstudio start --images /path/to/images
 ```
 
 For details, see [docs/LABEL_STUDIO_GLOMERULUS_GRADING.md](docs/LABEL_STUDIO_GLOMERULUS_GRADING.md).
+For MedSAM box-assist companion launch/contract, see [docs/LABEL_STUDIO_MEDSAM_COMPANION.md](docs/LABEL_STUDIO_MEDSAM_COMPANION.md).
+
+### Development Demo Loop (Current Hybrid Status)
+
+This loop is usable for development iteration, but still half-finished from an operator UX standpoint. The current gap is preload quality/instance semantics, not core import/export plumbing.
+
+Start companion + Label Studio demo:
+
+```bash
+cd /Users/ncamarda/Projects/endotheliosis_quantifier
+conda activate eq-mac
+
+# 1) Start MedSAM companion on host (MPS)
+PYTORCH_ENABLE_MPS_FALLBACK=1 /Users/ncamarda/mambaforge/envs/eq-mac/bin/python -m eq.labelstudio.medsam_companion \
+  --checkpoint /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/output/segmentation_evaluation/medsam_glomeruli_fine_tuning/deploy_conservative_mps_glomeruli/finetuned_evaluation/medsam_glomeruli_best_sam_state_dict.pth \
+  --device mps \
+  --port 8098
+
+# 2) In a second terminal, bootstrap local Label Studio demo project
+conda activate eq-mac
+eq labelstudio start /tmp/eq_hybrid_demo/images --project-name "Hybrid Demo Clean Components"
+```
+
+Open:
+
+```text
+http://localhost:8080/projects/7/data
+```
+
+Local login:
+
+```text
+Email: eq-admin@example.local
+Password: eq-labelstudio
+```
+
+Suggested annotation mode while iterating:
+
+1. Keep `Compare All` off.
+2. Work only in `eq-admin_local`.
+3. Correct masks with brush/eraser, delete obvious false positives, and relabel cutoffs as `cutoff_partial_glomerulus`.
+4. Grade complete glomeruli per-region.
+
+Export and run quant contract-first check:
+
+```bash
+conda activate eq-mac
+eq run-config --config configs/endotheliosis_quantification.yaml
+```
+
+If you need to quickly redeploy a fresh demo project after code changes, rerun:
+
+```bash
+eq labelstudio start /tmp/eq_hybrid_demo/images --project-name "Hybrid Demo Clean Components"
+```
 
 ## MedSAM glomerulus fine-tuning (domain adaptation)
 
@@ -104,6 +167,13 @@ The first command builds the scored ROI, embedding, burden, comparator, learned-
 
 The committed configs expect the runtime root to contain the required data, masks, labels, and model artifacts. Use `EQ_RUNTIME_ROOT` or edit the YAML when running against a different runtime tree.
 
+Authoritative grading loop for reruns:
+
+1. Finalize Label Studio export (image-level legacy or per-glomerulus hybrid export).
+2. Rebuild scored examples through contract-first quantification (`eq run-config --config ...`).
+3. Review lineage in `scored_examples/lineage_summary.json` to confirm which grading snapshot and scoring unit were consumed.
+4. Compare new burden/quant outputs against prior run roots before promoting decisions.
+
 ## Review The Result
 
 Open the atlas output in this order:
@@ -126,22 +196,26 @@ roi_qc_binary_logistic
 
 Current grouped-development metrics:
 
-| Metric | Value |
-| --- | ---: |
-| Balanced accuracy | 0.657 |
+
+| Metric                 | Value |
+| ---------------------- | ----- |
+| Balanced accuracy      | 0.657 |
 | Moderate/severe recall | 0.705 |
-| Precision | 0.517 |
-| Specificity | 0.609 |
-| AUROC | 0.695 |
-| Average precision | 0.538 |
+| Precision              | 0.517 |
+| Specificity            | 0.609 |
+| AUROC                  | 0.695 |
+| Average precision      | 0.538 |
+
 
 Target support:
 
-| Group | Count |
-| --- | ---: |
-| no/low | 371 |
-| moderate/severe | 220 |
-| borderline review | 116 |
+
+| Group             | Count |
+| ----------------- | ----- |
+| no/low            | 371   |
+| moderate/severe   | 220   |
+| borderline review | 116   |
+
 
 For the full checkpoint and release policy, see [docs/REPRODUCIBILITY_HANDOFF_2026-04-30.md](docs/REPRODUCIBILITY_HANDOFF_2026-04-30.md).
 
@@ -149,17 +223,19 @@ For the full checkpoint and release policy, see [docs/REPRODUCIBILITY_HANDOFF_20
 
 All maintained workflows use the same `eq run-config` entrypoint.
 
-| Task | Config |
-| --- | --- |
-| Glomeruli candidate comparison | `configs/glomeruli_candidate_comparison.yaml` |
-| Mitochondria pretraining | `configs/mito_pretraining_config.yaml` |
-| Glomeruli fine-tuning | `configs/glomeruli_finetuning_config.yaml` |
-| Glomeruli transport audit | `configs/glomeruli_transport_audit.yaml` |
-| High-resolution concordance | `configs/highres_glomeruli_concordance.yaml` |
-| Endotheliosis quantification | `configs/endotheliosis_quantification.yaml` |
-| Label-free atlas and binary triage | `configs/label_free_roi_embedding_atlas.yaml` |
-| MedSAM glomeruli fine-tuning (pilot) | `configs/medsam_glomeruli_fine_tuning.yaml` |
+
+| Task                                                   | Config                                                              |
+| ------------------------------------------------------ | ------------------------------------------------------------------- |
+| Glomeruli candidate comparison                         | `configs/glomeruli_candidate_comparison.yaml`                       |
+| Mitochondria pretraining                               | `configs/mito_pretraining_config.yaml`                              |
+| Glomeruli fine-tuning                                  | `configs/glomeruli_finetuning_config.yaml`                          |
+| Glomeruli transport audit                              | `configs/glomeruli_transport_audit.yaml`                            |
+| High-resolution concordance                            | `configs/highres_glomeruli_concordance.yaml`                        |
+| Endotheliosis quantification                           | `configs/endotheliosis_quantification.yaml`                         |
+| Label-free atlas and binary triage                     | `configs/label_free_roi_embedding_atlas.yaml`                       |
+| MedSAM glomeruli fine-tuning (pilot)                   | `configs/medsam_glomeruli_fine_tuning.yaml`                         |
 | MedSAM glomeruli fine-tuning (conservative MPS deploy) | `configs/medsam_glomeruli_fine_tuning_deploy_conservative_mps.yaml` |
+
 
 Use `--dry-run` before long-running training or audit jobs:
 
@@ -199,3 +275,4 @@ ruff check .
 python -m pytest -q
 openspec validate --specs --strict
 ```
+

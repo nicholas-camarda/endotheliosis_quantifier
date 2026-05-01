@@ -505,9 +505,15 @@ def run_config_command(args):
 @log_function_call
 def labelstudio_start_command(args):
     """Start local Label Studio and import image tasks for glomerulus grading."""
+    image_arg = args.images or args.image_dir
+    if not image_arg:
+        raise ValueError(
+            'Missing image directory. Use `eq labelstudio start <image-dir>` '
+            'or `eq labelstudio start --images <image-dir>`.'
+        )
     run_bootstrap = _load_labelstudio_bootstrap()
     result = run_bootstrap(
-        images_dir=Path(args.images),
+        images_dir=Path(image_arg),
         runtime_root=Path(args.runtime_root) if args.runtime_root else None,
         project_name=args.project_name,
         port=args.port,
@@ -518,12 +524,15 @@ def labelstudio_start_command(args):
         api_token=args.api_token,
         timeout_seconds=args.timeout_seconds,
         dry_run=args.dry_run,
+        config_path=Path(args.config) if args.config else None,
+        hybrid_mode=args.hybrid_mode,
     )
     print(result.message)
     print(f'Task manifest: {result.task_manifest_path}')
     print(f'Label Studio URL: {result.plan.url}')
     print(f'Login email: {args.username}')
     print(f'Login password: {args.password}')
+    print(f'Hybrid status: {result.companion_status}')
     if result.project_url:
         print(f'Project URL: {result.project_url}')
 
@@ -1003,8 +1012,13 @@ Examples:
         description='Point at an image directory and open a configured local Label Studio glomerulus-grading project.',
     )
     labelstudio_start_parser.add_argument(
+        'image_dir',
+        nargs='?',
+        help='Directory of images to import recursively into Label Studio.',
+    )
+    labelstudio_start_parser.add_argument(
         '--images',
-        required=True,
+        required=False,
         help='Directory of images to import recursively into Label Studio.',
     )
     labelstudio_start_parser.add_argument(
@@ -1026,7 +1040,7 @@ Examples:
     )
     labelstudio_start_parser.add_argument(
         '--docker-image',
-        default='heartexlabs/label-studio:latest',
+        default='heartexlabs/label-studio:1.23.0',
         help='Docker image to use for Label Studio.',
     )
     labelstudio_start_parser.add_argument(
@@ -1049,6 +1063,16 @@ Examples:
         type=int,
         default=60,
         help='Seconds to wait for Label Studio API readiness.',
+    )
+    labelstudio_start_parser.add_argument(
+        '--config',
+        help='Optional hybrid YAML config. Defaults to configs/label_studio_medsam_hybrid.yaml.',
+    )
+    labelstudio_start_parser.add_argument(
+        '--hybrid-mode',
+        choices=['auto', 'enabled', 'disabled'],
+        default='auto',
+        help='Administrator override for hybrid bootstrap behavior.',
     )
     labelstudio_start_parser.add_argument(
         '--dry-run',

@@ -19,6 +19,7 @@ DEFAULT_DOX_ASSIGNMENT_WORKBOOK_ENV = "EQ_DOX_ASSIGNMENT_WORKBOOK"
 DEFAULT_DOX_SCORE_WORKBOOK_ENV = "EQ_DOX_SCORE_WORKBOOK"
 DEFAULT_MR_SCORE_WORKBOOK_ENV = "EQ_MR_SCORE_WORKBOOK"
 DEFAULT_MR_IMAGE_ROOT_ENV = "EQ_MR_IMAGE_ROOT"
+DEFAULT_LABEL_STUDIO_MEDSAM_HYBRID_CONFIG_ENV = "EQ_LABEL_STUDIO_MEDSAM_HYBRID_CONFIG"
 
 
 def get_repo_root() -> Path:
@@ -153,6 +154,24 @@ def get_runtime_medsam_finetuned_release_path(
         get_runtime_generated_masks_glomeruli_root(runtime_root)
         / "medsam_finetuned"
         / str(mask_release_id)
+    )
+
+
+def get_label_studio_medsam_hybrid_config_path() -> Path:
+    """Return the repository path for Label Studio hybrid MedSAM config."""
+    override = os.getenv(DEFAULT_LABEL_STUDIO_MEDSAM_HYBRID_CONFIG_ENV)
+    if override:
+        return _resolve_repo_path(override)
+    return get_repo_root() / "configs" / "label_studio_medsam_hybrid.yaml"
+
+
+def resolve_generated_mask_release_manifest_path(
+    mask_release_id: str, runtime_root: Union[str, Path, None] = None
+) -> Path:
+    """Return the per-release generated-mask manifest path."""
+    return (
+        get_runtime_medsam_finetuned_release_path(mask_release_id, runtime_root)
+        / "manifest.csv"
     )
 
 

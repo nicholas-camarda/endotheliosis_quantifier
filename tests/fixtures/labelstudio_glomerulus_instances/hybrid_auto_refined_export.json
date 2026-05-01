@@ -1,0 +1,58 @@
+[
+  {
+    "id": 9001,
+    "data": {
+      "image": "/data/upload/1/T40_Image0.jpg",
+      "mask_release_id": "deploy_conservative_mps_glomeruli"
+    },
+    "predictions": [
+      {
+        "id": 44,
+        "model_version": "medsam-release:deploy_conservative_mps_glomeruli",
+        "result": [
+          {
+            "id": "glom_p",
+            "from_name": "glomerulus_roi",
+            "to_name": "image",
+            "type": "brushlabels",
+            "original_width": 1024,
+            "original_height": 768,
+            "value": {
+              "format": "rle",
+              "rle": [0, 10, 1, 5],
+              "brushlabels": ["complete_glomerulus"]
+            }
+          }
+        ]
+      }
+    ],
+    "annotations": [
+      {
+        "id": 9100,
+        "completed_by": {"id": 9, "email": "grader@example.edu"},
+        "result": [
+          {
+            "id": "glom_p",
+            "from_name": "glomerulus_roi",
+            "to_name": "image",
+            "type": "brushlabels",
+            "original_width": 1024,
+            "original_height": 768,
+            "value": {
+              "format": "rle",
+              "rle": [0, 8, 1, 7],
+              "brushlabels": ["complete_glomerulus"]
+            }
+          },
+          {
+            "id": "glom_p",
+            "from_name": "endotheliosis_grade",
+            "to_name": "image",
+            "type": "choices",
+            "value": {"choices": ["1"]}
+          }
+        ]
+      }
+    ]
+  }
+]

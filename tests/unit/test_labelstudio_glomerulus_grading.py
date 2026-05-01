@@ -29,6 +29,8 @@ def test_loads_multiple_complete_glomeruli_and_cutoff_exclusion():
     assert records.loc[0, 'grader_user_id'] == '7'
     assert records.loc[0, 'grader_email'] == 'grader@example.edu'
     assert records.loc[0, 'annotation_id'] == '5001'
+    assert records.loc[0, 'proposal_kind'] == 'human_manual'
+    assert records.loc[0, 'region_edit_state'] == 'manual_drawn'
     assert records.loc[2, 'completeness_status'] == 'excluded'
     assert records.loc[2, 'exclusion_reason'] == 'cutoff_partial_glomerulus'
     assert pd.isna(records.loc[2, 'human_grade'])
@@ -76,3 +78,35 @@ def test_rollup_records_exclude_cutoff_candidates():
     ]
     assert set(rollup['human_grade']) == {0.5, 2.0}
     assert 'glom_c' not in set(rollup['glomerulus_instance_id'])
+
+
+def test_hybrid_auto_preload_refined_lineage():
+    records = load_glomerulus_grading_records(
+        FIXTURE_DIR / 'hybrid_auto_refined_export.json'
+    )
+    assert len(records) == 1
+    row = records.iloc[0]
+    assert row['proposal_kind'] == 'auto_preload'
+    assert row['region_edit_state'] == 'human_refined_boundary'
+    assert row['mask_release_id'] == 'deploy_conservative_mps_glomeruli'
+    assert row['mask_source'] == 'medsam_finetuned_glomeruli'
+
+
+def test_hybrid_box_assisted_lineage():
+    records = load_glomerulus_grading_records(
+        FIXTURE_DIR / 'hybrid_box_assisted_export.json'
+    )
+    assert len(records) == 1
+    row = records.iloc[0]
+    assert row['proposal_kind'] == 'box_assisted_manual'
+    assert row['parent_prediction_id'] == '501'
+    assert row['region_edit_state'] == 'human_refined_boundary'
+
+
+def test_rejects_contradictory_hybrid_lineage():
+    with pytest.raises(
+        LabelStudioGlomerulusContractError, match='contradictory-lineage'
+    ):
+        load_glomerulus_grading_records(
+            FIXTURE_DIR / 'hybrid_contradictory_lineage_export.json'
+        )

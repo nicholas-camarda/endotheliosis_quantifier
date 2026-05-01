@@ -8,10 +8,18 @@ Start from a directory of images:
 
 ```bash
 conda activate eq-mac
-eq labelstudio start --images /path/to/images
+eq labelstudio start /path/to/images
 ```
 
 The command recursively imports `.jpg`, `.jpeg`, `.png`, `.tif`, and `.tiff` files, starts a local Docker Label Studio instance, creates or reuses the `EQ Glomerulus Grading` project, applies `configs/label_studio_glomerulus_grading.xml`, imports the image tasks, and prints the Label Studio URL plus the project URL.
+
+Hybrid preload and companion controls are YAML-first:
+
+- Default config: `configs/label_studio_medsam_hybrid.yaml`
+- Optional override: `--config /path/to/label_studio_medsam_hybrid.yaml`
+- Admin override: `--hybrid-mode auto|enabled|disabled`
+
+For companion launch and HTTP contract details, see `docs/LABEL_STUDIO_MEDSAM_COMPANION.md`.
 
 On macOS, if Docker Desktop is installed but not running, the command tries to start it. If Docker Desktop is missing, install it first:
 
@@ -32,18 +40,20 @@ These credentials belong to the `eq` Docker-backed Label Studio instance. A sepa
 To inspect the plan without starting Docker or calling Label Studio:
 
 ```bash
-eq labelstudio start --images /path/to/images --dry-run
+eq labelstudio start /path/to/images --dry-run
 ```
 
 Useful options:
 
 ```bash
 eq labelstudio start \
-  --images /path/to/images \
+  /path/to/images \
   --project-name "Kidney Glomerulus Grading" \
   --port 8080 \
   --runtime-root /Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier/labelstudio
 ```
+
+Legacy `--images /path/to/images` remains supported for automation compatibility.
 
 The command is local/admin bootstrap only. It does not run segmentation, quantification, MedSAM/SAM, model second review, or adjudication.
 
@@ -68,7 +78,7 @@ Primary grading is human-first and model-blind. The primary Label Studio config 
 
 ## Admin And Developer Boundary
 
-Use `eq labelstudio start --images /path/to/images` as the primary setup path. Use `configs/label_studio_glomerulus_grading.xml` only when inspecting or manually debugging the Label Studio config.
+Use `eq labelstudio start /path/to/images` as the primary setup path. Use `configs/label_studio_glomerulus_grading.xml` only when inspecting or manually debugging the Label Studio config. Use `configs/label_studio_medsam_hybrid.yaml` for mask-release selection, companion URL/health policy, and fail-closed preload behavior.
 
 By default, bootstrap runtime artifacts live under:
 

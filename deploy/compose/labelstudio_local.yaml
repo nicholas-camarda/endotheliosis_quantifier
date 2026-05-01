@@ -1,0 +1,20 @@
+services:
+  labelstudio:
+    image: heartexlabs/label-studio:1.23.0
+    container_name: eq-labelstudio
+    ports:
+      - "8080:8080"
+    environment:
+      LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED: "true"
+      LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT: /label-studio/media
+      LABEL_STUDIO_USERNAME: ${LABEL_STUDIO_USERNAME:-eq-admin@example.local}
+      LABEL_STUDIO_PASSWORD: ${LABEL_STUDIO_PASSWORD:-eq-labelstudio}
+      LABEL_STUDIO_USER_TOKEN: ${LABEL_STUDIO_USER_TOKEN:-eq-local-token}
+      LABEL_STUDIO_ENABLE_LEGACY_API_TOKEN: "true"
+    volumes:
+      - ${EQ_LABELSTUDIO_DATA_DIR:?set_EQ_LABELSTUDIO_DATA_DIR}:/label-studio/data
+      - ${EQ_IMAGE_ROOT:?set_EQ_IMAGE_ROOT}:/label-studio/media:ro
+
+# MedSAM companion runs on host for MPS:
+#   conda activate eq-mac
+#   python -m eq.labelstudio.medsam_companion --checkpoint ... --device mps --port 8098

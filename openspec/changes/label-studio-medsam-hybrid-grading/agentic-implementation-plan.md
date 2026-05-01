@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Integrate the latest valid fine-tuned MedSAM release into Label Studio hybrid grading so collaborators can start from preloaded regions, use box-assisted region creation, and export validated per-region lineage for scoring.
+**Goal:** Integrate the latest valid fine-tuned MedSAM release into Label Studio hybrid grading so collaborators can start from preloaded **brush** regions (repeat review allowed), use **box-assisted** region creation for cold coverage, and export validated per-region lineage for **per-glomerulus** scoring—without inferring per-glom grades from legacy image-level aggregates (see learning-loop specs).
 
 **Architecture:** Extend existing `eq labelstudio start` bootstrap and `eq.labelstudio` parsing surfaces instead of introducing parallel pipelines. Keep collaborator UX on one command (`eq labelstudio start <image-dir>`), move advanced behavior to YAML config, and enforce fail-closed runtime checks for required hybrid dependencies. Preserve human-first grading while enriching export lineage fields tied to release provenance.
 

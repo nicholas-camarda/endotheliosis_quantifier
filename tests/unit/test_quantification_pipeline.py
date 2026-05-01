@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
+from label_studio_converter.brush import mask2rle
 from PIL import Image
 
 import eq.quantification.pipeline as quant_pipeline
@@ -20,6 +21,7 @@ from eq.quantification.pipeline import (
     ContractPreparationError,
     _apply_score_label_overrides,
     _prepare_encoder_for_forward,
+    build_glomerulus_instance_scored_example_table,
     build_image_level_scored_example_table,
     build_manifest_scored_example_table,
     build_scored_example_table,
@@ -27,6 +29,7 @@ from eq.quantification.pipeline import (
     extract_embedding_table,
     extract_image_level_roi_crops,
     extract_roi_crops,
+    prepare_quantification_contract,
     run_contract_first_quantification,
 )
 
@@ -42,8 +45,8 @@ def _make_rect_mask(
 
 def test_build_scored_table_and_extract_rois(tmp_path: Path):
     project_dir = tmp_path / 'project'
-    image_dir = project_dir / 'images' / 'T19'
-    mask_dir = project_dir / 'masks' / 'T19'
+    image_dir = project_dir / 'images' / 'T40'
+    mask_dir = project_dir / 'masks' / 'T40'
     image_dir.mkdir(parents=True)
     mask_dir.mkdir(parents=True)
 
@@ -250,6 +253,131 @@ def test_build_image_level_scored_table_and_extract_rois(tmp_path: Path):
     assert roi_table.loc[0, 'artifact_provenance_id']
     assert 'roi_area' in roi_table.loc[0, 'feature_lineage_json']
     assert Path(str(roi_table.loc[0, 'roi_image_path'])).exists()
+
+
+def test_build_glomerulus_instance_scored_table_from_export(tmp_path: Path):
+    project_dir = tmp_path / 'project'
+    image_dir = project_dir / 'images' / 'T19'
+    mask_dir = project_dir / 'masks' / 'T19'
+    image_dir.mkdir(parents=True)
+    mask_dir.mkdir(parents=True)
+    image = np.zeros((64, 64, 3), dtype=np.uint8)
+    Image.fromarray(image).save(image_dir / 'T40_Image0.jpg')
+    Image.fromarray(_make_rect_mask((64, 64), [(10, 10, 30, 30)])).save(
+        mask_dir / 'T40_Image0_mask.jpg'
+    )
+
+    fixture = (
+        Path(__file__).resolve().parents[1]
+        / 'fixtures'
+        / 'labelstudio_glomerulus_instances'
+        / 'hybrid_auto_refined_export.json'
+    )
+    table = build_glomerulus_instance_scored_example_table(
+        project_dir=project_dir,
+        annotation_source=fixture,
+        output_dir=tmp_path / 'scored',
+    )
+    assert len(table) == 1
+    assert table.loc[0, 'glomerulus_instance_id'] == 'glom_p'
+    assert table.loc[0, 'score'] == 1.0
+    assert table.loc[0, 'join_status'] == 'ok'
+    assert Path(str(table.loc[0, 'raw_mask_path'])).exists()
+
+
+def test_instance_scored_table_drops_zero_area_regions(tmp_path: Path, monkeypatch):
+    project_dir = tmp_path / 'project'
+    image_dir = project_dir / 'images' / 'T40'
+    mask_dir = project_dir / 'masks' / 'T40'
+    image_dir.mkdir(parents=True)
+    mask_dir.mkdir(parents=True)
+    Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8)).save(
+        image_dir / 'T40_Image0.jpg'
+    )
+    Image.fromarray(_make_rect_mask((64, 64), [(10, 10, 30, 30)])).save(
+        mask_dir / 'T40_Image0_mask.jpg'
+    )
+
+    empty_rle = mask2rle(np.zeros((64, 64), dtype=np.uint8))
+    filled_mask = np.zeros((64, 64), dtype=np.uint8)
+    filled_mask[8:20, 8:20] = 255
+    filled_rle = mask2rle(filled_mask)
+    records = pd.DataFrame(
+        [
+            {
+                'source_glomerulus_record_id': 'T40_Image0::glom_zero::9100::9',
+                'image_id': 'T40_Image0',
+                'image_name': 'T40_Image0.jpg',
+                'glomerulus_instance_id': 'glom_zero',
+                'human_grade': 1.0,
+                'region_rle': empty_rle,
+                'region_original_width': 64,
+                'region_original_height': 64,
+                'completeness_status': 'complete',
+            },
+            {
+                'source_glomerulus_record_id': 'T40_Image0::glom_keep::9100::9',
+                'image_id': 'T40_Image0',
+                'image_name': 'T40_Image0.jpg',
+                'glomerulus_instance_id': 'glom_keep',
+                'human_grade': 2.0,
+                'region_rle': filled_rle,
+                'region_original_width': 64,
+                'region_original_height': 64,
+                'completeness_status': 'complete',
+            },
+        ]
+    )
+    monkeypatch.setattr(
+        'eq.quantification.pipeline.load_glomerulus_grading_records',
+        lambda _annotation_source: records,
+    )
+    monkeypatch.setattr(
+        'eq.quantification.pipeline.prepare_rollup_records',
+        lambda parsed_records: parsed_records,
+    )
+
+    table = build_glomerulus_instance_scored_example_table(
+        project_dir=project_dir,
+        annotation_source='unused.json',
+        output_dir=tmp_path / 'scored',
+    )
+    assert len(table) == 1
+    assert table.loc[0, 'glomerulus_instance_id'] == 'glom_keep'
+    assert Path(str(table.loc[0, 'raw_mask_path'])).exists()
+
+
+def test_prepare_quantification_contract_writes_instance_lineage_summary(tmp_path: Path):
+    project_dir = tmp_path / 'project'
+    image_dir = project_dir / 'images' / 'T40'
+    mask_dir = project_dir / 'masks' / 'T40'
+    image_dir.mkdir(parents=True)
+    mask_dir.mkdir(parents=True)
+    Image.fromarray(np.zeros((64, 64, 3), dtype=np.uint8)).save(
+        image_dir / 'T40_Image0.jpg'
+    )
+    Image.fromarray(_make_rect_mask((64, 64), [(10, 10, 30, 30)])).save(
+        mask_dir / 'T40_Image0_mask.jpg'
+    )
+    metadata_path = tmp_path / 'metadata.xlsx'
+    metadata_path.write_text('placeholder', encoding='utf-8')
+    fixture = (
+        Path(__file__).resolve().parents[1]
+        / 'fixtures'
+        / 'labelstudio_glomerulus_instances'
+        / 'hybrid_auto_refined_export.json'
+    )
+    outputs = prepare_quantification_contract(
+        raw_project_dir=project_dir,
+        metadata_path=metadata_path,
+        output_dir=tmp_path / 'out',
+        annotation_source=fixture,
+        score_source='labelstudio',
+    )
+    summary = json.loads(
+        Path(outputs['grading_lineage_summary']).read_text(encoding='utf-8')
+    )
+    assert summary['scoring_unit'] == 'glomerulus_instance'
 
 
 def test_image_level_roi_rejects_small_components_without_crop(tmp_path: Path):
