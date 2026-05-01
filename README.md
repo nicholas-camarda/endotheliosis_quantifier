@@ -237,12 +237,12 @@ These tables summarize the main internal comparisons this repo has produced. The
 
 ### Segmentation Comparisons
 
-What actually drives hybrid Label Studio preload and box-assist (current defaults):
+What actually drives hybrid Label Studio preload and box-assist (current defaults). Rows are ordered **canonical weights first**, then **packaged preload PNGs** derived from the same deploy run:
 
 | Role | Model / artifact | Where it lives |
 | --- | --- | --- |
-| Full-image preload masks | Fine-tuned MedSAM mask release `deploy_conservative_mps_glomeruli` (`mask_source=medsam_finetuned_glomeruli`) | `${EQ_RUNTIME_ROOT}/derived_data/generated_masks/glomeruli/medsam_finetuned/deploy_conservative_mps_glomeruli/` (see `manifest.csv`) |
 | Live box-assist inference | Segment Anything **ViT-B** (`vit_b`) weights loaded from the deploy-run evaluation checkpoint | `${EQ_RUNTIME_ROOT}/output/segmentation_evaluation/medsam_glomeruli_fine_tuning/deploy_conservative_mps_glomeruli/finetuned_evaluation/medsam_glomeruli_best_sam_state_dict.pth` |
+| Full-image preload masks | Fine-tuned MedSAM mask release `deploy_conservative_mps_glomeruli` (`mask_source=medsam_finetuned_glomeruli`) | `${EQ_RUNTIME_ROOT}/derived_data/generated_masks/glomeruli/medsam_finetuned/deploy_conservative_mps_glomeruli/` (see `manifest.csv`) |
 
 The transfer/scratch rows below are **not** what Label Studio hybrid preload imports by default. Those `.pkl` paths are explicit comparison baselines wired into `configs/medsam_glomeruli_fine_tuning_deploy_conservative_mps.yaml` under `current_segmenter` for MedSAM evaluation reports — legacy FastAI pickles are historical unless separately promoted as supported artifacts.
 
@@ -253,13 +253,17 @@ Glomeruli transfer-vs-scratch comparison used the deterministic adjudication-awa
 | Transfer glomeruli candidate | 0.8719 | 0.7729 | 0.7957 | 0.9643 | Promotion-eligible, but tied |
 | Scratch/no-mitochondria-base glomeruli candidate | 0.8674 | 0.7658 | 0.7975 | 0.9507 | Promotion-eligible, but tied |
 
+Rows sorted by Dice descending.
+
 MedSAM oracle-box pilot compared manual-box MedSAM against the current glomeruli segmenters on `20` admitted manual-mask rows:
 
 | Segmentation path | Mean Dice | Mean Jaccard | Interpretation |
 | --- | ---: | ---: | --- |
 | MedSAM oracle box | 0.9229 | 0.8577 | Strong upper-bound boundary-quality evidence |
-| Current transfer segmenter | 0.7088 | 0.5675 | Weaker than oracle-box MedSAM on this subset |
 | Current scratch segmenter | 0.7102 | 0.5714 | Similar to transfer on this subset |
+| Current transfer segmenter | 0.7088 | 0.5675 | Weaker than oracle-box MedSAM on this subset |
+
+Rows sorted by mean Dice descending (oracle reference first, then CNN baselines).
 
 Current caveat: the latest Label Studio hybrid debug run showed that the active full-image auto-preload release (`deploy_conservative_mps_glomeruli`) can produce poor operator-facing masks on demo images. The next segmentation UX direction should be box-assist/manual-first unless a release passes a quality gate.
 
@@ -274,14 +278,18 @@ Binary no/low vs moderate/severe review triage is the current usable endpoint. S
 | `embedding_binary_logistic` | frozen embedding | 0.25 | 0.641 | 0.655 | 0.511 | 0.628 | 0.673 | 0.533 |
 | `atlas_cluster_anchor_mapping` | atlas anchor cluster | 0.50 | 0.663 | 0.933 | 0.620 | 0.393 | 0.663 | 0.613 |
 
+Selected model first; remaining rows sorted by AUROC descending.
+
 Exploratory endotheliosis burden/grade screens are kept as review evidence, not promoted claims:
 
 | Quantification screen | Best candidate | Level | Rows/subjects | Stage-index MAE | Grade-scale MAE | Status |
 | --- | --- | --- | --- | ---: | ---: | --- |
-| Learned ROI candidate screen | `image_simple_roi_qc` | image | 707 / 60 | 23.590 | 0.608 | Blocked: broad prediction sets, score coverage gaps, numerical warnings, cohort predictability |
 | Learned ROI candidate screen | `subject_simple_roi_qc` | subject | 60 / 60 | 11.134 | 0.334 | Blocked: cohort predictability and numerical-warning diagnostics |
-| Morphology-aware screen | `image_morphology_only_ridge` | image | 707 / 60 | 21.999 | 0.660 | Blocked by visual feature readiness |
+| Learned ROI candidate screen | `image_simple_roi_qc` | image | 707 / 60 | 23.590 | 0.608 | Blocked: broad prediction sets, score coverage gaps, numerical warnings, cohort predictability |
 | Morphology-aware screen | `subject_morphology_only_ridge` | subject | 60 / 60 | 12.671 | 0.380 | Blocked by visual feature readiness |
+| Morphology-aware screen | `image_morphology_only_ridge` | image | 707 / 60 | 21.999 | 0.660 | Blocked by visual feature readiness |
+
+Within each screen, **subject**-level row precedes **image**-level (cohort rollup before per-image rows).
 
 For the full checkpoint and release policy, see [docs/REPRODUCIBILITY_HANDOFF_2026-04-30.md](docs/REPRODUCIBILITY_HANDOFF_2026-04-30.md).
 
@@ -292,15 +300,15 @@ All maintained workflows use the same `eq run-config` entrypoint.
 
 | Task                                                   | Config                                                              |
 | ------------------------------------------------------ | ------------------------------------------------------------------- |
+| Endotheliosis quantification                           | `configs/endotheliosis_quantification.yaml`                         |
 | Glomeruli candidate comparison                         | `configs/glomeruli_candidate_comparison.yaml`                       |
-| Mitochondria pretraining                               | `configs/mito_pretraining_config.yaml`                              |
 | Glomeruli fine-tuning                                  | `configs/glomeruli_finetuning_config.yaml`                          |
 | Glomeruli transport audit                              | `configs/glomeruli_transport_audit.yaml`                            |
 | High-resolution concordance                            | `configs/highres_glomeruli_concordance.yaml`                        |
-| Endotheliosis quantification                           | `configs/endotheliosis_quantification.yaml`                         |
 | Label-free atlas and binary triage                     | `configs/label_free_roi_embedding_atlas.yaml`                       |
-| MedSAM glomeruli fine-tuning (pilot)                   | `configs/medsam_glomeruli_fine_tuning.yaml`                         |
 | MedSAM glomeruli fine-tuning (conservative MPS deploy) | `configs/medsam_glomeruli_fine_tuning_deploy_conservative_mps.yaml` |
+| MedSAM glomeruli fine-tuning (pilot)                   | `configs/medsam_glomeruli_fine_tuning.yaml`                         |
+| Mitochondria pretraining                               | `configs/mito_pretraining_config.yaml`                              |
 
 
 Use `--dry-run` before long-running training or audit jobs:
