@@ -244,7 +244,21 @@ What actually drives hybrid Label Studio preload and box-assist (current default
 | Live box-assist inference | Segment Anything **ViT-B** (`vit_b`) weights loaded from the deploy-run evaluation checkpoint | `${EQ_RUNTIME_ROOT}/output/segmentation_evaluation/medsam_glomeruli_fine_tuning/deploy_conservative_mps_glomeruli/finetuned_evaluation/medsam_glomeruli_best_sam_state_dict.pth` |
 | Full-image preload masks | Fine-tuned MedSAM mask release `deploy_conservative_mps_glomeruli` (`mask_source=medsam_finetuned_glomeruli`) | `${EQ_RUNTIME_ROOT}/derived_data/generated_masks/glomeruli/medsam_finetuned/deploy_conservative_mps_glomeruli/` (see `manifest.csv`) |
 
-The transfer/scratch rows below are **not** what Label Studio hybrid preload imports by default. Those `.pkl` paths are explicit comparison baselines wired into `configs/medsam_glomeruli_fine_tuning_deploy_conservative_mps.yaml` under `current_segmenter` for MedSAM evaluation reports — legacy FastAI pickles are historical unless separately promoted as supported artifacts.
+**Fine-tuned MedSAM vs baselines (same run, same test rows).** Means are over the **42** held-out **test** split rows in run `deploy_conservative_mps_glomeruli` — identical `manifest_row_id` keys for every line in the table. **Oracle** is base `medsam_vit_b.pth` with **manual component boxes**. **MedSAM automatic** and **MedSAM fine-tuned (automatic)** use the same proposal path `automatic_current_segmenter_boxes` at threshold **0.2** (the run’s selected proposal stack). **Transfer** / **scratch** are the legacy `.pkl` glomeruli CNNs evaluated on those same rows. Source CSVs: `…/deploy_conservative_mps_glomeruli/baseline_metrics/{oracle_medsam_metrics,automatic_medsam_metrics,current_segmenter_metrics}.csv` and `…/finetuned_evaluation/metrics.csv`.
+
+| Segmentation path | Mean Dice | Mean Jaccard | Precision | Recall |
+| --- | ---: | ---: | ---: | ---: |
+| MedSAM oracle box (base checkpoint, manual boxes) | 0.9216 | 0.8552 | 0.8874 | 0.9607 |
+| **MedSAM fine-tuned automatic** (`medsam_finetuned_automatic`, deploy `.pth`) | **0.8155** | **0.6998** | **0.8012** | **0.8507** |
+| MedSAM automatic baseline (base checkpoint, same proposals) | 0.7747 | 0.6437 | 0.7549 | 0.8282 |
+| Current transfer segmenter (`.pkl`) | 0.7288 | 0.5890 | 0.8840 | 0.6494 |
+| Current scratch segmenter (`.pkl`) | 0.6478 | 0.4982 | 0.8835 | 0.5393 |
+
+Rows sorted by mean Dice descending. Workflow summary for this run records `adoption_tier=improved_candidate_not_oracle` (beats automatic MedSAM and both CNN baselines on this split; still below oracle-tier gates — see `summary.json` → `finetuned_comparison`). Numbers are reproducible from the CSVs above after rerunning `configs/medsam_glomeruli_fine_tuning_deploy_conservative_mps.yaml`; see [docs/MEDSAM_GLOMERULI_FINETUNING_HANDOFF.md](docs/MEDSAM_GLOMERULI_FINETUNING_HANDOFF.md).
+
+The adjudication-panel CNN rows further down are **not** this split — different crop panel and cohort slice.
+
+The transfer/scratch `.pkl` paths wired under `current_segmenter` in deploy YAML are **not** what Label Studio hybrid preload imports by default; they are evaluation baselines — legacy FastAI pickles are historical unless separately promoted as supported artifacts.
 
 Glomeruli transfer-vs-scratch comparison used the deterministic adjudication-aware candidate-comparison panel (`30` crops across `27` images and `5` subjects; threshold `0.75`):
 
