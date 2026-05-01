@@ -106,6 +106,26 @@ For MedSAM box-assist companion launch/contract, see [docs/LABEL_STUDIO_MEDSAM_C
 
 This loop is usable for development iteration, but still half-finished from an operator UX standpoint. The current gap is preload quality/instance semantics, not core import/export plumbing.
 
+Where this is stuck as of 2026-05-01:
+
+- Runtime logs confirmed that the confusing green blobs in Label Studio are coming from the selected MedSAM mask release, not from Label Studio inventing geometry.
+- The active preload release is `deploy_conservative_mps_glomeruli`.
+- The demo images resolve to generated mask PNGs under `derived_data/generated_masks/glomeruli/medsam_finetuned/deploy_conservative_mps_glomeruli/masks/`.
+- Connected-component splitting and RLE encoding preserve the source mask geometry; the bad shapes already exist in the release masks before import.
+- Label Studio hover/selection makes bad regions look like they appear/disappear because it changes opacity and highlights the full region extent.
+- The current auto-preload path is therefore not a good operator demo for these images.
+
+Next work should decide between these paths before further UI polish:
+
+1. Prefer box-assist/manual-first for new images: do not preload the full-image release masks by default; let the operator draw a box, call MedSAM, then brush/erase and grade the resulting region.
+2. Keep auto-preload only when a release has passed a per-image quality gate; add explicit config for minimum area, border-touch rejection, maximum area, and whether to materialize or strip prediction overlays.
+3. Add explicit policy for images with existing manual masks: if trusted manual masks already exist, import those as editable annotations and do not run or preload model inference for that image unless requested.
+
+Debug status:
+
+- Instrumentation remains in `src/eq/labelstudio/bootstrap.py` and `src/eq/labelstudio/medsam_companion.py` for the next session.
+- The next evidence gap is box-assist quality: restart the companion from current source and run `/v1/box_infer` on a known glomerulus box to log whether the box-prompt output is tight enough or whether the companion/checkpoint preprocessing is also poor.
+
 Local login:
 
 ```text

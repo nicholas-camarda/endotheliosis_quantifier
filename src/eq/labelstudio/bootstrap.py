@@ -18,6 +18,7 @@ from typing import Any, Callable, Iterable
 
 import numpy as np
 import yaml
+from label_studio_converter.brush import decode_rle as decode_labelstudio_brush_rle
 from label_studio_converter.brush import mask2rle
 from PIL import Image
 
@@ -46,6 +47,29 @@ DEFAULT_COMPANION_BASE_URL = 'http://localhost:8098'
 DEFAULT_COMPANION_HEALTH_PATH = '/healthz'
 DEFAULT_HYBRID_MODE = 'auto'
 MIN_PRELOAD_COMPONENT_AREA_PX = 1000
+
+
+# region agent log
+def _agent_debug_log(
+    *, run_id: str, hypothesis_id: str, location: str, message: str, data: dict[str, Any]
+) -> None:
+    try:
+        log_path = Path('/Users/ncamarda/Projects/endotheliosis_quantifier/.cursor/debug-b42b0c.log')
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            'sessionId': 'b42b0c',
+            'runId': run_id,
+            'hypothesisId': hypothesis_id,
+            'location': location,
+            'message': message,
+            'data': data,
+            'timestamp': int(time.time() * 1000),
+        }
+        with log_path.open('a', encoding='utf-8') as handle:
+            handle.write(json.dumps(payload, sort_keys=True) + '\n')
+    except Exception:
+        pass
+# endregion
 
 
 class BootstrapError(RuntimeError):
@@ -456,6 +480,20 @@ def _load_release_rows(manifest_path: Path) -> dict[str, dict[str, Any]]:
 def _build_prediction_payloads(
     plan: BootstrapPlan, *, hybrid_settings: HybridBootstrapSettings
 ) -> dict[str, dict[str, Any]]:
+    # region agent log
+    _agent_debug_log(
+        run_id='pre-fix',
+        hypothesis_id='H1,H4,H5',
+        location='src/eq/labelstudio/bootstrap.py:_build_prediction_payloads',
+        message='entered prediction payload build',
+        data={
+            'hybrid_enabled': hybrid_settings.enabled,
+            'selected_mask_release_id': plan.selected_mask_release_id,
+            'image_count': len(plan.image_paths),
+            'images_dir': str(plan.images_dir),
+        },
+    )
+    # endregion
     if not hybrid_settings.enabled or not plan.selected_mask_release_id:
         return {}
     runtime_root = (
@@ -476,6 +514,7 @@ def _build_prediction_payloads(
         by_name[image_path.name.lower()] = Path(rel)
 
     prediction_by_relative: dict[str, dict[str, Any]] = {}
+    debug_rows: list[dict[str, Any]] = []
     with release_manifest_path.open('r', encoding='utf-8', newline='') as handle:
         reader = csv.DictReader(handle)
         for idx, row in enumerate(reader, start=1):
@@ -492,6 +531,31 @@ def _build_prediction_payloads(
                 mask_path=mask_path,
                 mask_release_id=plan.selected_mask_release_id,
             )
+            if len(debug_rows) < 10:
+                debug_rows.append(
+                    {
+                        'relative_image_path': rel,
+                        'source_image_path': source_image,
+                        'generated_mask_path': str(mask_path),
+                        'mask_source': str(row.get('mask_source') or ''),
+                        'generation_status': str(row.get('generation_status') or ''),
+                        'release_manifest_path': str(release_manifest_path),
+                    }
+                )
+    # region agent log
+    _agent_debug_log(
+        run_id='pre-fix',
+        hypothesis_id='H1,H4,H5',
+        location='src/eq/labelstudio/bootstrap.py:_build_prediction_payloads',
+        message='finished prediction payload build',
+        data={
+            'prediction_count': len(prediction_by_relative),
+            'selected_mask_release_id': plan.selected_mask_release_id,
+            'release_dir': str(release_dir),
+            'matched_rows_sample': debug_rows,
+        },
+    )
+    # endregion
     return prediction_by_relative
 
 
@@ -501,12 +565,33 @@ def _prediction_from_mask(
     mask = Image.open(mask_path).convert('L')
     mask_np = (np.array(mask) > 0).astype(np.uint8)
     height, width = mask_np.shape
-    component_masks = _connected_component_masks(mask_np)
+    component_masks, component_debug = _connected_component_masks(mask_np)
     if not component_masks:
         component_masks = [mask_np]
     result: list[dict[str, Any]] = []
     for component_idx, component_mask in enumerate(component_masks, start=1):
         rle = mask2rle((component_mask * 255).astype(np.uint8))
+        encoded_debug = _rle_geometry_summary(rle, width=width, height=height)
+        # region agent log
+        _agent_debug_log(
+            run_id='pre-fix',
+            hypothesis_id='H1,H2,H3',
+            location='src/eq/labelstudio/bootstrap.py:_prediction_from_mask',
+            message='encoded preload component',
+            data={
+                'prediction_id': prediction_id,
+                'component_idx': component_idx,
+                'mask_path': str(mask_path),
+                'mask_release_id': mask_release_id,
+                'source_mask_shape': [int(height), int(width)],
+                'source_positive_pixels': int(mask_np.sum()),
+                'all_components': component_debug,
+                'kept_component_area': int(component_mask.sum()),
+                'kept_component_bbox': _binary_mask_bbox(component_mask),
+                'encoded_component_geometry': encoded_debug,
+            },
+        )
+        # endregion
         result.append(
             {
                 'id': f'{prediction_id}_{component_idx:03d}',
@@ -529,7 +614,7 @@ def _prediction_from_mask(
     }
 
 
-def _connected_component_masks(mask_np: np.ndarray) -> list[np.ndarray]:
+def _connected_component_masks(mask_np: np.ndarray) -> tuple[list[np.ndarray], list[dict[str, Any]]]:
     """Split a binary mask into disconnected per-instance binary masks."""
     if mask_np.ndim != 2:
         raise BootstrapError('Expected 2D mask for Label Studio preload conversion')
@@ -539,6 +624,7 @@ def _connected_component_masks(mask_np: np.ndarray) -> list[np.ndarray]:
     height, width = active.shape
     visited = np.zeros_like(active, dtype=bool)
     components: list[np.ndarray] = []
+    component_debug: list[dict[str, Any]] = []
     for y in range(height):
         for x in range(width):
             if not active[y, x] or visited[y, x]:
@@ -562,12 +648,35 @@ def _connected_component_masks(mask_np: np.ndarray) -> list[np.ndarray]:
                     visited[ny, nx] = True
                     queue.append((ny, nx))
             components.append(component)
+            component_debug.append(
+                {
+                    'area': int(component.sum()),
+                    'bbox': _binary_mask_bbox(component),
+                    'kept_by_area_filter': int(component.sum()) >= MIN_PRELOAD_COMPONENT_AREA_PX,
+                }
+            )
     filtered: list[np.ndarray] = []
     for component in components:
         if int(component.sum()) < MIN_PRELOAD_COMPONENT_AREA_PX:
             continue
         filtered.append(component)
-    return filtered
+    return filtered, component_debug
+
+
+def _binary_mask_bbox(mask_np: np.ndarray) -> list[int] | None:
+    ys, xs = np.where(mask_np > 0)
+    if len(xs) == 0:
+        return None
+    return [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
+
+
+def _rle_geometry_summary(rle: list[Any], *, width: int, height: int) -> dict[str, Any]:
+    try:
+        rgba = decode_labelstudio_brush_rle(rle).reshape((int(height), int(width), 4))
+        alpha = (rgba[:, :, 3] > 0).astype(np.uint8)
+        return {'area': int(alpha.sum()), 'bbox': _binary_mask_bbox(alpha)}
+    except Exception as exc:
+        return {'decode_error': str(exc)}
 
 def _companion_status_summary(
     plan: BootstrapPlan, *, hybrid_settings: HybridBootstrapSettings
@@ -822,6 +931,15 @@ class LabelStudioApiClient:
         self, project_id: int, *, imported_tasks: list[dict[str, Any]]
     ) -> None:
         """Copy imported predictions into editable annotations when needed."""
+        # region agent log
+        _agent_debug_log(
+            run_id='pre-fix',
+            hypothesis_id='H3,H4',
+            location='src/eq/labelstudio/bootstrap.py:_materialize_preload_predictions_as_annotations',
+            message='entered prediction materialization',
+            data={'project_id': project_id, 'imported_task_count': len(imported_tasks)},
+        )
+        # endregion
         prediction_by_relative: dict[str, list[dict[str, Any]]] = {}
         for task in imported_tasks:
             if not isinstance(task, dict):
@@ -841,6 +959,7 @@ class LabelStudioApiClient:
         if not prediction_by_relative:
             return
 
+        materialized: list[dict[str, Any]] = []
         for task in self._iter_project_tasks(project_id):
             if not isinstance(task, dict):
                 continue
@@ -851,12 +970,37 @@ class LabelStudioApiClient:
             annotations = task.get('annotations') if isinstance(task.get('annotations'), list) else []
             if total_annotations > 0 or annotations:
                 # Respect existing manual work; do not auto-create duplicates.
+                materialized.append(
+                    {
+                        'task_id': task.get('id'),
+                        'relative_image_path': relative,
+                        'action': 'skipped_existing_annotations',
+                        'total_annotations': total_annotations,
+                    }
+                )
                 continue
             self._request_json(
                 'POST',
                 f"/api/tasks/{int(task.get('id'))}/annotations/",
                 {'result': prediction_by_relative[relative]},
             )
+            materialized.append(
+                {
+                    'task_id': task.get('id'),
+                    'relative_image_path': relative,
+                    'action': 'created_annotation',
+                    'region_count': len(prediction_by_relative[relative]),
+                }
+            )
+        # region agent log
+        _agent_debug_log(
+            run_id='pre-fix',
+            hypothesis_id='H3,H4',
+            location='src/eq/labelstudio/bootstrap.py:_materialize_preload_predictions_as_annotations',
+            message='finished prediction materialization',
+            data={'project_id': project_id, 'actions': materialized[:20]},
+        )
+        # endregion
 
     def _iter_project_tasks(self, project_id: int) -> Iterable[dict[str, Any]]:
         path = f'/api/tasks/?project={project_id}'

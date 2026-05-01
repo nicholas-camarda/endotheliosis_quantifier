@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -20,6 +21,29 @@ from segment_anything import sam_model_registry
 
 class CompanionError(RuntimeError):
     """Raised when companion request payload or runtime state is invalid."""
+
+
+# region agent log
+def _agent_debug_log(
+    *, run_id: str, hypothesis_id: str, location: str, message: str, data: dict[str, Any]
+) -> None:
+    try:
+        log_path = Path('/Users/ncamarda/Projects/endotheliosis_quantifier/.cursor/debug-b42b0c.log')
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            'sessionId': 'b42b0c',
+            'runId': run_id,
+            'hypothesisId': hypothesis_id,
+            'location': location,
+            'message': message,
+            'data': data,
+            'timestamp': int(time.time() * 1000),
+        }
+        with log_path.open('a', encoding='utf-8') as handle:
+            handle.write(json.dumps(payload, sort_keys=True) + '\n')
+    except Exception:
+        pass
+# endregion
 
 
 @dataclass
@@ -39,6 +63,22 @@ class CompanionModel:
         image = Image.open(image_path).convert("RGB")
         width, height = image.size
         image_np = np.array(image)
+        # region agent log
+        _agent_debug_log(
+            run_id='pre-fix',
+            hypothesis_id='H6,H7,H8',
+            location='src/eq/labelstudio/medsam_companion.py:infer_box.entry',
+            message='entered box inference',
+            data={
+                'image_path': str(image_path),
+                'image_size': [int(width), int(height)],
+                'box_xyxy': [float(value) for value in box_xyxy],
+                'device': self.device_name,
+                'model_type': self.model_type,
+                'threshold': float(self.threshold),
+            },
+        )
+        # endregion
         image_1024 = np.array(
             image.resize((1024, 1024), resample=Image.Resampling.BICUBIC)
         ).astype(np.float32)
@@ -75,6 +115,28 @@ class CompanionModel:
                 pred, size=(height, width), mode="bilinear", align_corners=False
             )
         mask = (pred.squeeze().cpu().numpy() > float(self.threshold)).astype(np.uint8)
+        mask_bbox = _binary_mask_bbox(mask)
+        box_area = max(0.0, float(box_xyxy[2] - box_xyxy[0])) * max(
+            0.0, float(box_xyxy[3] - box_xyxy[1])
+        )
+        # region agent log
+        _agent_debug_log(
+            run_id='pre-fix',
+            hypothesis_id='H6,H7,H8',
+            location='src/eq/labelstudio/medsam_companion.py:infer_box.exit',
+            message='finished box inference',
+            data={
+                'image_path': str(image_path),
+                'box_xyxy': [float(value) for value in box_xyxy],
+                'box_area': float(box_area),
+                'mask_area': int(mask.sum()),
+                'mask_bbox': mask_bbox,
+                'mask_area_to_box_area': (
+                    float(mask.sum()) / float(box_area) if box_area > 0 else None
+                ),
+            },
+        )
+        # endregion
         return {
             "width": int(width),
             "height": int(height),
@@ -84,6 +146,13 @@ class CompanionModel:
             "device": self.device_name,
             "image_path": str(image_path),
         }
+
+
+def _binary_mask_bbox(mask_np: np.ndarray) -> list[int] | None:
+    ys, xs = np.where(mask_np > 0)
+    if len(xs) == 0:
+        return None
+    return [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
 
 
 def _resolve_device(name: str) -> torch.device:
