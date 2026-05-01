@@ -1146,8 +1146,12 @@ def _build_checkpoint_provenance(
     checkpoint_files: list[Path],
     training_status: str,
     local_feasibility_status: str,
+    reuse_existing_checkpoints: bool = False,
 ) -> dict[str, Any]:
     checkpoint_file_strings = [str(path) for path in checkpoint_files if path.exists()]
+    supported = bool(
+        training_status == "completed" and checkpoint_file_strings
+    ) or bool(reuse_existing_checkpoints and checkpoint_file_strings)
     return {
         "training_command": training_command,
         "environment": environment,
@@ -1165,9 +1169,8 @@ def _build_checkpoint_provenance(
         "checkpoint_files": checkpoint_file_strings,
         "training_status": training_status,
         "local_feasibility_status": local_feasibility_status,
-        "supported_checkpoint": bool(
-            training_status == "completed" and checkpoint_file_strings
-        ),
+        "reuse_existing_checkpoints": bool(reuse_existing_checkpoints),
+        "supported_checkpoint": supported,
     }
 
 
@@ -1248,8 +1251,17 @@ def _run_finetuned_fixed_split_evaluation(
     if not checkpoint_candidates:
         summary["status"] = "failed_missing_supported_checkpoint_artifact"
         return summary
-    checkpoint_candidates.sort(key=lambda path: (path.stat().st_mtime, str(path)))
-    finetuned_checkpoint = _resolve_inference_checkpoint(checkpoint_candidates[-1])
+    best_val_paths = [
+        path
+        for path in checkpoint_candidates
+        if path.name == "medsam_glomeruli_best_val_dice.pth"
+    ]
+    if best_val_paths:
+        chosen_checkpoint = best_val_paths[0]
+    else:
+        checkpoint_candidates.sort(key=lambda path: (path.stat().st_mtime, str(path)))
+        chosen_checkpoint = checkpoint_candidates[-1]
+    finetuned_checkpoint = _resolve_inference_checkpoint(chosen_checkpoint)
 
     proposal_cfg = _mapping(config, "proposal")
     tiling_cfg = _mapping(config, "tiling")
@@ -1507,6 +1519,7 @@ def _training_command_for_config(
     train_npy_root: Path,
     work_dir: Path,
     training_cfg: dict[str, Any],
+    val_npy_root: Path | None = None,
 ) -> list[str]:
     medsam = _mapping(config, "medsam")
     device = str(medsam.get("device", "cpu"))
@@ -1518,7 +1531,7 @@ def _training_command_for_config(
     batch_size = int(training_cfg.get("batch_size", 2))
     lr = float(training_cfg.get("learning_rate", 0.0001))
     if backend == "eq_native_adapter":
-        return [
+        cmd = [
             str(python_path),
             "-m",
             "eq.evaluation.medsam_glomeruli_adapter",
@@ -1553,6 +1566,12 @@ def _training_command_for_config(
             "--min-lr",
             str(float(training_cfg.get("min_lr", 0.0))),
         ]
+        if val_npy_root is not None:
+            cmd.extend(["--val-npy-root", str(val_npy_root)])
+            val_cap = int(training_cfg.get("val_max_examples", 0))
+            if val_cap > 0:
+                cmd.extend(["--val-max-examples", str(val_cap)])
+        return cmd
     entrypoint = Path(preflight["entrypoint"])
     return _build_adaptation_command(
         medsam_python=python_path,
@@ -1758,6 +1777,32 @@ def run_medsam_glomeruli_fine_tuning_workflow(
         output_root=train_npy_root,
         image_size=int(training_cfg.get("image_size", 1024)),
     )
+    val_npy_root_for_training: Path | None = None
+    validation_npy_data: dict[str, Any]
+    if dry_run:
+        validation_npy_data = {"status": "skipped_dry_run"}
+    elif str(preflight.get("training_backend", "")) != "eq_native_adapter":
+        validation_npy_data = {"status": "skipped", "reason": "not_eq_native_adapter"}
+    else:
+        val_rows = _split_rows(split_paths, runtime_root, "validation")
+        if val_rows.empty:
+            validation_npy_data = {"status": "skipped", "reason": "empty_validation_split"}
+        else:
+            val_rel = str(training_cfg.get("val_preprocessed_npy_root", "")).strip()
+            val_output = (
+                _runtime_path(runtime_root, val_rel)
+                if val_rel
+                else train_npy_root.parent / "npy_data_validation"
+            )
+            validation_npy_data = _prepare_medsam_npy_data(
+                train_rows=val_rows,
+                output_root=val_output,
+                image_size=int(training_cfg.get("image_size", 1024)),
+            )
+            if int(validation_npy_data.get("prepared_count", 0) or 0) > 0:
+                val_npy_root_for_training = val_output
+            else:
+                validation_npy_data["status"] = "skipped_empty_after_prepare"
     baseline_outputs = _write_fixed_baseline_metrics(
         fixed_rows=fixed_rows,
         output_dir=paths["evaluation_dir"],
@@ -1791,6 +1836,7 @@ def run_medsam_glomeruli_fine_tuning_workflow(
         train_npy_root=train_npy_root,
         work_dir=paths["checkpoint_root"],
         training_cfg=training_cfg,
+        val_npy_root=val_npy_root_for_training,
     )
     local_feasibility = {
         "local_feasibility_status": "requires_external_accelerator"
@@ -1819,6 +1865,7 @@ def run_medsam_glomeruli_fine_tuning_workflow(
                 train_npy_root=train_npy_root,
                 work_dir=paths["checkpoint_root"],
                 training_cfg=smoke_training_cfg,
+                val_npy_root=None,
             )
         else:
             smoke_command = training_command + [
@@ -1900,6 +1947,7 @@ def run_medsam_glomeruli_fine_tuning_workflow(
         local_feasibility_status=str(
             local_feasibility.get("local_feasibility_status", "")
         ),
+        reuse_existing_checkpoints=skip_reason == "run_training_disabled",
     )
     checkpoint_provenance_path = paths["checkpoint_root"] / "provenance.json"
     checkpoint_provenance_path.write_text(
@@ -1919,12 +1967,74 @@ def run_medsam_glomeruli_fine_tuning_workflow(
         baseline_outputs=baseline_outputs,
         adoption_gates=adoption_gates,
     )
+    generated_mask_packaging: dict[str, Any] = {"status": "skipped"}
+    if (
+        (not dry_run)
+        and str(finetuned_evaluation.get("status", "")) == "completed"
+        and int(finetuned_evaluation.get("metric_rows", 0) or 0) > 0
+        and bool(outputs.get("package_generated_mask_release", True))
+    ):
+        masks_eval_dir = Path(str(finetuned_evaluation["masks_dir"]))
+        family = str(finetuned_evaluation.get("selected_candidate_family", ""))
+        threshold = float(finetuned_evaluation.get("selected_threshold", 0.0))
+        ckpt_infer = Path(str(finetuned_evaluation.get("checkpoint_path", "")))
+        mask_release_id = str(outputs.get("mask_release_id") or run_cfg.get("name") or "")
+        checkpoint_id = str(outputs.get("checkpoint_id") or run_cfg.get("name") or "")
+        run_name = str(run_cfg.get("name") or DEFAULT_RUN_ID)
+        generated_release_items: list[dict[str, Any]] = []
+        for record in fixed_rows.fillna("").to_dict(orient="records"):
+            row_id = str(record["manifest_row_id"])
+            predicted_path = (
+                masks_eval_dir / f"{row_id}_{family}_{threshold:g}_medsam_finetuned_auto.png"
+            )
+            if not predicted_path.exists():
+                continue
+            generated_release_items.append(
+                {
+                    "generated_mask_path": str(predicted_path),
+                    "cohort_id": str(record.get("cohort_id", "")),
+                    "lane_assignment": str(record.get("lane_assignment", "")),
+                    "source_sample_id": str(record.get("source_sample_id", "")),
+                    "source_image_path": str(record.get("image_path_resolved", "")),
+                    "reference_mask_path": str(record.get("mask_path_resolved", "")),
+                    "generation_status": "generated",
+                }
+            )
+        if generated_release_items:
+            pkg_paths = _package_generated_mask_release(
+                release_dir=paths["generated_release_root"],
+                mask_release_id=mask_release_id,
+                run_id=run_name,
+                checkpoint_id=checkpoint_id,
+                checkpoint_path=ckpt_infer,
+                proposal_source="automatic_current_segmenter_boxes",
+                proposal_threshold=threshold,
+                adoption_tier=str(finetuned_comparison.get("adoption_tier", "")),
+                generated_masks=generated_release_items,
+            )
+            _update_generated_mask_registry(
+                paths["generated_registry_path"], pkg_paths["manifest"]
+            )
+            generated_mask_packaging = {
+                "status": "completed",
+                "release_dir": str(pkg_paths["release_dir"]),
+                "manifest": str(pkg_paths["manifest"]),
+                "provenance": str(pkg_paths["provenance"]),
+                "index": str(pkg_paths["index"]),
+                "packaged_masks": len(generated_release_items),
+            }
+        else:
+            generated_mask_packaging = {
+                "status": "skipped_no_prediction_masks",
+                "masks_dir": str(masks_eval_dir),
+            }
     summary = {
         "workflow": WORKFLOW_ID,
         "run_id": str(run_cfg.get("name") or DEFAULT_RUN_ID),
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "config_path": str(config_path),
         "runtime_root": str(runtime_root),
+        "log_path": str(log_context.log_path) if log_context is not None else "",
         "manifest_path": str(manifest_path),
         "dry_run": bool(dry_run),
         "medsam_python": preflight["medsam_python"],
@@ -1950,7 +2060,10 @@ def run_medsam_glomeruli_fine_tuning_workflow(
             else "",
         },
         "training_data": training_data,
+        "validation_npy_data": validation_npy_data,
         "local_feasibility": local_feasibility,
+        "training_skip_reason": skip_reason,
+        "training_process_exit_code": training_process_exit,
         "training_command": training_command,
         "checkpoint_provenance": str(checkpoint_provenance_path),
         "checkpoint_provenance_summary": {
@@ -1963,12 +2076,15 @@ def run_medsam_glomeruli_fine_tuning_workflow(
         "generated_splits": generated_splits,
         "finetuned_evaluation": finetuned_evaluation,
         "finetuned_comparison": finetuned_comparison,
+        "generated_mask_packaging": generated_mask_packaging,
         "note": "Fine-tuned checkpoint inference/evaluation tasks run after training produces supported checkpoint artifacts.",
     }
     summary_path = paths["evaluation_dir"] / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    _emit(f"ARTIFACT_SUMMARY={summary_path}")
     if not dry_run and bool(outputs.get("create_checkpoint_dir_on_start", False)):
         paths["checkpoint_root"].mkdir(parents=True, exist_ok=True)
+    _emit("PHASE=workflow status=completed")
     return {"evaluation_dir": paths["evaluation_dir"], "summary": summary_path}
 
 

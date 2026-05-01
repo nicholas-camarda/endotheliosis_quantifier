@@ -77,6 +77,20 @@ eq labelstudio start --images /path/to/images --dry-run
 
 For details, see [docs/LABEL_STUDIO_GLOMERULUS_GRADING.md](docs/LABEL_STUDIO_GLOMERULUS_GRADING.md).
 
+## MedSAM glomerulus fine-tuning (domain adaptation)
+
+YAML-first workflow: trains/fine-tunes MedSAM glomeruli masks on admitted manual-mask cohort rows, evaluates on fixed splits, optionally **packages** prediction masks into `derived_data/generated_masks/glomeruli/medsam_finetuned/<mask_release_id>/` when fine-tuned evaluation completes.
+
+Operator handoff (paths, logs, gates, mask releases):
+
+- [docs/MEDSAM_GLOMERULI_FINETUNING_HANDOFF.md](docs/MEDSAM_GLOMERULI_FINETUNING_HANDOFF.md)
+
+Quick dry-run:
+
+```bash
+eq run-config --config configs/medsam_glomeruli_fine_tuning_deploy_conservative_mps.yaml --dry-run
+```
+
 ## Run The Current Quantification Workflow
 
 The main entrypoint is YAML-first:
@@ -144,6 +158,8 @@ All maintained workflows use the same `eq run-config` entrypoint.
 | High-resolution concordance | `configs/highres_glomeruli_concordance.yaml` |
 | Endotheliosis quantification | `configs/endotheliosis_quantification.yaml` |
 | Label-free atlas and binary triage | `configs/label_free_roi_embedding_atlas.yaml` |
+| MedSAM glomeruli fine-tuning (pilot) | `configs/medsam_glomeruli_fine_tuning.yaml` |
+| MedSAM glomeruli fine-tuning (conservative MPS deploy) | `configs/medsam_glomeruli_fine_tuning_deploy_conservative_mps.yaml` |
 
 Use `--dry-run` before long-running training or audit jobs:
 

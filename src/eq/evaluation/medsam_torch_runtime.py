@@ -10,7 +10,10 @@ from typing import Any
 
 def medsam_subprocess_extra_env(*, device: str) -> dict[str, str]:
     """Environment variables merged into MedSAM SAM batch/training subprocesses."""
-    env: dict[str, str] = {}
+    env: dict[str, str] = {
+        # So epoch progress and prints appear promptly when stdout/stderr are piped (e.g. tee).
+        "PYTHONUNBUFFERED": "1",
+    }
     name = str(device).strip().lower()
     if name == "mps":
         env["PYTORCH_ENABLE_MPS_FALLBACK"] = os.environ.get(

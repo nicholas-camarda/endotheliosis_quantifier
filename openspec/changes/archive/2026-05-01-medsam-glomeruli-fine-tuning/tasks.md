@@ -33,9 +33,9 @@
 
 ## 5. Fine-Tuned Evaluation, Gates, And Release Packaging
 
-- [ ] 5.1 Run automatic proposal-box MedSAM inference with fine-tuned checkpoints on fixed validation/test examples.
-- [ ] 5.2 Write fine-tuned masks, prompt provenance, metrics, overlays, and prompt failures under `output/segmentation_evaluation/medsam_glomeruli_fine_tuning/<run_id>/`.
-- [ ] 5.3 Compare fine-tuned checkpoints against oracle-prompt MedSAM reference metrics, current automatic MedSAM, current segmenter candidates, and trivial baselines using the same fixed examples.
+- [x] 5.1 Run automatic proposal-box MedSAM inference with fine-tuned checkpoints on fixed validation/test examples.
+- [x] 5.2 Write fine-tuned masks, prompt provenance, metrics, overlays, and prompt failures under `output/segmentation_evaluation/medsam_glomeruli_fine_tuning/<run_id>/`.
+- [x] 5.3 Compare fine-tuned checkpoints against oracle-prompt MedSAM reference metrics, current automatic MedSAM, current segmenter candidates, and trivial baselines using the same fixed examples.
 - [x] 5.4 Implement generated-mask adoption gates for oracle-level Dice/Jaccard and maximum oracle gap, metric improvement, prompt failures, foreground fraction, area ratio, trivial-baseline comparisons, and overlay review status, producing `oracle_level_preferred`, `improved_candidate_not_oracle`, or `blocked`.
 - [x] 5.5 Package reusable generated-mask releases under `derived_data/generated_masks/glomeruli/medsam_finetuned/<mask_release_id>/` when the adoption tier is `oracle_level_preferred` or explicit downstream comparison is requested for `improved_candidate_not_oracle`.
 - [x] 5.6 Write generated-mask release `manifest.csv`, `INDEX.md`, and `provenance.json` with `generated_mask_id`, `mask_release_id`, `mask_source=medsam_finetuned_glomeruli`, `adoption_tier`, checkpoint ID, proposal source, threshold, run ID, source image, reference mask, generated mask path, and generation status.
@@ -55,8 +55,8 @@
 ## 7. Pilot Execution And Decision
 
 - [x] 7.1 Run the baseline-only dry run to verify splits, output roots, generated-mask release roots, and dependency preflight before training.
-- [ ] 7.2 Run and review the local feasibility smoke run first; if status is `local_feasible`, proceed locally, and if status is `requires_external_accelerator`, execute the full pilot on the selected external accelerator path.
+- [x] 7.2 Run and review the local feasibility smoke run first; if status is `local_feasible`, proceed locally, and if status is `requires_external_accelerator`, execute the full pilot on the selected external accelerator path.
 - [x] 7.3 Run the first fine-tuning pilot using the feasible execution path and admitted manual-mask split manifests.
-- [ ] 7.4 Review `summary.json`, fixed-split metrics, oracle-gap fields, prompt failures, checkpoint provenance, local feasibility status, generated-mask release manifest when present, and overlays.
-- [ ] 7.5 Record the pilot command, output path, checkpoint ID, split manifest paths, local feasibility status, key metrics, gate decisions, generated-mask release status, and next recommendation in the change notes before treating implementation as complete.
+- [x] 7.4 Review `summary.json`, fixed-split metrics, oracle-gap fields, prompt failures, checkpoint provenance, local feasibility status, generated-mask release manifest when present, and overlays.
+- [x] 7.5 Record the pilot command, output path, checkpoint ID, split manifest paths, local feasibility status, key metrics, gate decisions, generated-mask release status, and next recommendation in the change notes before treating implementation as complete.
 

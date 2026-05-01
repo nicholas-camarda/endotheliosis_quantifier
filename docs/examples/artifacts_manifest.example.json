@@ -1,0 +1,31 @@
+{
+  "_comment": "Example only — replace URLs and hashes before use; keep real manifests alongside Release bundles, not necessarily in Git.",
+  "bundle_id": "eq-collaborator-bundle-example",
+  "compatible_eq_repo_tag": "v0.0.0-example",
+  "artifacts": [
+    {
+      "role": "medsam_base_checkpoint",
+      "filename": "medsam_vit_b_example.pth",
+      "sha256": "REPLACE_ME",
+      "download_note": "Prefer GitHub Release attachment or institutional mirror URL documented in RELEASE_NOTES.md"
+    },
+    {
+      "role": "medsam_finetuned_glomeruli_checkpoint",
+      "filename": "medsam_glomeruli_finetuned_example.pth",
+      "sha256": "REPLACE_ME",
+      "download_note": "Pin to workflow provenance.json from the training run that produced the weights"
+    },
+    {
+      "role": "mask_release_archive",
+      "filename": "mask_release_example.tar.zst",
+      "sha256": "REPLACE_ME",
+      "unpack_relative_to_runtime": "derived_data/generated_masks/glomeruli/medsam_finetuned/"
+    },
+    {
+      "role": "quant_model_export",
+      "filename": "burden_model_export_example.joblib",
+      "sha256": "REPLACE_ME",
+      "download_note": "Consumed by eq quantification workflows from runtime paths, not Label Studio Stage 1 UX"
+    }
+  ]
+}

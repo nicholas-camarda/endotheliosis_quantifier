@@ -65,6 +65,46 @@ class MedSAMNpyDataset(Dataset):
         )
 
 
+class MedSAMNpyEvalDataset(Dataset):
+    """Same NPY layout as training, but a fixed tight box (no bbox jitter) for val metrics."""
+
+    def __init__(self, data_root: Path, *, max_examples: int = 0):
+        self.data_root = Path(data_root)
+        self.img_path = self.data_root / "imgs"
+        self.gt_path = self.data_root / "gts"
+        files = sorted(
+            path for path in self.gt_path.glob("*.npy") if (self.img_path / path.name).exists()
+        )
+        if max_examples > 0:
+            files = files[: int(max_examples)]
+        self.gt_files = files
+
+    def __len__(self) -> int:
+        return len(self.gt_files)
+
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, str]:
+        gt_path = self.gt_files[index]
+        img_name = gt_path.name
+        image = np.load(self.img_path / img_name, allow_pickle=True).astype(np.float32)
+        mask = (np.load(gt_path, allow_pickle=True) > 0).astype(np.uint8)
+        if image.ndim != 3 or image.shape[-1] != 3:
+            raise ValueError(f"Expected RGB image array HxWx3, got {image.shape}")
+        if mask.ndim != 2:
+            raise ValueError(f"Expected 2D mask array, got {mask.shape}")
+        if int(mask.sum()) <= 0:
+            raise ValueError(f"Mask has no foreground pixels: {gt_path}")
+        ys, xs = np.where(mask > 0)
+        x_min, x_max = int(xs.min()), int(xs.max())
+        y_min, y_max = int(ys.min()), int(ys.max())
+        image_chw = np.transpose(np.clip(image, 0.0, 1.0), (2, 0, 1))
+        return (
+            torch.tensor(image_chw).float(),
+            torch.tensor(mask[None, :, :]).float(),
+            torch.tensor([x_min, y_min, x_max, y_max]).float(),
+            img_name,
+        )
+
+
 def _soft_dice_loss_with_logits(
     logits: torch.Tensor, target: torch.Tensor, eps: float = 1e-6
 ) -> torch.Tensor:
@@ -124,6 +164,37 @@ def _device(name: str) -> torch.device:
     return torch.device(name)
 
 
+@torch.no_grad()
+def _validation_epoch_loss_and_dice(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    ce_loss: nn.Module,
+) -> tuple[float, float]:
+    """Mean batch loss and mean hard Dice (threshold 0.5) on the validation loader."""
+    model.eval()
+    total_loss = 0.0
+    total_dice = 0.0
+    n_batches = 0
+    for image, gt, boxes, _names in loader:
+        image = image.to(device)
+        gt = gt.to(device)
+        prediction = model(image, boxes.detach().cpu().numpy())
+        loss = _soft_dice_loss_with_logits(prediction, gt) + ce_loss(prediction, gt)
+        prob = torch.sigmoid(prediction)
+        pred_bin = (prob > 0.5).float()
+        intersection = (pred_bin * gt).sum(dim=(1, 2, 3))
+        denom = pred_bin.sum(dim=(1, 2, 3)) + gt.sum(dim=(1, 2, 3))
+        eps = 1e-6
+        dice = ((2 * intersection + eps) / (denom + eps)).mean()
+        total_loss += float(loss.detach().cpu().item())
+        total_dice += float(dice.detach().cpu().item())
+        n_batches += 1
+    if n_batches == 0:
+        return 0.0, 0.0
+    return total_loss / n_batches, total_dice / n_batches
+
+
 def run_training(args: argparse.Namespace) -> dict[str, Any]:
     medsam_repo = Path(args.medsam_repo).expanduser().resolve()
     sys.path.insert(0, str(medsam_repo))
@@ -146,6 +217,19 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         shuffle=True,
         num_workers=0,
     )
+    val_loader: DataLoader | None = None
+    val_root = str(getattr(args, "val_npy_root", "") or "").strip()
+    if val_root:
+        val_path = Path(val_root)
+        val_mx = int(getattr(args, "val_max_examples", 0) or 0)
+        val_ds = MedSAMNpyEvalDataset(val_path, max_examples=val_mx)
+        if len(val_ds) > 0:
+            val_loader = DataLoader(
+                val_ds,
+                batch_size=int(args.batch_size),
+                shuffle=False,
+                num_workers=0,
+            )
     sam_model = sam_model_registry[str(args.model_type)](checkpoint=str(args.checkpoint))
     model = MedSAMMaskDecoderAdapter(
         image_encoder=sam_model.image_encoder,
@@ -158,35 +242,126 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         lr=float(args.learning_rate),
         weight_decay=float(args.weight_decay),
     )
+    scheduler = None
+    sched_name = str(args.lr_scheduler).strip().lower()
+    if sched_name == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(1, int(args.epochs)),
+            eta_min=float(args.min_lr),
+        )
     ce_loss = nn.BCEWithLogitsLoss(reduction="mean")
     work_dir = Path(args.work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
+    epoch_log_path = work_dir / "training_epochs.jsonl"
     losses: list[dict[str, Any]] = []
     best_loss = float("inf")
-    for epoch in range(int(args.epochs)):
-        epoch_loss = 0.0
-        for image, gt, boxes, _names in loader:
-            optimizer.zero_grad()
-            image = image.to(device)
-            gt = gt.to(device)
-            prediction = model(image, boxes.detach().cpu().numpy())
-            loss = _soft_dice_loss_with_logits(prediction, gt) + ce_loss(prediction, gt)
-            loss.backward()
-            optimizer.step()
-            epoch_loss += float(loss.detach().cpu().item())
-        mean_loss = epoch_loss / max(1, len(loader))
-        losses.append({"epoch": epoch, "loss": mean_loss})
-        checkpoint = {
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "epoch": epoch,
-            "loss": mean_loss,
-            "adaptation_mode": "frozen_image_encoder_mask_decoder",
-        }
-        torch.save(checkpoint, work_dir / "medsam_glomeruli_latest.pth")
-        if mean_loss < best_loss:
-            best_loss = mean_loss
-            torch.save(checkpoint, work_dir / "medsam_glomeruli_best.pth")
+    best_val_dice = -1.0
+    best_val_epoch = -1
+    total_epochs = int(args.epochs)
+    val_b = len(val_loader) if val_loader is not None else 0
+    print(
+        "[medsam_glomeruli_adapter] "
+        f"starting training device={device} epochs={total_epochs} "
+        f"train_examples={len(dataset)} train_batches_per_epoch={len(loader)} "
+        f"val_batches_per_epoch={val_b} epoch_log={epoch_log_path}",
+        file=sys.stderr,
+        flush=True,
+    )
+    with epoch_log_path.open("w", encoding="utf-8") as epoch_log:
+        for epoch in range(total_epochs):
+            print(
+                "[medsam_glomeruli_adapter] "
+                f"epoch {epoch + 1}/{total_epochs} train phase started "
+                f"({len(loader)} batches; no per-batch logs)",
+                file=sys.stderr,
+                flush=True,
+            )
+            epoch_loss = 0.0
+            model.train()
+            for image, gt, boxes, _names in loader:
+                optimizer.zero_grad()
+                image = image.to(device)
+                gt = gt.to(device)
+                prediction = model(image, boxes.detach().cpu().numpy())
+                loss = _soft_dice_loss_with_logits(prediction, gt) + ce_loss(prediction, gt)
+                loss.backward()
+                optimizer.step()
+                epoch_loss += float(loss.detach().cpu().item())
+            mean_loss = epoch_loss / max(1, len(loader))
+            if scheduler is not None:
+                scheduler.step()
+            lr_now = float(optimizer.param_groups[0]["lr"])
+            val_mean_loss: float | None = None
+            val_mean_dice: float | None = None
+            if val_loader is not None:
+                val_mean_loss, val_mean_dice = _validation_epoch_loss_and_dice(
+                    model, val_loader, device, ce_loss
+                )
+                model.train()
+            loss_row: dict[str, Any] = {
+                "epoch": epoch,
+                "loss": mean_loss,
+                "lr": lr_now,
+            }
+            if val_mean_loss is not None and val_mean_dice is not None:
+                loss_row["val_loss"] = val_mean_loss
+                loss_row["val_dice"] = val_mean_dice
+            losses.append(loss_row)
+            row = {
+                "epoch_index": epoch,
+                "epoch_display": epoch + 1,
+                "epochs_total": total_epochs,
+                "mean_loss": mean_loss,
+                "learning_rate": lr_now,
+                "device": str(device),
+                "batches_per_epoch": len(loader),
+            }
+            if val_mean_loss is not None:
+                row["val_mean_loss"] = val_mean_loss
+            if val_mean_dice is not None:
+                row["val_mean_dice"] = val_mean_dice
+            if val_loader is not None:
+                row["val_batches_per_epoch"] = len(val_loader)
+            epoch_log.write(json.dumps(row) + "\n")
+            epoch_log.flush()
+            msg = (
+                "[medsam_glomeruli_adapter] "
+                f"epoch {epoch + 1}/{total_epochs} "
+                f"train_loss={mean_loss:.6f} lr={lr_now:.2e} "
+                f"device={device} train_batches={len(loader)}"
+            )
+            if val_mean_loss is not None and val_mean_dice is not None:
+                msg += (
+                    f" | val_loss={val_mean_loss:.6f} val_dice={val_mean_dice:.6f}"
+                    f" (hard Dice, thr=0.5)"
+                )
+            print(msg, file=sys.stderr, flush=True)
+            checkpoint = {
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "epoch": epoch,
+                "loss": mean_loss,
+                "adaptation_mode": "frozen_image_encoder_mask_decoder",
+            }
+            torch.save(checkpoint, work_dir / "medsam_glomeruli_latest.pth")
+            if mean_loss < best_loss:
+                best_loss = mean_loss
+                torch.save(checkpoint, work_dir / "medsam_glomeruli_best.pth")
+            if val_mean_dice is not None and val_mean_dice > best_val_dice:
+                best_val_dice = val_mean_dice
+                best_val_epoch = epoch
+                torch.save(
+                    checkpoint,
+                    work_dir / "medsam_glomeruli_best_val_dice.pth",
+                )
+    checkpoint_files = [
+        str(work_dir / "medsam_glomeruli_latest.pth"),
+        str(work_dir / "medsam_glomeruli_best.pth"),
+    ]
+    best_val_path = work_dir / "medsam_glomeruli_best_val_dice.pth"
+    if best_val_path.exists():
+        checkpoint_files.append(str(best_val_path))
     summary = {
         "status": "completed",
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -199,11 +374,12 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         "batch_size": int(args.batch_size),
         "learning_rate": float(args.learning_rate),
         "training_examples": len(dataset),
+        "validation_examples": len(val_loader.dataset) if val_loader is not None else 0,
         "losses": losses,
-        "checkpoint_files": [
-            str(work_dir / "medsam_glomeruli_latest.pth"),
-            str(work_dir / "medsam_glomeruli_best.pth"),
-        ],
+        "best_val_dice": best_val_dice if val_loader is not None else None,
+        "best_val_dice_epoch": best_val_epoch if val_loader is not None else None,
+        "checkpoint_files": checkpoint_files,
+        "epoch_progress_log": str(epoch_log_path),
     }
     (work_dir / "adapter_training_summary.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
@@ -226,6 +402,28 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--max-examples", type=int, default=0)
     parser.add_argument("--seed", type=int, default=2023)
+    parser.add_argument(
+        "--lr-scheduler",
+        default="none",
+        help="Learning-rate schedule: none | cosine (CosineAnnealingLR over all epochs).",
+    )
+    parser.add_argument(
+        "--min-lr",
+        type=float,
+        default=0.0,
+        help="Minimum learning rate when lr-scheduler=cosine (eta_min).",
+    )
+    parser.add_argument(
+        "--val-npy-root",
+        default="",
+        help="Optional MedSAM NPY root (imgs/ + gts/) for validation metrics each epoch.",
+    )
+    parser.add_argument(
+        "--val-max-examples",
+        type=int,
+        default=0,
+        help="Cap validation examples (0 = all).",
+    )
     return parser
 
 

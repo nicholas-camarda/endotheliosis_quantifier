@@ -309,6 +309,33 @@ def test_training_command_eq_native_adapter_invokes_in_repo_adapter(tmp_path: Pa
     )
     assert cmd[1] == "-m"
     assert "eq.evaluation.medsam_glomeruli_adapter" in cmd
+    assert "--lr-scheduler" in cmd
+    assert cmd[cmd.index("--lr-scheduler") + 1] == "none"
+
+
+def test_training_command_eq_native_adapter_passes_val_npy_when_set(tmp_path: Path) -> None:
+    config = {"medsam": {"device": "mps"}}
+    preflight = {
+        "medsam_python": str(tmp_path / "py"),
+        "medsam_repo": str(tmp_path / "repo"),
+        "base_checkpoint": str(tmp_path / "ckpt.pth"),
+        "training_backend": "eq_native_adapter",
+        "entrypoint": "",
+    }
+    (tmp_path / "py").write_bytes(b"")
+    val_root = tmp_path / "val_npy"
+    cmd = _training_command_for_config(
+        config=config,
+        preflight=preflight,
+        train_npy_root=tmp_path / "npy",
+        work_dir=tmp_path / "wd",
+        training_cfg={"epochs": 2, "batch_size": 1, "val_max_examples": 8},
+        val_npy_root=val_root,
+    )
+    i = cmd.index("--val-npy-root")
+    assert cmd[i + 1] == str(val_root)
+    j = cmd.index("--val-max-examples")
+    assert cmd[j + 1] == "8"
 
 
 def test_prepare_medsam_npy_data_writes_paired_normalized_arrays(tmp_path: Path):
@@ -592,6 +619,8 @@ def test_workflow_summary_marks_finetuned_evaluation_completed_when_real_inferen
                 f"  scratch_model_path: {scratch_model}",
                 "training:",
                 "  image_size: 32",
+                "  run_training: false",
+                "  local_feasibility_required: false",
                 "adoption_gates: {}",
             ]
         )
@@ -775,6 +804,8 @@ def test_workflow_summary_fails_closed_when_finetuned_inference_is_partial(
                 "outputs:",
                 "  evaluation_dir: output/test-eval",
                 f"  checkpoint_root: {checkpoint_root.relative_to(runtime_root)}",
+                f"  generated_mask_release_root: {(runtime_root / 'derived_data/generated_masks/glomeruli/medsam_finetuned/test-run').relative_to(runtime_root)}",
+                f"  generated_mask_registry_path: {(runtime_root / 'derived_data/generated_masks/glomeruli/manifest.csv').relative_to(runtime_root)}",
                 "baseline_evaluation:",
                 "  external_baselines: false",
                 "current_segmenter:",
@@ -782,6 +813,8 @@ def test_workflow_summary_fails_closed_when_finetuned_inference_is_partial(
                 f"  scratch_model_path: {scratch_model}",
                 "training:",
                 "  image_size: 32",
+                "  run_training: false",
+                "  local_feasibility_required: false",
                 "adoption_gates: {}",
             ]
         )
@@ -1015,6 +1048,8 @@ def test_workflow_summary_marks_finetuned_evaluation_skipped_without_supported_c
                 "  name: test-run",
                 f"  runtime_root_default: {runtime_root}",
                 "medsam:",
+                f"  python: {medsam_python}",
+                f"  repo: {medsam_repo}",
                 f"  base_checkpoint: {base_checkpoint}",
                 "  device: cpu",
                 "  adaptation_mode: frozen_image_encoder_mask_decoder",
@@ -1030,10 +1065,14 @@ def test_workflow_summary_marks_finetuned_evaluation_skipped_without_supported_c
                 "outputs:",
                 "  evaluation_dir: output/test-eval",
                 f"  checkpoint_root: {checkpoint_root.relative_to(runtime_root)}",
+                f"  generated_mask_release_root: {(runtime_root / 'derived_data/generated_masks/glomeruli/medsam_finetuned/test-run').relative_to(runtime_root)}",
+                f"  generated_mask_registry_path: {(runtime_root / 'derived_data/generated_masks/glomeruli/manifest.csv').relative_to(runtime_root)}",
                 "baseline_evaluation:",
                 "  external_baselines: false",
                 "training:",
                 "  image_size: 32",
+                "  run_training: false",
+                "  local_feasibility_required: false",
                 "adoption_gates: {}",
             ]
         )

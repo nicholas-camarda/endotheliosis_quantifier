@@ -75,9 +75,13 @@ Verification run:
 - `openspec validate medsam-glomeruli-fine-tuning --strict`
   - Result: valid
 
-Remaining blocker before closing the change:
+## Implementation closure (2026-04-30)
 
-- The remaining tasks require real fixed-example MedSAM/current-segmenter evaluation and a real constrained fine-tuning pilot. The upstream MedSAM training command expects a MedSAM `npy_data` training root with `imgs/` and `gts/`; this implementation records the intended `derived_data/medsam_glomeruli/npy_data` path but does not yet generate that upstream-format training root or produce an adapted checkpoint. Do not mark checkpoint artifact, fine-tuned inference, or pilot decision tasks complete until that data-preparation/training execution path is run and reviewed.
+- **Training execution:** `run_medsam_glomeruli_fine_tuning_workflow` now runs the full adapter/upstream training command via `subprocess` when `training.run_training` is true (default), after optional local feasibility smoke when configured. `summary.json` includes `training_skip_reason`, `training_process_exit_code`, and `log_path` (when execution logging is active). Skipping training remains supported for tests (`run_training: false`).
+- **Adapter schedule:** `eq.evaluation.medsam_glomeruli_adapter` supports `lr_scheduler: cosine` with `min_lr` (eta_min); wired from `training.lr_scheduler` / `training.min_lr` in YAML for `eq_native_adapter`.
+- **Conservative splits:** Default and pilot config document `inputs.train_fraction: 0.70` and `validation_fraction: 0.15` (remainder test), grouped by `source_sample_id` / strongest id — no leakage across splits.
+- **Deploy preset:** `configs/medsam_glomeruli_fine_tuning_deploy_conservative_mps.yaml` — 30 epochs, batch 2, cosine LR to `min_lr: 1e-6`, `run_local_feasibility_smoke: true`, `local_feasibility_required: true`, separate `run.name` / checkpoint / output roots under `deploy_conservative_mps_glomeruli`.
+- **Pilot config:** `configs/medsam_glomeruli_fine_tuning.yaml` now enables feasibility smoke by default when `local_feasibility_required` is true (spec alignment for 7.2).
 
 ## Pilot Run Update (2026-04-30)
 
@@ -92,8 +96,29 @@ Remaining blocker before closing the change:
   - adapter backend on `mps` completed 10 epochs on 665 examples
   - artifacts at `models/medsam_glomeruli/pilot_medsam_glomeruli_fine_tuning/medsam_glomeruli_{latest,best}.pth`
   - provenance updated with `training_status=completed` and `supported_checkpoint=true`
-- Not yet complete:
-  - fine-tuned checkpoint inference/metrics/overlay comparison tasks (5.1/5.2/5.3)
-  - decision-note closure tasks (7.4/7.5)
+- Follow-up fine-tuned evaluation (same workflow run) writes under `finetuned_evaluation/` and populates `finetuned_evaluation` / `finetuned_comparison` in `summary.json` when `supported_checkpoint` is true and inference succeeds. Example pilot artifacts: runtime `output/segmentation_evaluation/medsam_glomeruli_fine_tuning/pilot_medsam_glomeruli_fine_tuning/summary.json` (see `finetuned_comparison.oracle_dice_gap`, `adoption_tier`).
+- **7.4 / 7.5:** Review fields: `summary.json` (baselines, `finetuned_*`, gates), `checkpoint_root/provenance.json`, `finetuned_evaluation/metrics.csv`, overlays, `prompt_failures*`. Record deploy command using `configs/medsam_glomeruli_fine_tuning_deploy_conservative_mps.yaml` for the stronger conservative MPS run.
 
-See `continuation-action-plan.md` in this change for the execution checklist to complete the remaining tasks.
+See `continuation-action-plan.md` for historical task breakdown; `tasks.md` reflects current completion state.
+
+## Conservative deploy run (`deploy_conservative_mps_glomeruli`, 2026-04-30)
+
+Evidence captured under runtime root `/Users/ncamarda/ProjectsRuntime/endotheliosis_quantifier`:
+
+- **Command:** `eq run-config --config configs/medsam_glomeruli_fine_tuning_deploy_conservative_mps.yaml` (with `EQ_RUNTIME_ROOT` set; logging via `2>&1 | tee …` recommended).
+- **`summary.json`:** `finetuned_evaluation.status=completed`, `metric_rows=42`, `training_process_exit_code=0`, `training_skip_reason` empty.
+- **Adoption / gates (`finetuned_comparison`):** `adoption_tier=improved_candidate_not_oracle`, `oracle_level_gates_passed=false`, `failure_mode=oracle_gap`, `oracle_dice_gap≈0.1061`, `improves_current_auto=true`, `improves_current_segmenter=true`, `beats_trivial_baseline=true`.
+- **Artifacts:** checkpoints under `models/medsam_glomeruli/deploy_conservative_mps_glomeruli/`; overlays under `output/segmentation_evaluation/medsam_glomeruli_fine_tuning/deploy_conservative_mps_glomeruli/finetuned_evaluation/overlays/`.
+
+**Interpretation:** Fine-tuning and fixed-split inference **completed successfully**. Tier is **improved candidate**, not **oracle-level preferred** — downstream hybrid Label Studio work should treat oracle-gap closure as a separate modeling milestone.
+
+## Generated-mask packaging (2026-05-01)
+
+- `_package_generated_mask_release` previously existed but **was not invoked** from the workflow; release directories could be absent even when evaluation succeeded.
+- **Fix:** After `finetuned_evaluation.status == completed` and `metric_rows > 0`, the workflow packages masks into `outputs.generated_mask_release_root`, writes `manifest.csv` / `INDEX.md` / `provenance.json`, and appends the central registry unless `outputs.package_generated_mask_release: false`.
+- **Operator doc:** `docs/MEDSAM_GLOMERULI_FINETUNING_HANDOFF.md` — rerun deploy once after pulling this fix so runtime trees populate `derived_data/generated_masks/glomeruli/medsam_finetuned/<mask_release_id>/`.
+
+## Archive readiness
+
+- `tasks.md`: all boxes checked; `openspec validate medsam-glomeruli-fine-tuning --strict` passes before archive.
+- Implementation notes above align pilot + deploy evidence and document packaging correction for reproducible mask releases.
